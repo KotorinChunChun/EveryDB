@@ -189,11 +189,11 @@ let currentDropTarget = null;
 let currentDropIsAfter = null;
 function clearDropTargets() {
     if (currentDropTarget) {
-        currentDropTarget.classList.remove("drop-target-before", "drop-target-after");
+        currentDropTarget.classList.remove("drop-target-before", "drop-target-after", "col-drop-target-before", "col-drop-target-after");
     }
     else {
-        document.querySelectorAll(".drop-target-before, .drop-target-after").forEach((el) => {
-            el.classList.remove("drop-target-before", "drop-target-after");
+        document.querySelectorAll(".drop-target-before, .drop-target-after, .col-drop-target-before, .col-drop-target-after").forEach((el) => {
+            el.classList.remove("drop-target-before", "drop-target-after", "col-drop-target-before", "col-drop-target-after");
         });
     }
     currentDropTarget = null;
@@ -217,7 +217,7 @@ function handleDragOver(ev, el) {
         return isAfter;
     }
     if (currentDropTarget && currentDropTarget !== targetEl) {
-        currentDropTarget.classList.remove("drop-target-before", "drop-target-after");
+        currentDropTarget.classList.remove("drop-target-before", "drop-target-after", "col-drop-target-before", "col-drop-target-after");
     }
     else if (currentDropTarget === targetEl) {
         targetEl.classList.remove(isAfter ? "drop-target-before" : "drop-target-after");
@@ -227,8 +227,32 @@ function handleDragOver(ev, el) {
     currentDropIsAfter = isAfter;
     return isAfter;
 }
+function handleColDragOver(ev, el) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const rect = el.getBoundingClientRect();
+    const isAfter = ev.clientX >= rect.left + rect.width / 2;
+    if (currentDropTarget === el && currentDropIsAfter === isAfter) {
+        return isAfter;
+    }
+    if (currentDropTarget && currentDropTarget !== el) {
+        currentDropTarget.classList.remove("drop-target-before", "drop-target-after", "col-drop-target-before", "col-drop-target-after");
+    }
+    else if (currentDropTarget === el) {
+        el.classList.remove(isAfter ? "col-drop-target-before" : "col-drop-target-after");
+    }
+    el.classList.add(isAfter ? "col-drop-target-after" : "col-drop-target-before");
+    currentDropTarget = el;
+    currentDropIsAfter = isAfter;
+    return isAfter;
+}
 sourcesEl.addEventListener("dragleave", (ev) => {
     if (!sourcesEl.contains(ev.relatedTarget)) {
+        clearDropTargets();
+    }
+});
+headEl.addEventListener("dragleave", (ev) => {
+    if (!headEl.contains(ev.relatedTarget)) {
         clearDropTargets();
     }
 });
@@ -992,24 +1016,32 @@ function renderHead() {
                 cell.classList.add("dragging");
                 ev.dataTransfer?.setData("text/plain", c);
             });
-            cell.addEventListener("dragend", () => cell.classList.remove("dragging"));
-            cell.addEventListener("dragover", (ev) => {
-                ev.preventDefault();
-                cell.classList.add("drag-over");
+            cell.addEventListener("dragend", () => {
+                cell.classList.remove("dragging");
+                clearDropTargets();
             });
-            cell.addEventListener("dragleave", () => cell.classList.remove("drag-over"));
+            cell.addEventListener("dragover", (ev) => {
+                handleColDragOver(ev, cell);
+            });
             cell.addEventListener("drop", (ev) => {
                 ev.preventDefault();
-                cell.classList.remove("drag-over");
+                ev.stopPropagation();
+                const rect = cell.getBoundingClientRect();
+                const isAfter = ev.clientX >= rect.left + rect.width / 2;
+                clearDropTargets();
                 if (gridDragSrcCol === null || gridDragSrcCol === c)
                     return;
-                const order = columns.filter((x) => !PINNED_COLUMNS.has(x));
-                const from = order.indexOf(gridDragSrcCol);
-                const to = order.indexOf(c);
-                if (from === -1 || to === -1)
+                const currentOrder = columns.filter((x) => !PINNED_COLUMNS.has(x));
+                if (!currentOrder.includes(gridDragSrcCol) || !currentOrder.includes(c))
                     return;
-                order.splice(to, 0, order.splice(from, 1)[0]);
-                gridColumnOrder = order;
+                const remainingOrder = currentOrder.filter((col) => col !== gridDragSrcCol);
+                let targetIndex = remainingOrder.indexOf(c);
+                if (targetIndex === -1)
+                    return;
+                if (isAfter)
+                    targetIndex += 1;
+                remainingOrder.splice(targetIndex, 0, gridDragSrcCol);
+                gridColumnOrder = remainingOrder;
                 renderHead();
                 renderRows();
             });
@@ -1895,6 +1927,11 @@ const belongsToEl = $("f-belongs-to");
 const rolesRowsEl = $("roles-rows");
 const rolesTableWrap = $("roles-table-wrap");
 const rolesHint = $("roles-hint");
+rolesRowsEl.addEventListener("dragleave", (ev) => {
+    if (!rolesRowsEl.contains(ev.relatedTarget)) {
+        clearDropTargets();
+    }
+});
 let dialogMode = "add";
 let editingId = null;
 let lastFieldNames = [];
@@ -2147,18 +2184,32 @@ function renderRolesTable(names) {
         const tr = document.createElement("tr");
         tr.dataset.name = name;
         tr.draggable = true;
-        tr.addEventListener("dragstart", () => { rolesDragSrcName = name; tr.classList.add("dragging"); });
-        tr.addEventListener("dragend", () => tr.classList.remove("dragging"));
-        tr.addEventListener("dragover", (ev) => { ev.preventDefault(); tr.classList.add("drag-over"); });
-        tr.addEventListener("dragleave", () => tr.classList.remove("drag-over"));
+        tr.addEventListener("dragstart", () => {
+            rolesDragSrcName = name;
+            tr.classList.add("dragging");
+        });
+        tr.addEventListener("dragend", () => {
+            tr.classList.remove("dragging");
+            clearDropTargets();
+        });
+        tr.addEventListener("dragover", (ev) => {
+            handleDragOver(ev, tr);
+        });
         tr.addEventListener("drop", (ev) => {
             ev.preventDefault();
-            tr.classList.remove("drag-over");
+            ev.stopPropagation();
+            const rect = tr.getBoundingClientRect();
+            const isAfter = ev.clientY >= rect.top + rect.height / 2;
+            clearDropTargets();
             if (rolesDragSrcName === null || rolesDragSrcName === name)
                 return;
             const srcRow = rolesRowsEl.querySelector(`tr[data-name="${CSS.escape(rolesDragSrcName)}"]`);
-            if (srcRow)
-                rolesRowsEl.insertBefore(srcRow, tr);
+            if (srcRow) {
+                if (isAfter)
+                    rolesRowsEl.insertBefore(srcRow, tr.nextSibling);
+                else
+                    rolesRowsEl.insertBefore(srcRow, tr);
+            }
         });
         const handleTd = document.createElement("td");
         handleTd.className = "r-drag-handle";
