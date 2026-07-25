@@ -197,27 +197,25 @@
       </label>
       <div id="parent-dynamic"></div>
       <div id="parent-scope-hint" class="roles-hint"></div>
-      <button type="button" id="parent-manage-tables" class="btn" hidden>テーブルの追加/削除…</button>
+
+      <!-- この接続先で使えるテーブルの一覧。チェックの増減は「保存してリロード」でまとめて反映する。 -->
+      <fieldset id="parent-tables-fieldset" class="roles-fieldset" hidden>
+        <legend>テーブル一覧（チェックしたものを取り込みます）</legend>
+        <div class="picker-toolbar">
+          <button type="button" id="parent-tables-all" class="link-btn">全選択</button>
+          <button type="button" id="parent-tables-none" class="link-btn">全解除</button>
+          <button type="button" id="parent-tables-refresh" class="btn" title="接続情報を変更した後や、アクセス許可を追加した後に押してください">⟳ 更新</button>
+          <button type="button" id="parent-tables-access" class="btn" hidden>アクセス許可を設定…</button>
+          <span id="parent-tables-count" class="roles-hint"></span>
+        </div>
+        <div id="parent-tables-list" class="picker-list checklist"></div>
+        <div id="parent-tables-hint" class="roles-hint"></div>
+      </fieldset>
+
       <div id="parent-error" class="form-error"></div>
       <div class="dialog-actions">
         <button id="parent-cancel" class="btn" type="button">キャンセル</button>
         <button id="parent-save" class="btn primary" type="button">保存してリロード</button>
-      </div>
-    </dialog>
-
-    <!-- 接続先ダイアログ内: 配下テーブルのチェックで追加/削除 -->
-    <dialog id="parent-table-picker" class="dialog wide">
-      <button id="parent-table-picker-close-x" class="dialog-close-x" type="button" title="閉じる">×</button>
-      <h3>テーブルの追加/削除</h3>
-      <div class="picker-toolbar">
-        <button type="button" id="parent-table-picker-all" class="link-btn">全選択</button>
-        <button type="button" id="parent-table-picker-none" class="link-btn">全解除</button>
-      </div>
-      <div id="parent-table-picker-list" class="picker-list checklist"></div>
-      <div id="parent-table-picker-error" class="form-error"></div>
-      <div class="dialog-actions">
-        <button id="parent-table-picker-cancel" class="btn" type="button">キャンセル</button>
-        <button id="parent-table-picker-apply" class="btn primary" type="button">適用</button>
       </div>
     </dialog>
 

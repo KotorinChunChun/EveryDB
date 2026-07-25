@@ -1704,7 +1704,7 @@ function renderFieldsInto(container: HTMLElement, idPrefix: string, fields: Fiel
   }
 }
 
-type ParentBrowseKind = "sqlite" | "accdb" | "excel_table" | "sharepoint" | "notion";
+type ParentBrowseKind = "sqlite" | "accdb" | "excel_table" | "sharepoint" | "notion" | "graph365";
 
 /** 接続先ダイアログから配下テーブルを一覧取得して追加/削除できる種別。それ以外は非対応（個別に追加/削除）。 */
 function parentBrowseKind(repType: string): ParentBrowseKind | null {
@@ -1713,8 +1713,40 @@ function parentBrowseKind(repType: string): ParentBrowseKind | null {
   if (repType === "excel_table") return "excel_table";
   if (repType.startsWith("graph_sharepoint")) return "sharepoint";
   if (repType === "notion") return "notion";
+  // Microsoft 365(Graph) は API での一覧取得ではなく、実装済みの種別そのものを一覧に出す。
+  if (repType.startsWith("graph")) return "graph365";
   return null;
 }
+
+/** Microsoft 365: 接続情報（テナント/クライアント/シークレット）だけで使える＝ワンクリックで追加できる種別。 */
+const GRAPH_ONE_CLICK_TYPES = [
+  "graph_entra_users", "graph_entra_groups", "graph_entra_devices",
+  "graph_intune_devices", "graph_licenses", "graph_teams",
+];
+/** Microsoft 365: 対象ユーザーやグループ ID など追加入力が要るため一覧からは追加できない種別。 */
+const GRAPH_PARAMETERIZED_TYPES = ["graph_calendar", "graph_onedrive", "graph_planner"];
+
+/** 接続先種別ごとの「アクセス許可（共有）設定ページ」。テーブル一覧が 0 件のときの導線。 */
+const ACCESS_SETTINGS_URL: Partial<Record<ParentBrowseKind, { url: string; label: string; hint: string }>> = {
+  notion: {
+    url: "https://www.notion.so/my-integrations",
+    label: "アクセス許可を設定…",
+    hint: "一覧に出るのは、Notion 側でこのインテグレーションに「接続」したデータベースだけです。"
+      + "対象のデータベースを開き、右上の … →「接続」からインテグレーションを追加してから、⟳ 更新を押してください。",
+  },
+  graph365: {
+    url: "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+    label: "API アクセス許可を設定…",
+    hint: "取得には、アプリ登録の「API のアクセス許可」で対象の Graph 権限（User.Read.All 等）に"
+      + "管理者の同意が必要です。",
+  },
+  sharepoint: {
+    url: "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+    label: "API アクセス許可を設定…",
+    hint: "サイト内のリストとドキュメントライブラリを一覧します。取得できない場合はアプリ登録の"
+      + "「API のアクセス許可」（Sites.Read.All 等）を確認してください。",
+  },
+};
 
 interface ParentDialogState {
   parentKey: string;
@@ -1754,11 +1786,9 @@ async function openParentSettingsDialog(parentKey: string) {
   }
   renderFieldsInto(parentDynamicEl, "pf-", fieldDefs, prefill);
 
-  const manageBtn = $<HTMLButtonElement>("parent-manage-tables");
-  manageBtn.hidden = parentBrowseKind(repType) === null;
-
   parentDialogState = { parentKey, keys, fieldDefs, children, repType };
-  $<HTMLDialogElement>("parent-dialog").showModal();
+  if (!$<HTMLDialogElement>("parent-dialog").open) $<HTMLDialogElement>("parent-dialog").showModal();
+  await loadParentTables();
 }
 
 // ロック中でプレースホルダーが入っているパスワード欄をクリックしたら解錠を促す（本体ダイアログと同じ挙動）。
@@ -1801,6 +1831,18 @@ $<HTMLButtonElement>("parent-save").onclick = async () => {
     return;
   }
 
+  // テーブル一覧のチェック差分。削除が発生する場合は先に確認を取る。
+  const { toAdd, toRemove } = parentTableDiff();
+  if (toRemove.length > 0) {
+    const names = toRemove.map((t) => t.label).join("、");
+    const ok = await confirmDelete(
+      `チェックを外した ${toRemove.length} 個のテーブルを削除します。\n（${names}）\nキャッシュも消えます。よろしいですか？`,
+    );
+    if (!ok) return;
+  }
+
+  const saveBtn = $<HTMLButtonElement>("parent-save");
+  saveBtn.disabled = true;
   try {
     await invoke("set_parent_label", { parentKey, label: newLabel });
     if (newLabel) parentLabelOverrides.set(parentKey, newLabel);
@@ -1815,154 +1857,218 @@ $<HTMLButtonElement>("parent-save").onclick = async () => {
       }
       await invoke("update_source", { id: c.id, name: detail.name, configJson: JSON.stringify(cfg) });
     }
+
+    // 追加を先に行う。接続情報の引き継ぎ元（children[0]）が削除対象だと参照できなくなるため。
+    const failures: string[] = [];
+    for (const item of toAdd) {
+      const config: Record<string, unknown> = { ...item.extraConfig };
+      for (const k of keys) {
+        if (sharedValues[k] !== undefined) config[k] = sharedValues[k];
+      }
+      try {
+        // 秘密フィールドがマスクされたままでも壊れないよう、既存テーブルの暗号化済み設定を引き継ぐ。
+        await invoke("add_source_from_sibling", {
+          siblingId: children[0].id,
+          type: item.type_,
+          name: item.label,
+          configJson: JSON.stringify(config),
+          sharedKeys: keys,
+        });
+      } catch (e) {
+        failures.push(`${item.label}: ${String(e)}`);
+      }
+    }
+    // チェックを外したテーブルを削除する。
+    for (const t of toRemove) {
+      await invoke("delete_source", { id: t.id });
+      selectedSourceIds.delete(t.id);
+    }
+    if (failures.length) {
+      // 失敗があればダイアログは閉じずに理由を出す（サイレント失敗の防止）。
+      await loadSources();
+      await runSearch();
+      await openParentSettingsDialog(parentKey);
+      errEl.textContent = `${failures.length} 件の追加に失敗しました: ${failures.join(" / ")}`;
+      return;
+    }
+
     $<HTMLDialogElement>("parent-dialog").close();
     await loadSources();
     await runSearch();
   } catch (e) {
     errEl.textContent = "保存に失敗: " + String(e);
+  } finally {
+    saveBtn.disabled = false;
   }
 };
 
-// ---- 接続先ダイアログ内: 配下テーブルのチェックで追加/削除 ----
+// ---- 接続先ダイアログ下部: 配下テーブルの一覧（チェックの増減は「保存してリロード」で反映）----
 interface ParentTableItem { key: string; label: string; type_: string; extraConfig: Record<string, unknown> }
-let parentTablePickerMatched = new Map<string, number>(); // item.key -> 既存の子ソースID
-let parentTablePickerItems: ParentTableItem[] = [];
-let parentTablePickerSharedNow: Record<string, string> = {};
+let parentTableMatched = new Map<string, number>(); // item.key -> 既存の子ソースID
+let parentTableItems: ParentTableItem[] = [];
 
-$<HTMLButtonElement>("parent-manage-tables").onclick = () => void openParentTablePicker();
+const parentTablesFieldset = $<HTMLFieldSetElement>("parent-tables-fieldset");
+const parentTablesList = $<HTMLDivElement>("parent-tables-list");
+const parentTablesHint = $<HTMLDivElement>("parent-tables-hint");
+const parentTablesCount = $<HTMLSpanElement>("parent-tables-count");
+const parentTablesAccessBtn = $<HTMLButtonElement>("parent-tables-access");
 
-async function openParentTablePicker() {
-  if (!parentDialogState) return;
-  const { keys, children, repType } = parentDialogState;
-  const browseKind = parentBrowseKind(repType);
-  if (!browseKind) return;
-
-  const dlg = $<HTMLDialogElement>("parent-table-picker");
-  const listEl = $<HTMLDivElement>("parent-table-picker-list");
-  const errEl = $<HTMLDivElement>("parent-table-picker-error");
-  errEl.textContent = "";
-  listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
-  dlg.showModal();
-
-  // このダイアログでまだ保存していない編集中の接続情報も含めて使う。
-  const sharedNow: Record<string, string> = {};
-  for (const k of keys) {
+/** ダイアログ上で編集中の接続情報（保存前の値も含む）。一覧取得の上書き値として使う。 */
+function parentSharedNow(): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!parentDialogState) return out;
+  for (const k of parentDialogState.keys) {
     const el = document.getElementById(`pf-${k}`) as HTMLInputElement | null;
-    if (el) sharedNow[k] = el.value;
+    if (el) out[k] = k === "path" ? normalizePath(el.value) : el.value.trim();
   }
+  return out;
+}
 
-  parentTablePickerItems = [];
+function updateParentTablesCount() {
+  const boxes = Array.from(parentTablesList.querySelectorAll<HTMLInputElement>("input[type=checkbox]"));
+  const checked = boxes.filter((cb) => cb.checked).length;
+  parentTablesCount.textContent = boxes.length === 0 ? "" : `${checked} / ${boxes.length} 件を取り込み`;
+}
+
+/** 接続先で使えるテーブルの一覧を取得して描画する。 */
+async function loadParentTables() {
+  if (!parentDialogState) return;
+  const { children, repType } = parentDialogState;
+  const kind = parentBrowseKind(repType);
+  parentTablesFieldset.hidden = kind === null;
+  parentTablesAccessBtn.hidden = true;
+  parentTablesCount.textContent = "";
+  if (!kind) return;
+
+  const access = ACCESS_SETTINGS_URL[kind];
+  if (access) {
+    parentTablesAccessBtn.hidden = false;
+    parentTablesAccessBtn.textContent = access.label;
+    parentTablesAccessBtn.title = `${access.url} を既定のブラウザで開きます`;
+    parentTablesAccessBtn.onclick = () => void invoke("open_ref", { target: access.url }).catch((e) => {
+      parentTablesHint.textContent = "ページを開けませんでした: " + String(e);
+    });
+  }
+  parentTablesHint.textContent = access?.hint ?? "";
+
+  parentTablesList.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
+  const shared = parentSharedNow();
+  const siblingId = children[0].id;
+
+  parentTableItems = [];
   try {
-    if (browseKind === "sqlite" || browseKind === "accdb" || browseKind === "excel_table") {
-      const cmd = browseKind === "sqlite" ? "browse_sqlite_tables" : browseKind === "accdb" ? "browse_accdb_tables" : "browse_excel_tables";
-      const names = await invoke<string[]>(cmd, { path: sharedNow.path });
-      parentTablePickerItems = names.map((n) => ({ key: n, label: n, type_: repType, extraConfig: { table: n } }));
-    } else if (browseKind === "sharepoint") {
-      const auth = { tenant_id: sharedNow.tenant_id, client_id: sharedNow.client_id, client_secret: sharedNow.client_secret };
-      const resources = await invoke<{ display_name: string; kind: string }[]>("browse_graph_site_resources", { auth, siteUrl: sharedNow.site_url });
-      parentTablePickerItems = resources.map((r) => ({
+    if (kind === "sqlite" || kind === "accdb" || kind === "excel_table") {
+      const cmd = kind === "sqlite" ? "browse_sqlite_tables" : kind === "accdb" ? "browse_accdb_tables" : "browse_excel_tables";
+      const names = await invoke<string[]>(cmd, { path: shared.path });
+      parentTableItems = names.map((n) => ({ key: n, label: n, type_: repType, extraConfig: { table: n } }));
+    } else if (kind === "sharepoint") {
+      // 秘密フィールド（client_secret）はマスクされている可能性があるため、保存済み設定を使う。
+      const resources = await invoke<{ display_name: string; kind: string }[]>(
+        "browse_graph_site_resources_for_source",
+        { id: siblingId, overridesJson: JSON.stringify(shared) },
+      );
+      parentTableItems = resources.map((r) => ({
         key: `${r.kind}:${r.display_name}`,
         label: r.kind === "library" ? `${r.display_name}（ライブラリ）` : r.display_name,
         type_: r.kind === "library" ? "graph_sharepoint_library" : "graph_sharepoint_list",
         extraConfig: r.kind === "library" ? { library_name: r.display_name } : { list_name: r.display_name },
       }));
-    } else if (browseKind === "notion") {
-      const dbs = await invoke<{ id: string; title: string }[]>("browse_notion_databases", { token: sharedNow.token });
-      parentTablePickerItems = dbs.map((d) => ({ key: d.id, label: d.title || "(無題)", type_: "notion", extraConfig: { database_id: d.id } }));
+    } else if (kind === "notion") {
+      const dbs = await invoke<{ id: string; title: string }[]>(
+        "browse_notion_databases_for_source",
+        { id: siblingId, overridesJson: JSON.stringify(shared) },
+      );
+      parentTableItems = dbs.map((d) => ({ key: d.id, label: d.title || "(無題)", type_: "notion", extraConfig: { database_id: d.id } }));
+    } else if (kind === "graph365") {
+      // API 取得ではなく、実装済みの種別のうち接続情報だけで使えるものを並べる。
+      parentTableItems = GRAPH_ONE_CLICK_TYPES.map((t) => ({ key: t, label: typeLabel(t), type_: t, extraConfig: {} }));
     }
   } catch (e) {
-    setPickerMessage(listEl, `取得失敗: ${String(e)}`);
+    setPickerMessage(parentTablesList, `取得失敗: ${String(e)}`);
     return;
   }
 
-  // 既存の配下テーブルとの対応付け（元フィールドの値で照合）。
-  parentTablePickerMatched = new Map();
-  for (const c of children) {
-    try {
-      const detail = await invoke<SourceDetail>("get_source_detail", { id: c.id });
-      const cfg = detail.config;
-      if (browseKind === "sqlite" || browseKind === "accdb" || browseKind === "excel_table") {
-        if (typeof cfg.table === "string") parentTablePickerMatched.set(cfg.table, c.id);
-      } else if (browseKind === "sharepoint") {
-        if (typeof cfg.list_name === "string") parentTablePickerMatched.set(`list:${cfg.list_name}`, c.id);
-        if (typeof cfg.library_name === "string") parentTablePickerMatched.set(`library:${cfg.library_name}`, c.id);
-      } else if (browseKind === "notion") {
-        if (typeof cfg.database_id === "string") parentTablePickerMatched.set(cfg.database_id, c.id);
+  // 既存の配下テーブルとの対応付け。
+  parentTableMatched = new Map();
+  if (kind === "graph365") {
+    // 種別そのものが一覧の項目なので、config を読まずに対応付けできる。
+    for (const c of children) {
+      if (GRAPH_ONE_CLICK_TYPES.includes(c.type_) && !parentTableMatched.has(c.type_)) {
+        parentTableMatched.set(c.type_, c.id);
       }
-    } catch { /* このソースは対応付けをスキップ */ }
+    }
+  } else {
+    const details = await Promise.all(
+      children.map((c) => invoke<SourceDetail>("get_source_detail", { id: c.id }).catch(() => null)),
+    );
+    children.forEach((c, i) => {
+      const cfg = details[i]?.config;
+      if (!cfg) return;
+      if (kind === "sqlite" || kind === "accdb" || kind === "excel_table") {
+        if (typeof cfg.table === "string") parentTableMatched.set(cfg.table, c.id);
+      } else if (kind === "sharepoint") {
+        if (typeof cfg.list_name === "string") parentTableMatched.set(`list:${cfg.list_name}`, c.id);
+        if (typeof cfg.library_name === "string") parentTableMatched.set(`library:${cfg.library_name}`, c.id);
+      } else if (kind === "notion") {
+        if (typeof cfg.database_id === "string") parentTableMatched.set(cfg.database_id, c.id);
+      }
+    });
   }
 
-  listEl.innerHTML = "";
-  if (parentTablePickerItems.length === 0) {
-    listEl.innerHTML = "<div class='picker-empty'>見つかりませんでした</div>";
+  parentTablesList.innerHTML = "";
+  if (parentTableItems.length === 0) {
+    setPickerMessage(parentTablesList, "利用できるテーブルが見つかりませんでした");
   }
-  for (const item of parentTablePickerItems) {
+  for (const item of parentTableItems) {
     const row = document.createElement("label");
     row.className = "picker-item";
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.dataset.key = item.key;
-    cb.checked = parentTablePickerMatched.has(item.key);
+    cb.checked = parentTableMatched.has(item.key);
+    cb.addEventListener("change", updateParentTablesCount);
     const span = document.createElement("span");
     span.textContent = item.label;
     row.append(cb, span);
-    listEl.appendChild(row);
+    if (parentTableMatched.has(item.key)) {
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = "取込済";
+      row.appendChild(badge);
+    }
+    parentTablesList.appendChild(row);
   }
-
-  // 適用時に使う共有接続情報を保持しておく（このスコープ外の apply ハンドラから参照するため）。
-  parentTablePickerSharedNow = sharedNow;
+  if (kind === "graph365") {
+    const rest = GRAPH_PARAMETERIZED_TYPES.map(typeLabel).join(" / ");
+    parentTablesHint.textContent += `\n※ ${rest} は対象ユーザーやグループ ID の指定が必要なため、この一覧からは追加できません。`;
+  }
+  updateParentTablesCount();
 }
 
-$<HTMLButtonElement>("parent-table-picker-all").onclick = () => {
-  $<HTMLDivElement>("parent-table-picker-list").querySelectorAll<HTMLInputElement>("input[type=checkbox]").forEach((cb) => { cb.checked = true; });
+$<HTMLButtonElement>("parent-tables-all").onclick = () => {
+  parentTablesList.querySelectorAll<HTMLInputElement>("input[type=checkbox]").forEach((cb) => { cb.checked = true; });
+  updateParentTablesCount();
 };
-$<HTMLButtonElement>("parent-table-picker-none").onclick = () => {
-  $<HTMLDivElement>("parent-table-picker-list").querySelectorAll<HTMLInputElement>("input[type=checkbox]").forEach((cb) => { cb.checked = false; });
+$<HTMLButtonElement>("parent-tables-none").onclick = () => {
+  parentTablesList.querySelectorAll<HTMLInputElement>("input[type=checkbox]").forEach((cb) => { cb.checked = false; });
+  updateParentTablesCount();
 };
-$<HTMLButtonElement>("parent-table-picker-cancel").onclick = () => $<HTMLDialogElement>("parent-table-picker").close();
-$<HTMLButtonElement>("parent-table-picker-close-x").onclick = () => $<HTMLDialogElement>("parent-table-picker").close();
+$<HTMLButtonElement>("parent-tables-refresh").onclick = () => void loadParentTables();
 
-$<HTMLButtonElement>("parent-table-picker-apply").onclick = async () => {
-  if (!parentDialogState) return;
-  const { keys } = parentDialogState;
-  const errEl = $<HTMLDivElement>("parent-table-picker-error");
-  errEl.textContent = "";
-  const checkboxes = Array.from($<HTMLDivElement>("parent-table-picker-list").querySelectorAll<HTMLInputElement>("input[type=checkbox]"));
-  const failures: string[] = [];
-  try {
-    for (const cb of checkboxes) {
-      const key = cb.dataset.key!;
-      const item = parentTablePickerItems.find((i) => i.key === key);
-      if (!item) continue;
-      if (cb.checked && !parentTablePickerMatched.has(key)) {
-        const config: Record<string, unknown> = { ...item.extraConfig };
-        for (const k of keys) {
-          if (!parentTablePickerSharedNow[k]) continue;
-          config[k] = k === "path" ? normalizePath(parentTablePickerSharedNow[k]) : parentTablePickerSharedNow[k];
-        }
-        try {
-          await invoke("add_source", { type: item.type_, name: item.label, configJson: JSON.stringify(config) });
-        } catch (e) {
-          failures.push(`${item.label}: ${String(e)}`);
-        }
-      } else if (!cb.checked && parentTablePickerMatched.has(key)) {
-        const id = parentTablePickerMatched.get(key)!;
-        await invoke("delete_source", { id });
-        selectedSourceIds.delete(id);
-      }
-    }
-    if (failures.length) {
-      errEl.textContent = `一部失敗しました: ${failures.join(" / ")}`;
-      return;
-    }
-    $<HTMLDialogElement>("parent-table-picker").close();
-    await loadSources();
-    await runSearch();
-    if (parentDialogState) await openParentSettingsDialog(parentDialogState.parentKey);
-  } catch (e) {
-    errEl.textContent = "適用に失敗: " + String(e);
+/** チェック状態と既存テーブルの差分。保存時にまとめて適用する。 */
+function parentTableDiff(): { toAdd: ParentTableItem[]; toRemove: { id: number; label: string }[] } {
+  const toAdd: ParentTableItem[] = [];
+  const toRemove: { id: number; label: string }[] = [];
+  if (parentTablesFieldset.hidden) return { toAdd, toRemove };
+  for (const cb of Array.from(parentTablesList.querySelectorAll<HTMLInputElement>("input[type=checkbox]"))) {
+    const item = parentTableItems.find((i) => i.key === cb.dataset.key);
+    if (!item) continue;
+    const existingId = parentTableMatched.get(item.key);
+    if (cb.checked && existingId === undefined) toAdd.push(item);
+    else if (!cb.checked && existingId !== undefined) toRemove.push({ id: existingId, label: item.label });
   }
-};
+  return { toAdd, toRemove };
+}
 
 async function copyToClipboard(text: string, label: string) {
   try {

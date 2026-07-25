@@ -426,6 +426,13 @@ tr.drop-target-after td::after { bottom: -1px; }
 /* 幅広ダイアログ・フィールド役割編集・ブラウズ領域 */
 .dialog.wide { min-width: 560px; max-width: 720px; }
 
+/* 接続設定ダイアログ: 下部にテーブル一覧を内包するため、はみ出したらダイアログ自体をスクロールさせる。 */
+#parent-dialog { max-height: 92vh; overflow-y: auto; }
+#parent-tables-fieldset .picker-list { max-height: 260px; }
+#parent-tables-hint { white-space: pre-line; margin-top: 6px; display: block; }
+#parent-tables-fieldset .picker-toolbar { flex-wrap: wrap; }
+#parent-tables-fieldset .picker-toolbar .btn { padding: 2px 8px; font-size: 11px; }
+
 /* データソース追加/編集ダイアログ: ウィンドウの高さを活かして縦に伸ばし、右下ハンドルでサイズ可変にする。
    flex 縦積みにして roles 一覧(roles-table-wrap)が残り高さを占有 → 中身が多くてもダイアログはビューポート内に収まる。 */
 #add-dialog {

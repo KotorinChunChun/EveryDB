@@ -108,6 +108,47 @@ pub fn add_source(
     Ok(id)
 }
 
+/// 既存の兄弟ソースから接続情報を引き継いで、同じ接続先配下にテーブルを追加する。
+/// 接続設定ダイアログのテーブル一覧から追加するときに使う。
+///
+/// マスターパスワードが未解錠だと UI 側の秘密フィールドはマスク（`••••••••`）されているため、
+/// その値で追加すると壊れたソースができてしまう。ここでは**暗号化されたままの値をコピー**する
+/// ことで、UI が平文の秘密情報を扱わずに済むようにしている。
+#[tauri::command]
+pub fn add_source_from_sibling(
+    state: State<'_, AppState>,
+    sibling_id: i64,
+    type_: String,
+    name: String,
+    config_json: String,
+    shared_keys: Vec<String>,
+) -> Result<i64, String> {
+    let mut conn = state.db.lock().map_err(|_| "lock poisoned")?;
+    if secret::has_secret_fields(&type_)
+        && db::get_meta(&conn, MASTER_PASSWORD_META_KEY).map_err(err_to_string)?.is_none()
+    {
+        return Err("このソース種別は秘密情報を扱うため、先にマスターパスワードを設定してください".to_string());
+    }
+    let (_, sibling_json) = db::get_source_config(&conn, sibling_id).map_err(err_to_string)?;
+    let sibling: serde_json::Value = serde_json::from_str(&sibling_json).map_err(err_to_string)?;
+    let mut cfg: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(&config_json).map_err(err_to_string)?;
+    for k in &shared_keys {
+        let cur = cfg.get(k).and_then(|v| v.as_str()).unwrap_or_default();
+        if cur.is_empty() || cur == secret::SECRET_PLACEHOLDER {
+            if let Some(v) = sibling.get(k) {
+                cfg.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    let merged = serde_json::to_string(&cfg).map_err(err_to_string)?;
+    // 既に `dpapi:` 付きの値は protect_config が二重暗号化しないので、そのまま渡してよい。
+    let protected = secret::protect_config(&type_, &merged).map_err(err_to_string)?;
+    let id = db::insert_source(&conn, &type_, &name, &protected).map_err(err_to_string)?;
+    let _ = reload_one(&mut conn, id);
+    Ok(id)
+}
+
 #[tauri::command]
 pub fn delete_source(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
@@ -206,6 +247,79 @@ pub fn preview_source_fields_by_id(state: State<'_, AppState>, id: i64) -> Resul
 #[tauri::command]
 pub fn browse_notion_databases(token: String) -> Result<Vec<crate::browse::NotionDbEntry>, String> {
     crate::browse::notion_list_databases(&token).map_err(err_to_string)
+}
+
+/// 保存済みソースの設定（DPAPI 暗号化）を復号し、ダイアログ上の編集中の値で上書きした
+/// 「実効設定」を作る。マスクされたまま（`••••••••`）や空の値は未編集とみなして
+/// 保存済みの値を使う。
+///
+/// 接続設定ダイアログはマスターパスワードが未解錠だと秘密フィールドがマスクされて表示される。
+/// その値をそのまま外部 API へ渡すと必ず認証エラーになるため、一覧取得はフロントから受け取った
+/// 値ではなくこの実効設定を使う（`preview_source_fields_by_id` と同じ考え方）。
+fn effective_config(
+    conn: &Connection,
+    id: i64,
+    overrides_json: &str,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let (_, config_json) = db::get_source_config(conn, id).map_err(err_to_string)?;
+    let decrypted = secret::unprotect_config(&config_json).map_err(err_to_string)?;
+    let mut cfg: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(&decrypted).map_err(err_to_string)?;
+    let overrides: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(overrides_json).map_err(err_to_string)?;
+    for (k, v) in overrides {
+        let s = v.as_str().unwrap_or_default();
+        if s.is_empty() || s == secret::SECRET_PLACEHOLDER {
+            continue; // 未編集 → 保存済みの値を使う
+        }
+        cfg.insert(k, v);
+    }
+    Ok(cfg)
+}
+
+fn cfg_str(cfg: &serde_json::Map<String, serde_json::Value>, key: &str) -> String {
+    cfg.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_string()
+}
+
+/// 接続設定ダイアログ用の Notion データベース一覧。保存済みトークンを使うため、
+/// マスターパスワードが未解錠でも一覧を取得できる。
+#[tauri::command]
+pub fn browse_notion_databases_for_source(
+    state: State<'_, AppState>,
+    id: i64,
+    overrides_json: String,
+) -> Result<Vec<crate::browse::NotionDbEntry>, String> {
+    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+    let cfg = effective_config(&conn, id, &overrides_json)?;
+    drop(conn);
+    let token = cfg_str(&cfg, "token");
+    if token.is_empty() {
+        return Err("インテグレーショントークンが設定されていません".to_string());
+    }
+    crate::browse::notion_list_databases(&token).map_err(err_to_string)
+}
+
+/// 接続設定ダイアログ用の SharePoint リスト/ライブラリ一覧。保存済みクライアントシークレットを
+/// 使うため、マスターパスワードが未解錠でも一覧を取得できる。
+#[tauri::command]
+pub fn browse_graph_site_resources_for_source(
+    state: State<'_, AppState>,
+    id: i64,
+    overrides_json: String,
+) -> Result<Vec<crate::browse::SiteResourceEntry>, String> {
+    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+    let cfg = effective_config(&conn, id, &overrides_json)?;
+    drop(conn);
+    let auth = crate::browse::GraphAuthArgs {
+        tenant_id: cfg_str(&cfg, "tenant_id"),
+        client_id: cfg_str(&cfg, "client_id"),
+        client_secret: cfg_str(&cfg, "client_secret"),
+    };
+    let site_url = cfg_str(&cfg, "site_url");
+    if site_url.is_empty() {
+        return Err("サイト URL が設定されていません".to_string());
+    }
+    crate::browse::graph_list_site_resources(&auth, &site_url).map_err(err_to_string)
 }
 
 #[tauri::command]
