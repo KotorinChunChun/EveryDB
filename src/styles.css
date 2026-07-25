@@ -131,25 +131,38 @@ body {
   background: transparent;
 }
 .sidebar-resizer:hover, .sidebar-resizer.dragging { background: var(--accent-2); }
-.sidebar-title-row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.sidebar-title-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .sidebar-title { font-weight: 600; color: var(--muted); font-size: 12px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-bulk { display: flex; gap: 6px; flex: none; }
 
-/* 管理モードのトグル（旧「データソース管理」ダイアログの置き換え） */
-.manage-toggle {
-  flex: none; padding: 2px 8px; font-size: 11px; cursor: pointer;
+/* 見出し行に並べる小型ボタン（＋追加 / 管理）。狭いサイドバー幅でも収まるサイズ。 */
+.title-row-btn {
+  flex: none; padding: 2px 8px; font-size: 11px; cursor: pointer; white-space: nowrap;
   background: var(--panel-2); color: var(--muted);
   border: 1px solid var(--border); border-radius: 4px;
 }
-.manage-toggle:hover { color: var(--text); border-color: var(--accent-2); }
+.title-row-btn:hover { color: var(--text); border-color: var(--accent-2); }
+/* 管理モードのトグル（旧「データソース管理」ダイアログの置き換え） */
 .manage-toggle.active { background: var(--accent); color: #fff; border-color: var(--accent-2); }
 .link-btn { background: none; border: none; color: var(--accent-2); cursor: pointer; font-size: 11px; padding: 0; }
 .link-btn:hover { text-decoration: underline; }
+/* 全選択/全解除 + 絞り込み入力 + クリア（×）ボタン。× は入力があるときだけ表示する。
+   全選択/全解除は「絞り込みで見えているテーブルのみ」を対象にするため、絞り込み欄と同じ行に置く。 */
+.source-filter-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.source-filter-wrap { position: relative; flex: 1; min-width: 0; }
 .source-filter {
-  width: 100%; margin-bottom: 8px; padding: 5px 8px;
+  width: 100%; padding: 5px 24px 5px 8px;
   background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 12px;
 }
 .source-filter:focus { outline: none; border-color: var(--accent-2); }
+.source-filter-clear {
+  position: absolute; top: 50%; right: 4px; transform: translateY(-50%);
+  width: 18px; height: 18px; display: flex; align-items: center; justify-content: center;
+  padding: 0; background: none; border: none; border-radius: 3px;
+  color: var(--muted); font-size: 13px; line-height: 1; cursor: pointer;
+}
+.source-filter-clear:hover { background: var(--panel); color: var(--text); }
+.source-filter-clear[hidden] { display: none; }
 
 .sources { display: flex; flex-direction: column; gap: 1px; }
 
@@ -306,7 +319,8 @@ tr.drop-target-after td::after { bottom: -1px; }
   user-select: none;
   flex: none;
 }
-.cell.head { cursor: default; position: relative; }
+.cell.head { cursor: default; position: relative; display: flex; align-items: center; gap: 4px; }
+.cell.head.sortable { cursor: pointer; }
 .cell.head.draggable-col { cursor: grab; }
 .cell.head.dragging { opacity: 0.4; outline: 1px dashed var(--muted); }
 .cell.head.col-drop-target-before, .cell.head.col-drop-target-after {
@@ -327,7 +341,9 @@ tr.drop-target-after td::after { bottom: -1px; }
 }
 .cell.head.col-drop-target-before::before { left: -1px; }
 .cell.head.col-drop-target-after::after { right: -1px; }
-.cell.head .cell-head-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.cell.head .cell-head-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; flex: 1; min-width: 0; }
+/* ソート方向のマーク（▲昇順 / ▼降順）。列幅リサイズハンドルに重ならないよう右に余白を取る。 */
+.cell.head .sort-mark { flex: none; margin-right: 4px; font-size: 10px; color: var(--accent-2); }
 .cell.sel { background: var(--sel); outline: 1px solid var(--accent-2); outline-offset: -1px; }
 
 /* 列幅リサイズハンドル */

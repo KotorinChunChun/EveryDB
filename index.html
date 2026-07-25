@@ -15,7 +15,6 @@
         <button id="preset-list-btn" class="btn" title="お気に入りから呼び出し">★一覧</button>
         <div id="preset-panel" class="history-panel" hidden></div>
         <button id="export" class="btn" title="現在の検索結果を TSV でエクスポート">TSV出力</button>
-        <button id="add" class="btn" title="テーブルを追加（新しい接続先の場合は接続情報もあわせて入力）">＋ テーブル追加</button>
         <button id="settings" class="btn" title="アプリ設定">⚙ 設定</button>
       </header>
 
@@ -23,14 +22,21 @@
         <aside class="sidebar">
           <div class="sidebar-title-row">
             <div class="sidebar-title">データソース(接続先 > テーブル)</div>
-            <div class="sidebar-bulk">
-              <button id="select-all" class="link-btn" title="全選択">全選択</button>
-              <button id="select-none" class="link-btn" title="全解除">全解除</button>
-            </div>
-            <button id="manage-toggle" class="manage-toggle" type="button" aria-pressed="false"
+            <button id="add" class="title-row-btn" type="button"
+                    title="テーブルを追加（新しい接続先の場合は接続情報もあわせて入力）">＋追加</button>
+            <button id="manage-toggle" class="title-row-btn manage-toggle" type="button" aria-pressed="false"
                     title="管理モード: 幅を広げて更新間隔・最終更新日時・更新/編集/削除ボタンを表示します">管理</button>
           </div>
-          <input id="source-filter" class="source-filter" type="text" placeholder="データソースを絞り込み…" autocomplete="off" spellcheck="false" />
+          <div class="source-filter-row">
+            <div class="sidebar-bulk">
+              <button id="select-all" class="link-btn" title="全選択（絞り込み中は表示中のテーブルのみ）">全選択</button>
+              <button id="select-none" class="link-btn" title="全解除（絞り込み中は表示中のテーブルのみ）">全解除</button>
+            </div>
+            <div class="source-filter-wrap">
+              <input id="source-filter" class="source-filter" type="text" placeholder="データソースを絞り込み…" autocomplete="off" spellcheck="false" />
+              <button id="source-filter-clear" class="source-filter-clear" type="button" title="絞り込みを消す（Esc）" hidden>×</button>
+            </div>
+          </div>
           <div id="manage-head" class="manage-head" hidden>
             <span class="m-name">名前</span>
             <span class="m-type">種別</span>

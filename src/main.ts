@@ -43,6 +43,9 @@ interface SourceDetail {
 // ==== 状態 ====
 let sources: SourceInfo[] = [];
 let selectedSourceIds = new Set<number>();
+/** 検索が返したままの順序の行（ソート解除で戻す先）。 */
+let rawRows: Row[] = [];
+/** 画面に表示する順序の行（ソート適用後。未ソートなら rawRows と同じ並び）。 */
 let rows: Row[] = [];
 let columns: string[] = []; // 表示する列（Source + フィールド名の和集合）
 let searchSeq = 0; // 送出したリクエストの通し番号
@@ -523,11 +526,21 @@ function makeSourceItem(s: SourceInfo): HTMLElement {
   return item;
 }
 
+/** 絞り込みボックスの条件に一致するか（テーブル名 / 接続先ラベルの部分一致）。 */
+function sourceMatchesFilter(s: SourceInfo): boolean {
+  const q = sourceFilter.trim().toLowerCase();
+  return !q || s.name.toLowerCase().includes(q) || parentLabel(s.parent).toLowerCase().includes(q);
+}
+
+/** 現在サイドバーに表示されているテーブル（絞り込みが空なら全件）。全選択/全解除の対象。 */
+function visibleSources(): SourceInfo[] {
+  return sources.filter(sourceMatchesFilter);
+}
+
 function renderSources() {
   sourcesEl.innerHTML = "";
   const q = sourceFilter.trim().toLowerCase();
-  const match = (s: SourceInfo) =>
-    !q || s.name.toLowerCase().includes(q) || parentLabel(s.parent).toLowerCase().includes(q);
+  const match = sourceMatchesFilter;
 
   // parent キーごとにグルーピング（出現順を維持）。parent="" は単独ノード。
   const groups = new Map<string, SourceInfo[]>();
@@ -732,18 +745,33 @@ function updateStatus() {
   }
 }
 
-$<HTMLInputElement>("source-filter").addEventListener("input", (e) => {
-  sourceFilter = (e.target as HTMLInputElement).value;
-  renderSources();
-});
+const sourceFilterInput = $<HTMLInputElement>("source-filter");
+const sourceFilterClearBtn = $<HTMLButtonElement>("source-filter-clear");
 
+function setSourceFilter(value: string) {
+  sourceFilter = value;
+  sourceFilterInput.value = value;
+  sourceFilterClearBtn.hidden = value === "";
+  renderSources();
+}
+
+sourceFilterInput.addEventListener("input", (e) => setSourceFilter((e.target as HTMLInputElement).value));
+sourceFilterInput.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && sourceFilterInput.value !== "") setSourceFilter("");
+});
+sourceFilterClearBtn.onclick = () => {
+  setSourceFilter("");
+  sourceFilterInput.focus();
+};
+
+// 全選択 / 全解除は「いま一覧に見えているテーブル」だけを対象にする（絞り込み外の選択は保つ）。
 $<HTMLButtonElement>("select-all").onclick = () => {
-  selectedSourceIds = new Set(sources.map((s) => s.id));
+  for (const s of visibleSources()) selectedSourceIds.add(s.id);
   renderSources();
   runSearch();
 };
 $<HTMLButtonElement>("select-none").onclick = () => {
-  selectedSourceIds = new Set();
+  for (const s of visibleSources()) selectedSourceIds.delete(s.id);
   renderSources();
   runSearch();
 };
@@ -1017,8 +1045,9 @@ async function runSearch() {
   }
   if (resp.seq <= lastAppliedSeq) return; // 古い結果は破棄
   lastAppliedSeq = resp.seq;
-  rows = resp.rows;
+  rawRows = resp.rows;
   rebuildColumns();
+  applySort(); // 検索し直しても、選択中のソート順は維持する
   selectedCell = null;
   renderHead();
   renderRows();
@@ -1032,7 +1061,7 @@ let gridColumnOrder: string[] = [];
 function rebuildColumns() {
   const seen = new Set<string>();
   const cols: string[] = [];
-  for (const r of rows) {
+  for (const r of rawRows) {
     for (const k of Object.keys(r.fields)) {
       if (!seen.has(k)) { seen.add(k); cols.push(k); }
     }
@@ -1040,6 +1069,67 @@ function rebuildColumns() {
   const known = gridColumnOrder.filter((c) => cols.includes(c));
   const extra = cols.filter((c) => !gridColumnOrder.includes(c));
   columns = ["テーブル", "見出し", ...known, ...extra];
+}
+
+// ============================================================
+// 列見出しクリックによる並べ替え（昇順 → 降順 → 解除 のトグル）
+// 状態はモジュール変数のみに持つ（要件: 「再起動まで記憶する」＝永続化しない）。
+// ============================================================
+let sortState: { column: string; dir: "asc" | "desc" } | null = null;
+/** 日本語を自然に、数字混じりの文字列も桁数順に並べる比較器。 */
+const sortCollator = new Intl.Collator("ja", { numeric: true, sensitivity: "base" });
+
+/** 値の比較。両方が数値として解釈できるときだけ数値比較にする。 */
+function compareCellValues(a: string, b: string): number {
+  const na = Number(a);
+  const nb = Number(b);
+  if (Number.isFinite(na) && Number.isFinite(nb)) return na < nb ? -1 : na > nb ? 1 : 0;
+  return sortCollator.compare(a, b);
+}
+
+/** sortState に従って rawRows から表示用の rows を作る。 */
+function applySort() {
+  if (!sortState) {
+    rows = rawRows;
+    return;
+  }
+  const idx = columns.indexOf(sortState.column);
+  if (idx < 0) {
+    // 検索条件が変わって対象列が消えた場合はソートも解除する。
+    sortState = null;
+    rows = rawRows;
+    return;
+  }
+  const sign = sortState.dir === "asc" ? 1 : -1;
+  // 元の並び順 i をタイブレークに使い、同値の行の相対順序を安定させる。
+  const keyed = rawRows.map((r, i) => ({ r, i, k: cellText(r, idx).trim() }));
+  keyed.sort((x, y) => {
+    // 空値は昇順・降順どちらでも末尾に置く（空が先頭を占めると読みづらいため）。
+    if (x.k === "" || y.k === "") {
+      if (x.k === y.k) return x.i - y.i;
+      return x.k === "" ? 1 : -1;
+    }
+    const c = compareCellValues(x.k, y.k);
+    return c !== 0 ? sign * c : x.i - y.i;
+  });
+  rows = keyed.map((e) => e.r);
+}
+
+function toggleSort(column: string) {
+  if (!sortState || sortState.column !== column) sortState = { column, dir: "asc" };
+  else if (sortState.dir === "asc") sortState = { column, dir: "desc" };
+  else sortState = null;
+  selectedCell = null; // 並びが変わるので選択セルは解除する
+  applySort();
+  renderHead();
+  viewportEl.scrollTop = 0;
+  renderRows();
+}
+
+/** 見出しの title に「次に押したらどうなるか」を出す。 */
+function sortHintFor(column: string): string {
+  if (sortState?.column !== column) return `${column}\nクリックで昇順に並べ替え`;
+  return sortState.dir === "asc" ? `${column}\nクリックで降順に並べ替え` : `${column}\nクリックで並べ替えを解除`;
 }
 
 /** 検索結果 rows から「ソースID → そのソースに出現した表示名の集合」を 1 パスで作る。
@@ -1228,6 +1318,8 @@ function startColumnResize(ev: MouseEvent, colName: string, handle: HTMLElement)
 }
 
 let gridDragSrcCol: string | null = null;
+/** 列見出しのドラッグ直後に発火する click を無視するためのフラグ（ソートとの誤爆防止）。 */
+let suppressHeadClick = false;
 /** テーブルの元フィールドに対応しない疑似列（常に先頭に固定・並べ替え/列対応編集の対象外）。 */
 const PINNED_COLUMNS = new Set(["テーブル", "見出し"]);
 
@@ -1242,8 +1334,23 @@ function renderHead() {
     const label = document.createElement("span");
     label.className = "cell-head-label";
     label.textContent = c;
-    label.title = c;
     cell.appendChild(label);
+
+    // 左クリックで昇順 → 降順 → 解除。疑似列（テーブル/見出し）も対象にする。
+    cell.classList.add("sortable");
+    cell.title = sortHintFor(c);
+    if (sortState?.column === c) {
+      const mark = document.createElement("span");
+      mark.className = "sort-mark";
+      mark.textContent = sortState.dir === "asc" ? "▲" : "▼";
+      cell.appendChild(mark);
+    }
+    cell.addEventListener("click", () => {
+      // 直前のドラッグ並べ替えで発火した click は無視する（意図しないソートを防ぐ）。
+      if (suppressHeadClick) return;
+      toggleSort(c);
+    });
+
     if (!PINNED_COLUMNS.has(c)) {
       cell.addEventListener("contextmenu", (ev) => {
         ev.preventDefault();
@@ -1254,12 +1361,15 @@ function renderHead() {
       cell.draggable = true;
       cell.addEventListener("dragstart", (ev) => {
         gridDragSrcCol = c;
+        suppressHeadClick = true;
         cell.classList.add("dragging");
         (ev as DragEvent).dataTransfer?.setData("text/plain", c);
       });
       cell.addEventListener("dragend", () => {
         cell.classList.remove("dragging");
         clearDropTargets();
+        // dragend の直後に click が飛んでくる環境があるため、1 tick 遅らせて解除する。
+        setTimeout(() => { suppressHeadClick = false; }, 0);
       });
       cell.addEventListener("dragover", (ev) => {
         handleColDragOver(ev as DragEvent, cell);
@@ -1329,6 +1439,8 @@ function renderHead() {
     const handle = document.createElement("div");
     handle.className = "col-resize-handle";
     handle.addEventListener("mousedown", (ev) => startColumnResize(ev as MouseEvent, c, handle));
+    // 幅変更のクリックが親セルへ伝わるとソートが切り替わってしまうため、ここで止める。
+    handle.addEventListener("click", (ev) => ev.stopPropagation());
     // ハンドルは列の境界(=左隣の列のセルの右端)に重なる。ここでの右クリックが親要素(セル)の
     // contextmenu(=一つ左の列の設定)に伝播してしまうバグを防ぐため、ここで止める。
     handle.addEventListener("contextmenu", (ev) => {
