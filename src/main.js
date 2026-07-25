@@ -377,6 +377,35 @@ async function openTableBySourceId(id) {
         resultInfo.textContent = "開けませんでした: " + String(e);
     }
 }
+function confirmDelete(message) {
+    return new Promise((resolve) => {
+        const dlg = $("confirm-dialog");
+        const msgEl = $("confirm-dialog-message");
+        const okBtn = $("confirm-dialog-ok");
+        const cancelBtn = $("confirm-dialog-cancel");
+        msgEl.textContent = message;
+        const cleanup = () => {
+            okBtn.onclick = null;
+            cancelBtn.onclick = null;
+            dlg.onclose = null;
+        };
+        okBtn.onclick = () => {
+            cleanup();
+            dlg.close();
+            resolve(true);
+        };
+        cancelBtn.onclick = () => {
+            cleanup();
+            dlg.close();
+            resolve(false);
+        };
+        dlg.onclose = () => {
+            cleanup();
+            resolve(false);
+        };
+        dlg.showModal();
+    });
+}
 function openContextMenu(ev, id) {
     closeAllContextMenus();
     ctxTargetId = id;
@@ -516,7 +545,7 @@ ctxMenu.addEventListener("click", async (ev) => {
             await openTableBySourceId(id);
             break;
         case "delete":
-            if (!confirm(`「${src?.name ?? ""}」を削除しますか？（キャッシュも消えます）`))
+            if (!await confirmDelete(`「${src?.name ?? ""}」を削除しますか？\n（キャッシュも消えます）`))
                 break;
             await invoke("delete_source", { id });
             selectedSourceIds.delete(id);
@@ -565,7 +594,7 @@ parentCtxMenu.addEventListener("click", async (ev) => {
         }
         case "delete": {
             const names = children.map((c) => c.name).join(", ");
-            if (!confirm(`「${parentLabel(parentKey)}」配下の ${children.length} 個のテーブルをすべて削除しますか？\n（${names}）\nキャッシュも消えます。`))
+            if (!await confirmDelete(`「${parentLabel(parentKey)}」配下の ${children.length} 個のテーブルをすべて削除しますか？\n（${names}）\nキャッシュも消えます。`))
                 break;
             for (const c of children) {
                 await invoke("delete_source", { id: c.id });
@@ -2565,7 +2594,7 @@ function renderManageRows() {
         delBtn.className = "btn danger";
         delBtn.textContent = "削除";
         delBtn.onclick = async () => {
-            if (!confirm(`「${s.name}」を削除しますか？（キャッシュも消えます）`))
+            if (!await confirmDelete(`「${s.name}」を削除しますか？\n（キャッシュも消えます）`))
                 return;
             await invoke("delete_source", { id: s.id });
             selectedSourceIds.delete(s.id);
