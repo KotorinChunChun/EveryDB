@@ -108,6 +108,28 @@ pub fn add_source(
     Ok(id)
 }
 
+/// 新規テーブルの設定に、兄弟ソースの接続情報（保存されている暗号化済みの値）を補う。
+/// 空・プレースホルダーのキーだけが対象。`dpapi:` 付きの値はそのままコピーされ、
+/// `protect_config` が二重に暗号化しないため復号可能な状態を保てる。
+fn fill_shared_from_sibling(
+    config_json: &str,
+    sibling_config_json: &str,
+    shared_keys: &[String],
+) -> Result<String, String> {
+    let sibling: serde_json::Value = serde_json::from_str(sibling_config_json).map_err(err_to_string)?;
+    let mut cfg: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(config_json).map_err(err_to_string)?;
+    for k in shared_keys {
+        let cur = cfg.get(k).and_then(|v| v.as_str()).unwrap_or_default();
+        if cur.is_empty() || cur == secret::SECRET_PLACEHOLDER {
+            if let Some(v) = sibling.get(k) {
+                cfg.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    serde_json::to_string(&cfg).map_err(err_to_string)
+}
+
 /// 既存の兄弟ソースから接続情報を引き継いで、同じ接続先配下にテーブルを追加する。
 /// 接続設定ダイアログのテーブル一覧から追加するときに使う。
 ///
@@ -130,18 +152,7 @@ pub fn add_source_from_sibling(
         return Err("このソース種別は秘密情報を扱うため、先にマスターパスワードを設定してください".to_string());
     }
     let (_, sibling_json) = db::get_source_config(&conn, sibling_id).map_err(err_to_string)?;
-    let sibling: serde_json::Value = serde_json::from_str(&sibling_json).map_err(err_to_string)?;
-    let mut cfg: serde_json::Map<String, serde_json::Value> =
-        serde_json::from_str(&config_json).map_err(err_to_string)?;
-    for k in &shared_keys {
-        let cur = cfg.get(k).and_then(|v| v.as_str()).unwrap_or_default();
-        if cur.is_empty() || cur == secret::SECRET_PLACEHOLDER {
-            if let Some(v) = sibling.get(k) {
-                cfg.insert(k.clone(), v.clone());
-            }
-        }
-    }
-    let merged = serde_json::to_string(&cfg).map_err(err_to_string)?;
+    let merged = fill_shared_from_sibling(&config_json, &sibling_json, &shared_keys)?;
     // 既に `dpapi:` 付きの値は protect_config が二重暗号化しないので、そのまま渡してよい。
     let protected = secret::protect_config(&type_, &merged).map_err(err_to_string)?;
     let id = db::insert_source(&conn, &type_, &name, &protected).map_err(err_to_string)?;
@@ -263,8 +274,16 @@ fn effective_config(
 ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
     let (_, config_json) = db::get_source_config(conn, id).map_err(err_to_string)?;
     let decrypted = secret::unprotect_config(&config_json).map_err(err_to_string)?;
+    merge_overrides(&decrypted, overrides_json)
+}
+
+/// 復号済み設定に、ダイアログ上の編集値を重ねる。空・プレースホルダーは未編集として無視する。
+fn merge_overrides(
+    config_json: &str,
+    overrides_json: &str,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
     let mut cfg: serde_json::Map<String, serde_json::Value> =
-        serde_json::from_str(&decrypted).map_err(err_to_string)?;
+        serde_json::from_str(config_json).map_err(err_to_string)?;
     let overrides: serde_json::Map<String, serde_json::Value> =
         serde_json::from_str(overrides_json).map_err(err_to_string)?;
     for (k, v) in overrides {
@@ -491,6 +510,79 @@ pub fn open_ref(app: AppHandle, target: String) -> Result<(), String> {
     } else {
         reject_executable_target(&target)?;
         app.opener().open_path(target, None::<&str>).map_err(err_to_string)
+    }
+}
+
+#[cfg(test)]
+mod parent_dialog_tests {
+    use super::{fill_shared_from_sibling, merge_overrides};
+    use crate::secret::SECRET_PLACEHOLDER;
+
+    #[test]
+    fn merge_overrides_ignores_masked_and_empty_values() {
+        let saved = r#"{"token":"ntn_real","database_id":"db1"}"#;
+        let edited = format!(r#"{{"token":"{SECRET_PLACEHOLDER}","database_id":""}}"#);
+        let merged = merge_overrides(saved, &edited).unwrap();
+        // マスク・空欄はユーザーが触っていない扱い → 保存済みの値が残る
+        assert_eq!(merged["token"], "ntn_real");
+        assert_eq!(merged["database_id"], "db1");
+    }
+
+    #[test]
+    fn merge_overrides_applies_edited_values() {
+        let saved = r#"{"token":"ntn_old","site_url":"https://old"}"#;
+        let edited = r#"{"token":"ntn_new","site_url":"https://new","extra":"x"}"#;
+        let merged = merge_overrides(saved, edited).unwrap();
+        assert_eq!(merged["token"], "ntn_new");
+        assert_eq!(merged["site_url"], "https://new");
+        assert_eq!(merged["extra"], "x");
+    }
+
+    #[test]
+    fn fill_shared_copies_encrypted_secret_without_decrypting() {
+        let sibling = r#"{"token":"dpapi:deadbeef","database_id":"db1"}"#;
+        let new_cfg = format!(r#"{{"database_id":"db2","token":"{SECRET_PLACEHOLDER}"}}"#);
+        let out = fill_shared_from_sibling(&new_cfg, sibling, &["token".to_string()]).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        // 暗号化済みのまま引き継ぐ（UI 側は平文を一切扱わない）
+        assert_eq!(v["token"], "dpapi:deadbeef");
+        // 一覧で選んだ側の値は上書きされない
+        assert_eq!(v["database_id"], "db2");
+    }
+
+    /// v0.0.3 で直したバグの再現・回帰テスト。
+    /// 「保存済みトークンを DPAPI で暗号化 → マスク済みの値で一覧取得」という接続設定ダイアログと
+    /// 同じ経路をたどり、実際に Notion からデータベース一覧が取れることを確認する。
+    #[test]
+    #[ignore = "requires EVERYDB_NOTION_TOKEN"]
+    fn notion_live_list_via_saved_config_even_when_masked() {
+        use crate::{browse, db, secret};
+        let token = std::env::var("EVERYDB_NOTION_TOKEN").expect("EVERYDB_NOTION_TOKEN");
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::init_schema(&conn).unwrap();
+        let cfg = serde_json::json!({ "token": token, "database_id": "" }).to_string();
+        let protected = secret::protect_config("notion", &cfg).unwrap();
+        assert!(protected.contains("dpapi:"), "トークンが暗号化されていること");
+        let id = db::insert_source(&conn, "notion", "案件DB", &protected).unwrap();
+
+        // ダイアログ側はロック中でマスク値しか持っていない状況を再現する。
+        let overrides = format!(r#"{{"token":"{SECRET_PLACEHOLDER}"}}"#);
+        let effective = super::effective_config(&conn, id, &overrides).unwrap();
+        let effective_token = effective["token"].as_str().unwrap();
+        assert_ne!(effective_token, SECRET_PLACEHOLDER, "保存済みの平文トークンへ解決されること");
+
+        let dbs = browse::notion_list_databases(effective_token).unwrap();
+        println!("notion databases via saved config = {}", dbs.len());
+        assert!(!dbs.is_empty());
+    }
+
+    #[test]
+    fn fill_shared_keeps_explicitly_entered_value() {
+        let sibling = r#"{"token":"dpapi:deadbeef"}"#;
+        let new_cfg = r#"{"token":"ntn_typed_by_user","database_id":"db2"}"#;
+        let out = fill_shared_from_sibling(new_cfg, sibling, &["token".to_string()]).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["token"], "ntn_typed_by_user");
     }
 }
 

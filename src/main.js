@@ -5,6 +5,9 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 // ==== 状態 ====
 let sources = [];
 let selectedSourceIds = new Set();
+/** 検索が返したままの順序の行（ソート解除で戻す先）。 */
+let rawRows = [];
+/** 画面に表示する順序の行（ソート適用後。未ソートなら rawRows と同じ並び）。 */
 let rows = [];
 let columns = []; // 表示する列（Source + フィールド名の和集合）
 let searchSeq = 0; // 送出したリクエストの通し番号
@@ -464,10 +467,19 @@ function makeSourceItem(s) {
     });
     return item;
 }
+/** 絞り込みボックスの条件に一致するか（テーブル名 / 接続先ラベルの部分一致）。 */
+function sourceMatchesFilter(s) {
+    const q = sourceFilter.trim().toLowerCase();
+    return !q || s.name.toLowerCase().includes(q) || parentLabel(s.parent).toLowerCase().includes(q);
+}
+/** 現在サイドバーに表示されているテーブル（絞り込みが空なら全件）。全選択/全解除の対象。 */
+function visibleSources() {
+    return sources.filter(sourceMatchesFilter);
+}
 function renderSources() {
     sourcesEl.innerHTML = "";
     const q = sourceFilter.trim().toLowerCase();
-    const match = (s) => !q || s.name.toLowerCase().includes(q) || parentLabel(s.parent).toLowerCase().includes(q);
+    const match = sourceMatchesFilter;
     // parent キーごとにグルーピング（出現順を維持）。parent="" は単独ノード。
     const groups = new Map();
     const standalone = [];
@@ -669,17 +681,33 @@ function updateStatus() {
         statusEl.textContent = last ? `最終更新: ${last}` : "まだ更新されていません";
     }
 }
-$("source-filter").addEventListener("input", (e) => {
-    sourceFilter = e.target.value;
+const sourceFilterInput = $("source-filter");
+const sourceFilterClearBtn = $("source-filter-clear");
+function setSourceFilter(value) {
+    sourceFilter = value;
+    sourceFilterInput.value = value;
+    sourceFilterClearBtn.hidden = value === "";
     renderSources();
+}
+sourceFilterInput.addEventListener("input", (e) => setSourceFilter(e.target.value));
+sourceFilterInput.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && sourceFilterInput.value !== "")
+        setSourceFilter("");
 });
+sourceFilterClearBtn.onclick = () => {
+    setSourceFilter("");
+    sourceFilterInput.focus();
+};
+// 全選択 / 全解除は「いま一覧に見えているテーブル」だけを対象にする（絞り込み外の選択は保つ）。
 $("select-all").onclick = () => {
-    selectedSourceIds = new Set(sources.map((s) => s.id));
+    for (const s of visibleSources())
+        selectedSourceIds.add(s.id);
     renderSources();
     runSearch();
 };
 $("select-none").onclick = () => {
-    selectedSourceIds = new Set();
+    for (const s of visibleSources())
+        selectedSourceIds.delete(s.id);
     renderSources();
     runSearch();
 };
@@ -975,8 +1003,9 @@ async function runSearch() {
     if (resp.seq <= lastAppliedSeq)
         return; // 古い結果は破棄
     lastAppliedSeq = resp.seq;
-    rows = resp.rows;
+    rawRows = resp.rows;
     rebuildColumns();
+    applySort(); // 検索し直しても、選択中のソート順は維持する
     selectedCell = null;
     renderHead();
     renderRows();
@@ -989,7 +1018,7 @@ let gridColumnOrder = [];
 function rebuildColumns() {
     const seen = new Set();
     const cols = [];
-    for (const r of rows) {
+    for (const r of rawRows) {
         for (const k of Object.keys(r.fields)) {
             if (!seen.has(k)) {
                 seen.add(k);
@@ -1000,6 +1029,68 @@ function rebuildColumns() {
     const known = gridColumnOrder.filter((c) => cols.includes(c));
     const extra = cols.filter((c) => !gridColumnOrder.includes(c));
     columns = ["テーブル", "見出し", ...known, ...extra];
+}
+// ============================================================
+// 列見出しクリックによる並べ替え（昇順 → 降順 → 解除 のトグル）
+// 状態はモジュール変数のみに持つ（要件: 「再起動まで記憶する」＝永続化しない）。
+// ============================================================
+let sortState = null;
+/** 日本語を自然に、数字混じりの文字列も桁数順に並べる比較器。 */
+const sortCollator = new Intl.Collator("ja", { numeric: true, sensitivity: "base" });
+/** 値の比較。両方が数値として解釈できるときだけ数値比較にする。 */
+function compareCellValues(a, b) {
+    const na = Number(a);
+    const nb = Number(b);
+    if (Number.isFinite(na) && Number.isFinite(nb))
+        return na < nb ? -1 : na > nb ? 1 : 0;
+    return sortCollator.compare(a, b);
+}
+/** sortState に従って rawRows から表示用の rows を作る。 */
+function applySort() {
+    if (!sortState) {
+        rows = rawRows;
+        return;
+    }
+    const idx = columns.indexOf(sortState.column);
+    if (idx < 0) {
+        // 検索条件が変わって対象列が消えた場合はソートも解除する。
+        sortState = null;
+        rows = rawRows;
+        return;
+    }
+    const sign = sortState.dir === "asc" ? 1 : -1;
+    // 元の並び順 i をタイブレークに使い、同値の行の相対順序を安定させる。
+    const keyed = rawRows.map((r, i) => ({ r, i, k: cellText(r, idx).trim() }));
+    keyed.sort((x, y) => {
+        // 空値は昇順・降順どちらでも末尾に置く（空が先頭を占めると読みづらいため）。
+        if (x.k === "" || y.k === "") {
+            if (x.k === y.k)
+                return x.i - y.i;
+            return x.k === "" ? 1 : -1;
+        }
+        const c = compareCellValues(x.k, y.k);
+        return c !== 0 ? sign * c : x.i - y.i;
+    });
+    rows = keyed.map((e) => e.r);
+}
+function toggleSort(column) {
+    if (!sortState || sortState.column !== column)
+        sortState = { column, dir: "asc" };
+    else if (sortState.dir === "asc")
+        sortState = { column, dir: "desc" };
+    else
+        sortState = null;
+    selectedCell = null; // 並びが変わるので選択セルは解除する
+    applySort();
+    renderHead();
+    viewportEl.scrollTop = 0;
+    renderRows();
+}
+/** 見出しの title に「次に押したらどうなるか」を出す。 */
+function sortHintFor(column) {
+    if (sortState?.column !== column)
+        return `${column}\nクリックで昇順に並べ替え`;
+    return sortState.dir === "asc" ? `${column}\nクリックで降順に並べ替え` : `${column}\nクリックで並べ替えを解除`;
 }
 /** 検索結果 rows から「ソースID → そのソースに出現した表示名の集合」を 1 パスで作る。
  * 列設定ダイアログ・列並べ替えの保存で使う。以前はソース数 × 行数の二重走査をしていたため、
@@ -1182,6 +1273,8 @@ function startColumnResize(ev, colName, handle) {
     document.addEventListener("mouseup", onUp);
 }
 let gridDragSrcCol = null;
+/** 列見出しのドラッグ直後に発火する click を無視するためのフラグ（ソートとの誤爆防止）。 */
+let suppressHeadClick = false;
 /** テーブルの元フィールドに対応しない疑似列（常に先頭に固定・並べ替え/列対応編集の対象外）。 */
 const PINNED_COLUMNS = new Set(["テーブル", "見出し"]);
 function renderHead() {
@@ -1195,8 +1288,22 @@ function renderHead() {
         const label = document.createElement("span");
         label.className = "cell-head-label";
         label.textContent = c;
-        label.title = c;
         cell.appendChild(label);
+        // 左クリックで昇順 → 降順 → 解除。疑似列（テーブル/見出し）も対象にする。
+        cell.classList.add("sortable");
+        cell.title = sortHintFor(c);
+        if (sortState?.column === c) {
+            const mark = document.createElement("span");
+            mark.className = "sort-mark";
+            mark.textContent = sortState.dir === "asc" ? "▲" : "▼";
+            cell.appendChild(mark);
+        }
+        cell.addEventListener("click", () => {
+            // 直前のドラッグ並べ替えで発火した click は無視する（意図しないソートを防ぐ）。
+            if (suppressHeadClick)
+                return;
+            toggleSort(c);
+        });
         if (!PINNED_COLUMNS.has(c)) {
             cell.addEventListener("contextmenu", (ev) => {
                 ev.preventDefault();
@@ -1207,12 +1314,15 @@ function renderHead() {
             cell.draggable = true;
             cell.addEventListener("dragstart", (ev) => {
                 gridDragSrcCol = c;
+                suppressHeadClick = true;
                 cell.classList.add("dragging");
                 ev.dataTransfer?.setData("text/plain", c);
             });
             cell.addEventListener("dragend", () => {
                 cell.classList.remove("dragging");
                 clearDropTargets();
+                // dragend の直後に click が飛んでくる環境があるため、1 tick 遅らせて解除する。
+                setTimeout(() => { suppressHeadClick = false; }, 0);
             });
             cell.addEventListener("dragover", (ev) => {
                 handleColDragOver(ev, cell);
@@ -1284,6 +1394,8 @@ function renderHead() {
         const handle = document.createElement("div");
         handle.className = "col-resize-handle";
         handle.addEventListener("mousedown", (ev) => startColumnResize(ev, c, handle));
+        // 幅変更のクリックが親セルへ伝わるとソートが切り替わってしまうため、ここで止める。
+        handle.addEventListener("click", (ev) => ev.stopPropagation());
         // ハンドルは列の境界(=左隣の列のセルの右端)に重なる。ここでの右クリックが親要素(セル)の
         // contextmenu(=一つ左の列の設定)に伝播してしまうバグを防ぐため、ここで止める。
         handle.addEventListener("contextmenu", (ev) => {
@@ -1489,6 +1601,210 @@ $("column-map-save").onclick = async () => {
 // ============================================================
 /** テキスト/パスワード系フィールドを任意のコンテナへ描画する簡易レンダラー（接続先ダイアログ用）。
  * renderTypeFields と異なり、共有(接続)フィールドは常に text/password + 任意の参照ボタンのみのため専用に用意する。 */
+// ============================================================
+// 接続先種別ごとの手順書（docs/guides/*.md）
+// ビルド時に文字列として取り込むので、配布物にも必ず同梱される（ファイルアクセス権限も不要）。
+// ============================================================
+const GUIDE_DOCS = import.meta.glob("/docs/guides/*.md", { query: "?raw", import: "default", eager: true });
+/** 種別キー → 手順書のファイル名（拡張子なし）。複数種別で 1 本を共有する。 */
+function guideNameFor(type_) {
+    if (type_ === "notion")
+        return "notion";
+    if (type_.startsWith("graph"))
+        return "microsoft365";
+    if (type_ === "google_sheets")
+        return "google-sheets";
+    if (type_ === "ical_calendar")
+        return "ical";
+    if (type_ === "airtable")
+        return "airtable";
+    if (type_ === "box_files")
+        return "box";
+    if (type_ === "postgres")
+        return "postgresql";
+    if (type_ === "mysql")
+        return "mysql";
+    if (PATH_GROUPED_TYPES.has(type_))
+        return "local-files";
+    return null;
+}
+function guideTextFor(type_) {
+    const name = guideNameFor(type_);
+    return name ? GUIDE_DOCS[`/docs/guides/${name}.md`] ?? null : null;
+}
+/** 折り返された行をつなぐ。日本語はそのまま連結し、英数字同士の境目だけ空白を入れる。 */
+function joinWrapped(a, b) {
+    if (!a)
+        return b;
+    const needSpace = /[A-Za-z0-9)\]]$/.test(a) && /^[A-Za-z0-9([]/.test(b);
+    return a + (needSpace ? " " : "") + b;
+}
+/** インライン記法（**強調** / `コード` / [表示](URL)）を DOM として組み立てる。 */
+function appendInlineMarkdown(parent, text) {
+    const re = /\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)/g;
+    let last = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+        if (m.index > last)
+            parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+        if (m[1] !== undefined) {
+            const b = document.createElement("strong");
+            b.textContent = m[1];
+            parent.appendChild(b);
+        }
+        else if (m[2] !== undefined) {
+            const c = document.createElement("code");
+            c.textContent = m[2];
+            parent.appendChild(c);
+        }
+        else {
+            // リンクはアプリ内で遷移させず、既定のブラウザで開く。
+            const url = m[4];
+            const a = document.createElement("a");
+            a.textContent = m[3];
+            a.href = "#";
+            a.title = url;
+            a.onclick = (ev) => {
+                ev.preventDefault();
+                void invoke("open_ref", { target: url }).catch(() => { });
+            };
+            parent.appendChild(a);
+        }
+        last = re.lastIndex;
+    }
+    if (last < text.length)
+        parent.appendChild(document.createTextNode(text.slice(last)));
+}
+/** 手順書用の最小限の Markdown レンダラ（見出し / 箇条書き / 番号付き / 表 / コード / 段落）。 */
+function renderMarkdownInto(container, md) {
+    container.innerHTML = "";
+    const lines = md.replace(/<!--[\s\S]*?-->/g, "").split(/\r?\n/);
+    let i = 0;
+    const isTableRow = (s) => s.trim().startsWith("|");
+    const cellsOf = (s) => s.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+    while (i < lines.length) {
+        const line = lines[i];
+        if (line.trim() === "") {
+            i++;
+            continue;
+        }
+        // コードブロック
+        if (line.trim().startsWith("```")) {
+            i++;
+            const buf = [];
+            while (i < lines.length && !lines[i].trim().startsWith("```"))
+                buf.push(lines[i++]);
+            i++; // 閉じフェンス
+            const pre = document.createElement("pre");
+            const code = document.createElement("code");
+            code.textContent = buf.join("\n");
+            pre.appendChild(code);
+            container.appendChild(pre);
+            continue;
+        }
+        // 見出し
+        const h = /^(#{1,4})\s+(.*)$/.exec(line);
+        if (h) {
+            const el = document.createElement(`h${h[1].length}`);
+            appendInlineMarkdown(el, h[2]);
+            container.appendChild(el);
+            i++;
+            continue;
+        }
+        // 表（次の行が区切り行のときだけ表として扱う）
+        if (isTableRow(line) && i + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
+            const table = document.createElement("table");
+            const thead = document.createElement("thead");
+            const htr = document.createElement("tr");
+            for (const c of cellsOf(line)) {
+                const th = document.createElement("th");
+                appendInlineMarkdown(th, c);
+                htr.appendChild(th);
+            }
+            thead.appendChild(htr);
+            table.appendChild(thead);
+            i += 2;
+            const tbody = document.createElement("tbody");
+            while (i < lines.length && isTableRow(lines[i])) {
+                const tr = document.createElement("tr");
+                for (const c of cellsOf(lines[i])) {
+                    const td = document.createElement("td");
+                    appendInlineMarkdown(td, c);
+                    tr.appendChild(td);
+                }
+                tbody.appendChild(tr);
+                i++;
+            }
+            table.appendChild(tbody);
+            container.appendChild(table);
+            continue;
+        }
+        // 箇条書き / 番号付き（インデントされた次行は同じ項目の折り返しとして扱う）
+        const bullet = /^(\s*)([-*]|\d+\.)\s+(.*)$/.exec(line);
+        if (bullet) {
+            const ordered = /\d/.test(bullet[2]);
+            const list = document.createElement(ordered ? "ol" : "ul");
+            while (i < lines.length) {
+                const m2 = /^(\s*)([-*]|\d+\.)\s+(.*)$/.exec(lines[i]);
+                if (!m2 || /\d/.test(m2[2]) !== ordered)
+                    break;
+                let text = m2[3];
+                i++;
+                while (i < lines.length && /^\s+\S/.test(lines[i]) && !/^(\s*)([-*]|\d+\.)\s+/.test(lines[i]) && !lines[i].trim().startsWith("```")) {
+                    text = joinWrapped(text, lines[i].trim());
+                    i++;
+                }
+                const li = document.createElement("li");
+                appendInlineMarkdown(li, text);
+                list.appendChild(li);
+            }
+            container.appendChild(list);
+            continue;
+        }
+        // 段落（空行・他ブロックが来るまでを 1 つにまとめる）
+        let text = "";
+        while (i < lines.length && lines[i].trim() !== "" && !/^(#{1,4})\s/.test(lines[i])
+            && !isTableRow(lines[i]) && !/^(\s*)([-*]|\d+\.)\s+/.test(lines[i]) && !lines[i].trim().startsWith("```")) {
+            text = joinWrapped(text, lines[i].trim());
+            i++;
+        }
+        const p = document.createElement("p");
+        appendInlineMarkdown(p, text);
+        container.appendChild(p);
+    }
+}
+const guideDialog = $("guide-dialog");
+const guideBody = $("guide-body");
+function openGuide(type_) {
+    const md = guideTextFor(type_);
+    if (!md)
+        return;
+    // 先頭の h1 はダイアログのタイトルにするので本文からは省く。
+    const firstH1 = /^#\s+(.*)$/m.exec(md);
+    $("guide-title").textContent = firstH1 ? firstH1[1] : "接続手順書";
+    renderMarkdownInto(guideBody, firstH1 ? md.replace(firstH1[0], "") : md);
+    guideBody.scrollTop = 0;
+    guideDialog.showModal();
+}
+$("guide-close").onclick = () => guideDialog.close();
+$("guide-close-x").onclick = () => guideDialog.close();
+$("f-guide").onclick = () => openGuide(typeSel.value);
+$("parent-guide").onclick = () => {
+    if (parentDialogState)
+        openGuide(parentDialogState.repType);
+};
+/** API キー・トークンの取得ページを既定のブラウザで開くボタン。 */
+function makeApiKeyButton(url) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn browse-btn";
+    btn.textContent = "🔑 取得…";
+    btn.title = `${url} を既定のブラウザで開きます`;
+    btn.onclick = () => void invoke("open_ref", { target: url }).catch((e) => {
+        console.error("取得ページを開けませんでした:", e);
+    });
+    return btn;
+}
 function renderFieldsInto(container, idPrefix, fields, prefill) {
     container.innerHTML = "";
     for (const f of fields) {
@@ -1505,28 +1821,33 @@ function renderFieldsInto(container, idPrefix, fields, prefill) {
             if (v !== undefined && v !== null)
                 input.value = String(v);
         }
-        if (f.browse) {
+        if (f.browse || f.helpUrl) {
             const row = document.createElement("div");
             row.className = "path-row";
-            const browseBtn = document.createElement("button");
-            browseBtn.type = "button";
-            browseBtn.className = "btn browse-btn";
-            browseBtn.textContent = "参照…";
-            browseBtn.onclick = async () => {
-                try {
-                    const picked = await openDialog({
-                        directory: f.browse === "folder",
-                        multiple: false,
-                        filters: f.browse === "file" ? f.dialogFilters : undefined,
-                    });
-                    if (typeof picked === "string")
-                        input.value = picked;
-                }
-                catch (e) {
-                    console.error("ファイル選択に失敗:", e);
-                }
-            };
-            row.append(input, browseBtn);
+            row.appendChild(input);
+            if (f.browse) {
+                const browseBtn = document.createElement("button");
+                browseBtn.type = "button";
+                browseBtn.className = "btn browse-btn";
+                browseBtn.textContent = "参照…";
+                browseBtn.onclick = async () => {
+                    try {
+                        const picked = await openDialog({
+                            directory: f.browse === "folder",
+                            multiple: false,
+                            filters: f.browse === "file" ? f.dialogFilters : undefined,
+                        });
+                        if (typeof picked === "string")
+                            input.value = picked;
+                    }
+                    catch (e) {
+                        console.error("ファイル選択に失敗:", e);
+                    }
+                };
+                row.appendChild(browseBtn);
+            }
+            if (f.helpUrl)
+                row.appendChild(makeApiKeyButton(f.helpUrl));
             label.appendChild(row);
         }
         else {
@@ -1547,8 +1868,39 @@ function parentBrowseKind(repType) {
         return "sharepoint";
     if (repType === "notion")
         return "notion";
+    // Microsoft 365(Graph) は API での一覧取得ではなく、実装済みの種別そのものを一覧に出す。
+    if (repType.startsWith("graph"))
+        return "graph365";
     return null;
 }
+/** Microsoft 365: 接続情報（テナント/クライアント/シークレット）だけで使える＝ワンクリックで追加できる種別。 */
+const GRAPH_ONE_CLICK_TYPES = [
+    "graph_entra_users", "graph_entra_groups", "graph_entra_devices",
+    "graph_intune_devices", "graph_licenses", "graph_teams",
+];
+/** Microsoft 365: 対象ユーザーやグループ ID など追加入力が要るため一覧からは追加できない種別。 */
+const GRAPH_PARAMETERIZED_TYPES = ["graph_calendar", "graph_onedrive", "graph_planner"];
+/** 接続先種別ごとの「アクセス許可（共有）設定ページ」。テーブル一覧が 0 件のときの導線。 */
+const ACCESS_SETTINGS_URL = {
+    notion: {
+        url: "https://www.notion.so/my-integrations",
+        label: "アクセス許可を設定…",
+        hint: "一覧に出るのは、Notion 側でこのインテグレーションに「接続」したデータベースだけです。"
+            + "対象のデータベースを開き、右上の … →「接続」からインテグレーションを追加してから、⟳ 更新を押してください。",
+    },
+    graph365: {
+        url: "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+        label: "API アクセス許可を設定…",
+        hint: "取得には、アプリ登録の「API のアクセス許可」で対象の Graph 権限（User.Read.All 等）に"
+            + "管理者の同意が必要です。",
+    },
+    sharepoint: {
+        url: "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+        label: "API アクセス許可を設定…",
+        hint: "サイト内のリストとドキュメントライブラリを一覧します。取得できない場合はアプリ登録の"
+            + "「API のアクセス許可」（Sites.Read.All 等）を確認してください。",
+    },
+};
 let parentDialogState = null;
 const parentDynamicEl = $("parent-dynamic");
 async function openParentSettingsDialog(parentKey) {
@@ -1566,6 +1918,7 @@ async function openParentSettingsDialog(parentKey) {
     errEl.textContent = "";
     $("parent-dialog-title").textContent = `接続設定: ${parentLabel(parentKey)}`;
     $("parent-type-label").textContent = `種別: ${parentKindLabel(parentKindOf(repType), repType)}`;
+    $("parent-guide").hidden = guideTextFor(repType) === null;
     $("parent-label").value = parentLabelOverrides.get(parentKey) ?? "";
     $("parent-scope-hint").textContent =
         `この接続情報は次の ${children.length} 個のテーブルに反映されます: ${children.map((c) => c.name).join(", ")}`;
@@ -1578,10 +1931,10 @@ async function openParentSettingsDialog(parentKey) {
         catch { /* noop */ }
     }
     renderFieldsInto(parentDynamicEl, "pf-", fieldDefs, prefill);
-    const manageBtn = $("parent-manage-tables");
-    manageBtn.hidden = parentBrowseKind(repType) === null;
     parentDialogState = { parentKey, keys, fieldDefs, children, repType };
-    $("parent-dialog").showModal();
+    if (!$("parent-dialog").open)
+        $("parent-dialog").showModal();
+    await loadParentTables();
 }
 // ロック中でプレースホルダーが入っているパスワード欄をクリックしたら解錠を促す（本体ダイアログと同じ挙動）。
 parentDynamicEl.addEventListener("focusin", async (ev) => {
@@ -1624,6 +1977,16 @@ $("parent-save").onclick = async () => {
         errEl.textContent = "接続情報に未入力の項目があります";
         return;
     }
+    // テーブル一覧のチェック差分。削除が発生する場合は先に確認を取る。
+    const { toAdd, toRemove } = parentTableDiff();
+    if (toRemove.length > 0) {
+        const names = toRemove.map((t) => t.label).join("、");
+        const ok = await confirmDelete(`チェックを外した ${toRemove.length} 個のテーブルを削除します。\n（${names}）\nキャッシュも消えます。よろしいですか？`);
+        if (!ok)
+            return;
+    }
+    const saveBtn = $("parent-save");
+    saveBtn.disabled = true;
     try {
         await invoke("set_parent_label", { parentKey, label: newLabel });
         if (newLabel)
@@ -1640,6 +2003,41 @@ $("parent-save").onclick = async () => {
             }
             await invoke("update_source", { id: c.id, name: detail.name, configJson: JSON.stringify(cfg) });
         }
+        // 追加を先に行う。接続情報の引き継ぎ元（children[0]）が削除対象だと参照できなくなるため。
+        const failures = [];
+        for (const item of toAdd) {
+            const config = { ...item.extraConfig };
+            for (const k of keys) {
+                if (sharedValues[k] !== undefined)
+                    config[k] = sharedValues[k];
+            }
+            try {
+                // 秘密フィールドがマスクされたままでも壊れないよう、既存テーブルの暗号化済み設定を引き継ぐ。
+                await invoke("add_source_from_sibling", {
+                    siblingId: children[0].id,
+                    type: item.type_,
+                    name: item.label,
+                    configJson: JSON.stringify(config),
+                    sharedKeys: keys,
+                });
+            }
+            catch (e) {
+                failures.push(`${item.label}: ${String(e)}`);
+            }
+        }
+        // チェックを外したテーブルを削除する。
+        for (const t of toRemove) {
+            await invoke("delete_source", { id: t.id });
+            selectedSourceIds.delete(t.id);
+        }
+        if (failures.length) {
+            // 失敗があればダイアログは閉じずに理由を出す（サイレント失敗の防止）。
+            await loadSources();
+            await runSearch();
+            await openParentSettingsDialog(parentKey);
+            errEl.textContent = `${failures.length} 件の追加に失敗しました: ${failures.join(" / ")}`;
+            return;
+        }
         $("parent-dialog").close();
         await loadSources();
         await runSearch();
@@ -1647,155 +2045,176 @@ $("parent-save").onclick = async () => {
     catch (e) {
         errEl.textContent = "保存に失敗: " + String(e);
     }
+    finally {
+        saveBtn.disabled = false;
+    }
 };
-let parentTablePickerMatched = new Map(); // item.key -> 既存の子ソースID
-let parentTablePickerItems = [];
-let parentTablePickerSharedNow = {};
-$("parent-manage-tables").onclick = () => void openParentTablePicker();
-async function openParentTablePicker() {
+let parentTableMatched = new Map(); // item.key -> 既存の子ソースID
+let parentTableItems = [];
+const parentTablesFieldset = $("parent-tables-fieldset");
+const parentTablesList = $("parent-tables-list");
+const parentTablesHint = $("parent-tables-hint");
+const parentTablesCount = $("parent-tables-count");
+const parentTablesAccessBtn = $("parent-tables-access");
+/** ダイアログ上で編集中の接続情報（保存前の値も含む）。一覧取得の上書き値として使う。 */
+function parentSharedNow() {
+    const out = {};
     if (!parentDialogState)
-        return;
-    const { keys, children, repType } = parentDialogState;
-    const browseKind = parentBrowseKind(repType);
-    if (!browseKind)
-        return;
-    const dlg = $("parent-table-picker");
-    const listEl = $("parent-table-picker-list");
-    const errEl = $("parent-table-picker-error");
-    errEl.textContent = "";
-    listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
-    dlg.showModal();
-    // このダイアログでまだ保存していない編集中の接続情報も含めて使う。
-    const sharedNow = {};
-    for (const k of keys) {
+        return out;
+    for (const k of parentDialogState.keys) {
         const el = document.getElementById(`pf-${k}`);
         if (el)
-            sharedNow[k] = el.value;
+            out[k] = k === "path" ? normalizePath(el.value) : el.value.trim();
     }
-    parentTablePickerItems = [];
+    return out;
+}
+function updateParentTablesCount() {
+    const boxes = Array.from(parentTablesList.querySelectorAll("input[type=checkbox]"));
+    const checked = boxes.filter((cb) => cb.checked).length;
+    parentTablesCount.textContent = boxes.length === 0 ? "" : `${checked} / ${boxes.length} 件を取り込み`;
+}
+/** 接続先で使えるテーブルの一覧を取得して描画する。 */
+async function loadParentTables() {
+    if (!parentDialogState)
+        return;
+    const { children, repType } = parentDialogState;
+    const kind = parentBrowseKind(repType);
+    parentTablesFieldset.hidden = kind === null;
+    parentTablesAccessBtn.hidden = true;
+    parentTablesCount.textContent = "";
+    if (!kind)
+        return;
+    const access = ACCESS_SETTINGS_URL[kind];
+    if (access) {
+        parentTablesAccessBtn.hidden = false;
+        parentTablesAccessBtn.textContent = access.label;
+        parentTablesAccessBtn.title = `${access.url} を既定のブラウザで開きます`;
+        parentTablesAccessBtn.onclick = () => void invoke("open_ref", { target: access.url }).catch((e) => {
+            parentTablesHint.textContent = "ページを開けませんでした: " + String(e);
+        });
+    }
+    parentTablesHint.textContent = access?.hint ?? "";
+    parentTablesList.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
+    const shared = parentSharedNow();
+    const siblingId = children[0].id;
+    parentTableItems = [];
     try {
-        if (browseKind === "sqlite" || browseKind === "accdb" || browseKind === "excel_table") {
-            const cmd = browseKind === "sqlite" ? "browse_sqlite_tables" : browseKind === "accdb" ? "browse_accdb_tables" : "browse_excel_tables";
-            const names = await invoke(cmd, { path: sharedNow.path });
-            parentTablePickerItems = names.map((n) => ({ key: n, label: n, type_: repType, extraConfig: { table: n } }));
+        if (kind === "sqlite" || kind === "accdb" || kind === "excel_table") {
+            const cmd = kind === "sqlite" ? "browse_sqlite_tables" : kind === "accdb" ? "browse_accdb_tables" : "browse_excel_tables";
+            const names = await invoke(cmd, { path: shared.path });
+            parentTableItems = names.map((n) => ({ key: n, label: n, type_: repType, extraConfig: { table: n } }));
         }
-        else if (browseKind === "sharepoint") {
-            const auth = { tenant_id: sharedNow.tenant_id, client_id: sharedNow.client_id, client_secret: sharedNow.client_secret };
-            const resources = await invoke("browse_graph_site_resources", { auth, siteUrl: sharedNow.site_url });
-            parentTablePickerItems = resources.map((r) => ({
+        else if (kind === "sharepoint") {
+            // 秘密フィールド（client_secret）はマスクされている可能性があるため、保存済み設定を使う。
+            const resources = await invoke("browse_graph_site_resources_for_source", { id: siblingId, overridesJson: JSON.stringify(shared) });
+            parentTableItems = resources.map((r) => ({
                 key: `${r.kind}:${r.display_name}`,
                 label: r.kind === "library" ? `${r.display_name}（ライブラリ）` : r.display_name,
                 type_: r.kind === "library" ? "graph_sharepoint_library" : "graph_sharepoint_list",
                 extraConfig: r.kind === "library" ? { library_name: r.display_name } : { list_name: r.display_name },
             }));
         }
-        else if (browseKind === "notion") {
-            const dbs = await invoke("browse_notion_databases", { token: sharedNow.token });
-            parentTablePickerItems = dbs.map((d) => ({ key: d.id, label: d.title || "(無題)", type_: "notion", extraConfig: { database_id: d.id } }));
+        else if (kind === "notion") {
+            const dbs = await invoke("browse_notion_databases_for_source", { id: siblingId, overridesJson: JSON.stringify(shared) });
+            parentTableItems = dbs.map((d) => ({ key: d.id, label: d.title || "(無題)", type_: "notion", extraConfig: { database_id: d.id } }));
+        }
+        else if (kind === "graph365") {
+            // API 取得ではなく、実装済みの種別のうち接続情報だけで使えるものを並べる。
+            parentTableItems = GRAPH_ONE_CLICK_TYPES.map((t) => ({ key: t, label: typeLabel(t), type_: t, extraConfig: {} }));
         }
     }
     catch (e) {
-        setPickerMessage(listEl, `取得失敗: ${String(e)}`);
+        setPickerMessage(parentTablesList, `取得失敗: ${String(e)}`);
         return;
     }
-    // 既存の配下テーブルとの対応付け（元フィールドの値で照合）。
-    parentTablePickerMatched = new Map();
-    for (const c of children) {
-        try {
-            const detail = await invoke("get_source_detail", { id: c.id });
-            const cfg = detail.config;
-            if (browseKind === "sqlite" || browseKind === "accdb" || browseKind === "excel_table") {
-                if (typeof cfg.table === "string")
-                    parentTablePickerMatched.set(cfg.table, c.id);
-            }
-            else if (browseKind === "sharepoint") {
-                if (typeof cfg.list_name === "string")
-                    parentTablePickerMatched.set(`list:${cfg.list_name}`, c.id);
-                if (typeof cfg.library_name === "string")
-                    parentTablePickerMatched.set(`library:${cfg.library_name}`, c.id);
-            }
-            else if (browseKind === "notion") {
-                if (typeof cfg.database_id === "string")
-                    parentTablePickerMatched.set(cfg.database_id, c.id);
+    // 既存の配下テーブルとの対応付け。
+    parentTableMatched = new Map();
+    if (kind === "graph365") {
+        // 種別そのものが一覧の項目なので、config を読まずに対応付けできる。
+        for (const c of children) {
+            if (GRAPH_ONE_CLICK_TYPES.includes(c.type_) && !parentTableMatched.has(c.type_)) {
+                parentTableMatched.set(c.type_, c.id);
             }
         }
-        catch { /* このソースは対応付けをスキップ */ }
     }
-    listEl.innerHTML = "";
-    if (parentTablePickerItems.length === 0) {
-        listEl.innerHTML = "<div class='picker-empty'>見つかりませんでした</div>";
+    else {
+        const details = await Promise.all(children.map((c) => invoke("get_source_detail", { id: c.id }).catch(() => null)));
+        children.forEach((c, i) => {
+            const cfg = details[i]?.config;
+            if (!cfg)
+                return;
+            if (kind === "sqlite" || kind === "accdb" || kind === "excel_table") {
+                if (typeof cfg.table === "string")
+                    parentTableMatched.set(cfg.table, c.id);
+            }
+            else if (kind === "sharepoint") {
+                if (typeof cfg.list_name === "string")
+                    parentTableMatched.set(`list:${cfg.list_name}`, c.id);
+                if (typeof cfg.library_name === "string")
+                    parentTableMatched.set(`library:${cfg.library_name}`, c.id);
+            }
+            else if (kind === "notion") {
+                if (typeof cfg.database_id === "string")
+                    parentTableMatched.set(cfg.database_id, c.id);
+            }
+        });
     }
-    for (const item of parentTablePickerItems) {
+    parentTablesList.innerHTML = "";
+    if (parentTableItems.length === 0) {
+        setPickerMessage(parentTablesList, "利用できるテーブルが見つかりませんでした");
+    }
+    for (const item of parentTableItems) {
         const row = document.createElement("label");
         row.className = "picker-item";
         const cb = document.createElement("input");
         cb.type = "checkbox";
         cb.dataset.key = item.key;
-        cb.checked = parentTablePickerMatched.has(item.key);
+        cb.checked = parentTableMatched.has(item.key);
+        cb.addEventListener("change", updateParentTablesCount);
         const span = document.createElement("span");
         span.textContent = item.label;
         row.append(cb, span);
-        listEl.appendChild(row);
+        if (parentTableMatched.has(item.key)) {
+            const badge = document.createElement("span");
+            badge.className = "badge";
+            badge.textContent = "取込済";
+            row.appendChild(badge);
+        }
+        parentTablesList.appendChild(row);
     }
-    // 適用時に使う共有接続情報を保持しておく（このスコープ外の apply ハンドラから参照するため）。
-    parentTablePickerSharedNow = sharedNow;
+    if (kind === "graph365") {
+        const rest = GRAPH_PARAMETERIZED_TYPES.map(typeLabel).join(" / ");
+        parentTablesHint.textContent += `\n※ ${rest} は対象ユーザーやグループ ID の指定が必要なため、この一覧からは追加できません。`;
+    }
+    updateParentTablesCount();
 }
-$("parent-table-picker-all").onclick = () => {
-    $("parent-table-picker-list").querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = true; });
+$("parent-tables-all").onclick = () => {
+    parentTablesList.querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = true; });
+    updateParentTablesCount();
 };
-$("parent-table-picker-none").onclick = () => {
-    $("parent-table-picker-list").querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = false; });
+$("parent-tables-none").onclick = () => {
+    parentTablesList.querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = false; });
+    updateParentTablesCount();
 };
-$("parent-table-picker-cancel").onclick = () => $("parent-table-picker").close();
-$("parent-table-picker-close-x").onclick = () => $("parent-table-picker").close();
-$("parent-table-picker-apply").onclick = async () => {
-    if (!parentDialogState)
-        return;
-    const { keys } = parentDialogState;
-    const errEl = $("parent-table-picker-error");
-    errEl.textContent = "";
-    const checkboxes = Array.from($("parent-table-picker-list").querySelectorAll("input[type=checkbox]"));
-    const failures = [];
-    try {
-        for (const cb of checkboxes) {
-            const key = cb.dataset.key;
-            const item = parentTablePickerItems.find((i) => i.key === key);
-            if (!item)
-                continue;
-            if (cb.checked && !parentTablePickerMatched.has(key)) {
-                const config = { ...item.extraConfig };
-                for (const k of keys) {
-                    if (!parentTablePickerSharedNow[k])
-                        continue;
-                    config[k] = k === "path" ? normalizePath(parentTablePickerSharedNow[k]) : parentTablePickerSharedNow[k];
-                }
-                try {
-                    await invoke("add_source", { type: item.type_, name: item.label, configJson: JSON.stringify(config) });
-                }
-                catch (e) {
-                    failures.push(`${item.label}: ${String(e)}`);
-                }
-            }
-            else if (!cb.checked && parentTablePickerMatched.has(key)) {
-                const id = parentTablePickerMatched.get(key);
-                await invoke("delete_source", { id });
-                selectedSourceIds.delete(id);
-            }
-        }
-        if (failures.length) {
-            errEl.textContent = `一部失敗しました: ${failures.join(" / ")}`;
-            return;
-        }
-        $("parent-table-picker").close();
-        await loadSources();
-        await runSearch();
-        if (parentDialogState)
-            await openParentSettingsDialog(parentDialogState.parentKey);
+$("parent-tables-refresh").onclick = () => void loadParentTables();
+/** チェック状態と既存テーブルの差分。保存時にまとめて適用する。 */
+function parentTableDiff() {
+    const toAdd = [];
+    const toRemove = [];
+    if (parentTablesFieldset.hidden)
+        return { toAdd, toRemove };
+    for (const cb of Array.from(parentTablesList.querySelectorAll("input[type=checkbox]"))) {
+        const item = parentTableItems.find((i) => i.key === cb.dataset.key);
+        if (!item)
+            continue;
+        const existingId = parentTableMatched.get(item.key);
+        if (cb.checked && existingId === undefined)
+            toAdd.push(item);
+        else if (!cb.checked && existingId !== undefined)
+            toRemove.push({ id: existingId, label: item.label });
     }
-    catch (e) {
-        errEl.textContent = "適用に失敗: " + String(e);
-    }
-};
+    return { toAdd, toRemove };
+}
 async function copyToClipboard(text, label) {
     try {
         await navigator.clipboard.writeText(text);
@@ -1953,10 +2372,13 @@ const SQLITE_FILTERS = [{ name: "SQLite データベース", extensions: ["sqlit
 const ACCDB_FILTERS = [{ name: "Access データベース", extensions: ["accdb", "mdb"] }];
 const TEXT_FILTERS = [{ name: "テキストファイル", extensions: ["txt"] }];
 const JSON_FILTERS = [{ name: "JSON ファイル", extensions: ["json"] }];
+/** API キー・トークンの取得ページ（入力欄の「🔑 取得…」ボタンから開く）。 */
+const ENTRA_APPS_URL = "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade";
+const NOTION_INTEGRATIONS_URL = "https://www.notion.so/my-integrations";
 const GRAPH_AUTH_FIELDS = [
-    { key: "tenant_id", label: "テナントID", kind: "text", placeholder: "ディレクトリ(テナント) ID" },
-    { key: "client_id", label: "クライアントID", kind: "text", placeholder: "アプリケーション(クライアント) ID" },
-    { key: "client_secret", label: "クライアントシークレット(値)", kind: "password", placeholder: "シークレットの値(ID ではない)" },
+    { key: "tenant_id", label: "テナントID", kind: "text", placeholder: "ディレクトリ(テナント) ID", helpUrl: ENTRA_APPS_URL },
+    { key: "client_id", label: "クライアントID", kind: "text", placeholder: "アプリケーション(クライアント) ID", helpUrl: ENTRA_APPS_URL },
+    { key: "client_secret", label: "クライアントシークレット(値)", kind: "password", placeholder: "シークレットの値(ID ではない)", helpUrl: ENTRA_APPS_URL },
 ];
 const TYPE_DEFS = [
     { value: "csv", label: "CSV ファイル", fields: [
@@ -1973,7 +2395,7 @@ const TYPE_DEFS = [
     { value: "folder", label: "フォルダのファイル一覧", fields: [{ key: "path", label: "フォルダパス", kind: "text", placeholder: "C:\\path\\to\\folder", browse: "folder" }, { key: "recursive", label: "サブフォルダも含める", kind: "checkbox", default: true }, { key: "extensions", label: "拡張子フィルタ (カンマ区切り・任意)", kind: "list", placeholder: "csv, xlsx" }] },
     { value: "ime_msime", label: "IME辞書: Microsoft IME", fields: [pathField(TEXT_FILTERS)] },
     { value: "ime_google", label: "IME辞書: Google 日本語入力", fields: [pathField(TEXT_FILTERS)] },
-    { value: "notion", label: "Notion データベース", fields: [{ key: "token", label: "インテグレーショントークン", kind: "password", placeholder: "ntn_..." }, { key: "database_id", label: "データベースID", kind: "text", placeholder: "URL 内の 32 桁 ID" }], browse: "notion" },
+    { value: "notion", label: "Notion データベース", fields: [{ key: "token", label: "インテグレーショントークン", kind: "password", placeholder: "ntn_...", helpUrl: NOTION_INTEGRATIONS_URL }, { key: "database_id", label: "データベースID", kind: "text", placeholder: "URL 内の 32 桁 ID" }], browse: "notion" },
     { value: "graph_entra_users", label: "EntraID ユーザー一覧", fields: [...GRAPH_AUTH_FIELDS] },
     { value: "graph_entra_groups", label: "EntraID グループ一覧", fields: [...GRAPH_AUTH_FIELDS] },
     { value: "graph_teams", label: "Teams チーム一覧", fields: [...GRAPH_AUTH_FIELDS] },
@@ -2000,7 +2422,7 @@ const TYPE_DEFS = [
             { key: "path", label: "Bookmarks / places.sqlite のパス", kind: "text", placeholder: "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Bookmarks", browse: "file" },
         ] },
     { value: "google_sheets", label: "Google スプレッドシート", fields: [
-            { key: "key_path", label: "サービスアカウント鍵(JSON)のパス", kind: "text", placeholder: "C:\\path\\to\\service-account.json", browse: "file", dialogFilters: JSON_FILTERS },
+            { key: "key_path", label: "サービスアカウント鍵(JSON)のパス", kind: "text", placeholder: "C:\\path\\to\\service-account.json", browse: "file", dialogFilters: JSON_FILTERS, helpUrl: "https://console.cloud.google.com/apis/credentials" },
             { key: "spreadsheet_id", label: "スプレッドシートID", kind: "text", placeholder: "URL の /d/ と /edit の間の文字列" },
             { key: "range", label: "範囲(任意)", kind: "text", placeholder: "Sheet1!A1:D50 / 空欄=先頭シート全域", optional: true },
             { key: "has_header", label: "先頭行はヘッダー", kind: "checkbox", default: true },
@@ -2009,7 +2431,7 @@ const TYPE_DEFS = [
             { key: "url", label: "公開 iCal URL", kind: "text", placeholder: "https://calendar.google.com/calendar/ical/.../public/basic.ics" },
         ] },
     { value: "airtable", label: "Airtable", fields: [
-            { key: "token", label: "Personal Access Token", kind: "password", placeholder: "pat..." },
+            { key: "token", label: "Personal Access Token", kind: "password", placeholder: "pat...", helpUrl: "https://airtable.com/create/tokens" },
             { key: "base_id", label: "Base ID", kind: "text", placeholder: "app..." },
             { key: "table", label: "テーブル ID または名前", kind: "text", placeholder: "tbl... または テーブル名" },
             { key: "view", label: "ビュー(任意)", kind: "text", placeholder: "viw... または ビュー名", optional: true },
@@ -2041,8 +2463,8 @@ const TYPE_DEFS = [
             { key: "ssl_accept_invalid_certs", label: "自己署名証明書を許可(社内サーバー向け)", kind: "checkbox", default: false },
         ] },
     { value: "box_files", label: "Box (ファイル一覧)", fields: [
-            { key: "client_id", label: "クライアントID", kind: "text" },
-            { key: "client_secret", label: "クライアントシークレット", kind: "password" },
+            { key: "client_id", label: "クライアントID", kind: "text", helpUrl: "https://app.box.com/developers/console" },
+            { key: "client_secret", label: "クライアントシークレット", kind: "password", helpUrl: "https://app.box.com/developers/console" },
             { key: "enterprise_id", label: "Enterprise ID", kind: "text" },
             { key: "folder_id", label: "開始フォルダID(任意)", kind: "text", placeholder: "0 (ルート)", optional: true },
         ] },
@@ -2338,32 +2760,37 @@ function renderTypeFields(prefill, hideKeys = []) {
             if (f.key === "path") {
                 input.addEventListener("input", () => maybeAutoFillName(input.value));
             }
-            if (f.browse) {
-                // 参照ボタン付き（ファイル/フォルダ選択ダイアログ）。
+            if (f.browse || f.helpUrl) {
+                // 参照ボタン（ファイル/フォルダ選択）と、API キー取得ページを開くボタン。
                 const row = document.createElement("div");
                 row.className = "path-row";
-                const browseBtn = document.createElement("button");
-                browseBtn.type = "button";
-                browseBtn.className = "btn browse-btn";
-                browseBtn.textContent = "参照…";
-                browseBtn.onclick = async () => {
-                    try {
-                        const picked = await openDialog({
-                            directory: f.browse === "folder",
-                            multiple: false,
-                            filters: f.browse === "file" ? f.dialogFilters : undefined,
-                        });
-                        if (typeof picked === "string") {
-                            input.value = picked;
-                            if (f.key === "path")
-                                maybeAutoFillName(picked);
+                row.appendChild(input);
+                if (f.browse) {
+                    const browseBtn = document.createElement("button");
+                    browseBtn.type = "button";
+                    browseBtn.className = "btn browse-btn";
+                    browseBtn.textContent = "参照…";
+                    browseBtn.onclick = async () => {
+                        try {
+                            const picked = await openDialog({
+                                directory: f.browse === "folder",
+                                multiple: false,
+                                filters: f.browse === "file" ? f.dialogFilters : undefined,
+                            });
+                            if (typeof picked === "string") {
+                                input.value = picked;
+                                if (f.key === "path")
+                                    maybeAutoFillName(picked);
+                            }
                         }
-                    }
-                    catch (e) {
-                        console.error("ファイル選択に失敗:", e);
-                    }
-                };
-                row.append(input, browseBtn);
+                        catch (e) {
+                            console.error("ファイル選択に失敗:", e);
+                        }
+                    };
+                    row.appendChild(browseBtn);
+                }
+                if (f.helpUrl)
+                    row.appendChild(makeApiKeyButton(f.helpUrl));
                 label.appendChild(row);
             }
             else {
@@ -2379,6 +2806,7 @@ function renderTypeFields(prefill, hideKeys = []) {
     else {
         browseAreaEl.innerHTML = "";
     }
+    $("f-guide").hidden = guideTextFor(typeSel.value) === null;
     resetRolesEditor();
     updateConfigSummaryBadge();
     updateOpenTableButton();
