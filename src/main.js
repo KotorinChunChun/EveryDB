@@ -600,16 +600,18 @@ function openContextMenu(ev, id) {
 }
 function openGridContextMenu(ev) {
     closeAllContextMenus();
+    const row = selectedCell ? rows[selectedCell.row] : undefined;
     const openPageBtn = gridCtxMenu.querySelector('[data-action="open-page"]');
     if (openPageBtn) {
-        let url = null;
-        if (selectedCell) {
-            const r = rows[selectedCell.row];
-            if (r) {
-                url = getCellUrl(cellText(r, selectedCell.col));
-            }
-        }
+        // セルの値が URL のときだけ押せる（要件）。
+        const url = row && selectedCell ? getCellUrl(cellText(row, selectedCell.col)) : null;
         openPageBtn.disabled = !url;
+    }
+    const openTableBtn = gridCtxMenu.querySelector('[data-action="open-table"]');
+    if (openTableBtn) {
+        // 直接開けない種別（ファイル系など）は押しても失敗するだけなのでグレーアウトする。
+        const src = row ? sources.find((s) => s.id === row.source_id) : undefined;
+        openTableBtn.disabled = !(src && TABLE_OPENABLE_TYPES.has(src.type_));
     }
     gridCtxMenu.style.left = ev.clientX + "px";
     gridCtxMenu.style.top = ev.clientY + "px";
@@ -840,6 +842,39 @@ function rebuildColumns() {
     const extra = cols.filter((c) => !gridColumnOrder.includes(c));
     columns = ["テーブル", "見出し", ...known, ...extra];
 }
+/** 検索結果 rows から「ソースID → そのソースに出現した表示名の集合」を 1 パスで作る。
+ * 列設定ダイアログ・列並べ替えの保存で使う。以前はソース数 × 行数の二重走査をしていたため、
+ * 行数が多いと列設定ダイアログの表示が極端に遅くなっていた。 */
+function buildSourceFieldIndex() {
+    const index = new Map();
+    for (const r of rows) {
+        let set = index.get(r.source_id);
+        if (!set) {
+            set = new Set();
+            index.set(r.source_id, set);
+        }
+        for (const k in r.fields)
+            set.add(k);
+    }
+    return index;
+}
+/** column_aliases（実フィールド名 → 表示名）の逆引き表を作る。 */
+function invertAliases(aliases) {
+    const inv = new Map();
+    for (const [raw, disp] of Object.entries(aliases)) {
+        if (!inv.has(disp))
+            inv.set(disp, raw);
+    }
+    return inv;
+}
+/** 表示名の集合を、そのソースでの実フィールド名の集合へ戻す。 */
+function toRawFieldNames(displayNames, aliases) {
+    const inv = invertAliases(aliases);
+    const out = new Set();
+    for (const d of displayNames)
+        out.add(inv.get(d) ?? d);
+    return [...out];
+}
 // ---- 検索履歴パネル ----
 const historyPanel = $("history-panel");
 async function showHistory() {
@@ -1046,34 +1081,28 @@ function renderHead() {
                 rebuildColumns();
                 renderHead();
                 renderRows();
-                // バックグラウンドで全データソースの column_order を更新・保存する
+                // この列を保有する全データソースの column_order を更新・保存する。
+                // update_source はサーバー側で再取得(reload)を伴うため、進捗を出しつつ順に処理する。
                 const displayOrder = remainingOrder;
-                for (const s of sources) {
+                const orderRank = new Map(displayOrder.map((d, i) => [d, i]));
+                const fieldIndex = buildSourceFieldIndex();
+                const targets = sources.filter((s) => (fieldIndex.get(s.id)?.size ?? 0) > 0);
+                let done = 0;
+                let failed = 0;
+                for (const s of targets) {
+                    done += 1;
+                    resultInfo.textContent = `列の並び順を保存中… (${done}/${targets.length}) ${s.name}`;
                     try {
                         const detail = await invoke("get_source_detail", { id: s.id });
                         const cfg = { ...detail.config };
                         const aliases = cfg.column_aliases ?? {};
-                        // このソースのフィールドを集める（rows の fields キーから逆引き）
-                        const sourceFieldsSet = new Set();
-                        for (const r of rows) {
-                            if (r.source_id !== s.id)
-                                continue;
-                            for (const k of Object.keys(r.fields)) {
-                                // 表示名 → 実フィールド名の逆引き
-                                const rawName = Object.entries(aliases).find(([, v]) => v === k)?.[0] ?? k;
-                                sourceFieldsSet.add(rawName);
-                            }
-                        }
-                        if (sourceFieldsSet.size === 0)
-                            continue; // 検索結果にこのソースが無い
-                        const sourceFields = [...sourceFieldsSet];
-                        // 表示名順でソートして column_order を決定する
+                        // このソースの実フィールド名を、検索結果に現れた表示名から逆引きして集める。
+                        const sourceFields = toRawFieldNames(fieldIndex.get(s.id), aliases);
+                        // 表示名順でソートして column_order を決定する（並び順に無い列は末尾へ）
                         const newOrder = sourceFields.sort((a, b) => {
-                            const dispA = aliases[a] ?? a;
-                            const dispB = aliases[b] ?? b;
-                            const idxA = displayOrder.indexOf(dispA);
-                            const idxB = displayOrder.indexOf(dispB);
-                            return (idxA === -1 ? 999999 : idxA) - (idxB === -1 ? 999999 : idxB);
+                            const idxA = orderRank.get(aliases[a] ?? a) ?? Number.MAX_SAFE_INTEGER;
+                            const idxB = orderRank.get(aliases[b] ?? b) ?? Number.MAX_SAFE_INTEGER;
+                            return idxA - idxB;
                         });
                         const oldOrder = cfg.column_order ?? [];
                         if (JSON.stringify(oldOrder) !== JSON.stringify(newOrder)) {
@@ -1082,9 +1111,15 @@ function renderHead() {
                         }
                     }
                     catch (err) {
+                        failed += 1;
                         console.error(`列並び順更新失敗 (source ${s.id}):`, err);
                     }
                 }
+                await refreshSidebar();
+                resultInfo.textContent =
+                    failed > 0
+                        ? `列の並び順を保存しました（${targets.length - failed}/${targets.length} 件成功、${failed} 件失敗）`
+                        : `${rows.length} 件`;
             });
         }
         const handle = document.createElement("div");
@@ -1172,39 +1207,34 @@ async function openColumnContextMenu(_ev, columnName) {
     $("column-map-rows").innerHTML = "";
     hint.textContent = "";
     dlg.showModal();
-    // 検索結果にあるソースIDを全て収集する
-    const sourceIds = Array.from(new Set(rows.map((r) => r.source_id)));
+    // 検索結果にあるソースID・出現フィールドを 1 パスで収集し、設定取得は並列に投げる
+    // （逐次 await + 行数×ソース数の二重走査だと表示までに数秒かかっていた）。
+    const fieldIndex = buildSourceFieldIndex();
+    const sourceIds = [...fieldIndex.keys()];
+    hint.textContent = "読み込み中…";
+    const details = await Promise.all(sourceIds.map((sid) => invoke("get_source_detail", { id: sid }).catch((e) => {
+        console.error(`列マッピング取得失敗 (source ${sid}):`, e);
+        return null;
+    })));
     columnMapRows = [];
-    for (const sid of sourceIds) {
-        try {
-            const detail = await invoke("get_source_detail", { id: sid });
-            const aliases = detail.config.column_aliases ?? {};
-            // rows のフィールドキー（表示名）からこのソースの実フィールド名を収集する
-            const fieldSet = new Set();
-            for (const r of rows) {
-                if (r.source_id !== sid)
-                    continue;
-                for (const displayName of Object.keys(r.fields)) {
-                    // 表示名 → 実フィールド名への逆引き
-                    const rawName = Object.entries(aliases).find(([, v]) => v === displayName)?.[0] ?? displayName;
-                    fieldSet.add(rawName);
-                }
+    for (let i = 0; i < sourceIds.length; i++) {
+        const sid = sourceIds[i];
+        const detail = details[i];
+        if (!detail)
+            continue;
+        const aliases = detail.config.column_aliases ?? {};
+        // rows のフィールドキー（表示名）からこのソースの実フィールド名を復元する
+        const fields = toRawFieldNames(fieldIndex.get(sid), aliases);
+        // columnName に対応する実フィールドを特定する
+        let currentField = null;
+        for (const f of fields) {
+            if ((aliases[f] ?? f) === columnName) {
+                currentField = f;
+                break;
             }
-            const fields = [...fieldSet];
-            // columnName に対応する実フィールドを特定する
-            let currentField = null;
-            for (const f of fields) {
-                if ((aliases[f] ?? f) === columnName) {
-                    currentField = f;
-                    break;
-                }
-            }
-            const src = sources.find((s) => s.id === sid);
-            columnMapRows.push({ sourceId: sid, sourceName: src?.name ?? `#${sid}`, detail, fields, currentField });
         }
-        catch (e) {
-            console.error(`列マッピング取得失敗 (source ${sid}):`, e);
-        }
+        const src = sources.find((s) => s.id === sid);
+        columnMapRows.push({ sourceId: sid, sourceName: src?.name ?? `#${sid}`, detail, fields, currentField });
     }
     // 表示状態の初期値: 現在マッピングされているテーブルのいずれかで非表示なら未チェックにする。
     let anyMapped = false;
@@ -2395,7 +2425,7 @@ function openAddDialog() {
     $("f-name").value = "";
     typeSel.value = "csv";
     typeSel.disabled = false;
-    setConfigAccordionOpen(false);
+    setConfigAccordionOpen(true);
     renderTypeFields();
     dialog.showModal();
 }
@@ -2972,7 +3002,11 @@ $("s-hotkey")?.addEventListener("keydown", (e) => {
         mods.push("Shift");
     if (e.metaKey)
         mods.push("Super");
-    if (mods.length === 0 && !e.key.startsWith("F")) {
+    // 修飾キー無しで登録できるのはファンクションキー(F1〜F24)のみ。
+    // 以前は startsWith("F") 判定だったため、単独の「F」キーがそのままグローバルホットキーとして
+    // 登録されてしまい、他アプリでも F が奪われる不具合があった。
+    const isFunctionKey = /^F([1-9]|1[0-9]|2[0-4])$/.test(e.key);
+    if (mods.length === 0 && !isFunctionKey) {
         return;
     }
     let key = e.key;
