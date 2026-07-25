@@ -15,7 +15,6 @@
         <button id="preset-list-btn" class="btn" title="お気に入りから呼び出し">★一覧</button>
         <div id="preset-panel" class="history-panel" hidden></div>
         <button id="export" class="btn" title="現在の検索結果を TSV でエクスポート">TSV出力</button>
-        <button id="open" class="btn" title="選択行のファイル/リソースを開く" disabled>開く</button>
         <button id="add" class="btn" title="テーブルを追加（新しい接続先の場合は接続情報もあわせて入力）">＋ テーブル追加</button>
         <button id="manage" class="btn" title="テーブルの削除・更新間隔の設定（データソース全体の一覧）">データソース管理</button>
         <button id="settings" class="btn" title="アプリ設定">⚙ 設定</button>
@@ -58,6 +57,8 @@
       <button data-copy="tsv-header">見出し付きTSVコピー</button>
       <button data-copy="json">JSONコピー</button>
       <hr />
+      <button data-action="open-table">テーブルを開く</button>
+      <button data-action="open-page">このページを開く</button>
       <button data-action="hide-source">このデータソースのテーブルを非表示</button>
     </div>
 

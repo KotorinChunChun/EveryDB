@@ -86,7 +86,6 @@ const viewportEl = $<HTMLDivElement>("grid-viewport");
 const spacerEl = $<HTMLDivElement>("grid-spacer");
 const rowsEl = $<HTMLDivElement>("grid-rows");
 const resultInfo = $<HTMLDivElement>("result-info");
-const openBtn = $<HTMLButtonElement>("open");
 
 // ============================================================
 // マスターパスワード（要件 §9-4）
@@ -396,6 +395,32 @@ const parentCtxMenu = $<HTMLDivElement>("parent-ctx-menu");
 let ctxTargetId: number | null = null;
 let parentCtxTargetKey: string | null = null;
 
+function getCellUrl(text: string): string | null {
+  const t = text.trim();
+  if (!t) return null;
+  if (/^(https?|file|notion|ftp|mailto|teams|obsidian):/i.test(t)) {
+    return t;
+  }
+  if (/^www\./i.test(t)) {
+    return "https://" + t;
+  }
+  return null;
+}
+
+async function openTableBySourceId(id: number) {
+  try {
+    const detail = await invoke<SourceDetail>("get_source_detail", { id });
+    const url = tableOpenUrl(detail.type_, detail.config);
+    if (url) {
+      await invoke("open_ref", { target: url });
+    } else {
+      resultInfo.textContent = "このテーブルは直接開けません（接続情報が不足しています）";
+    }
+  } catch (e) {
+    resultInfo.textContent = "開けませんでした: " + String(e);
+  }
+}
+
 function openContextMenu(ev: MouseEvent, id: number) {
   closeAllContextMenus();
   ctxTargetId = id;
@@ -408,6 +433,17 @@ function openContextMenu(ev: MouseEvent, id: number) {
 }
 function openGridContextMenu(ev: MouseEvent) {
   closeAllContextMenus();
+  const openPageBtn = gridCtxMenu.querySelector<HTMLButtonElement>('[data-action="open-page"]');
+  if (openPageBtn) {
+    let url: string | null = null;
+    if (selectedCell) {
+      const r = rows[selectedCell.row];
+      if (r) {
+        url = getCellUrl(cellText(r, selectedCell.col));
+      }
+    }
+    openPageBtn.disabled = !url;
+  }
   gridCtxMenu.style.left = ev.clientX + "px";
   gridCtxMenu.style.top = ev.clientY + "px";
   gridCtxMenu.hidden = false;
@@ -450,6 +486,24 @@ gridCtxMenu.addEventListener("click", async (ev) => {
       case "tsv-header": await copyRowAsTsvWithHeader(); break;
       case "json": await copyRowAsJson(); break;
     }
+  } else if (btn.dataset.action === "open-table") {
+    if (!selectedCell) return;
+    const r = rows[selectedCell.row];
+    if (!r) return;
+    await openTableBySourceId(r.source_id);
+  } else if (btn.dataset.action === "open-page") {
+    if (!selectedCell || btn.disabled) return;
+    const r = rows[selectedCell.row];
+    if (!r) return;
+    const text = cellText(r, selectedCell.col);
+    const url = getCellUrl(text);
+    if (url) {
+      try {
+        await invoke("open_ref", { target: url });
+      } catch (e) {
+        resultInfo.textContent = "ページを開けませんでした: " + String(e);
+      }
+    }
   } else if (btn.dataset.action === "hide-source") {
     if (!selectedCell) return;
     const r = rows[selectedCell.row];
@@ -479,20 +533,9 @@ ctxMenu.addEventListener("click", async (ev) => {
     case "reload":
       await reloadOne(id);
       break;
-    case "open-table": {
-      try {
-        const detail = await invoke<SourceDetail>("get_source_detail", { id });
-        const url = tableOpenUrl(detail.type_, detail.config);
-        if (url) {
-          await invoke("open_ref", { target: url });
-        } else {
-          resultInfo.textContent = "このテーブルは直接開けません（接続情報が不足しています）";
-        }
-      } catch (e) {
-        resultInfo.textContent = "開けませんでした: " + String(e);
-      }
+    case "open-table":
+      await openTableBySourceId(id);
       break;
-    }
     case "delete":
       if (!confirm(`「${src?.name ?? ""}」を削除しますか？（キャッシュも消えます）`)) break;
       await invoke("delete_source", { id });
@@ -579,7 +622,6 @@ async function runSearch() {
   rows = resp.rows;
   rebuildColumns();
   selectedCell = null;
-  updateOpenButton();
   renderHead();
   renderRows();
   resultInfo.textContent = `${rows.length} 件${resp.truncated ? "（上限で打ち切り）" : ""}`;
@@ -861,14 +903,8 @@ function renderRows() {
 
 function selectCell(row: number, col: number) {
   selectedCell = { row, col };
-  updateOpenButton();
   renderRows();
   $<HTMLDivElement>("grid").focus();
-}
-
-function updateOpenButton() {
-  const r = selectedCell ? rows[selectedCell.row] : null;
-  openBtn.disabled = !r || !r.open_ref;
 }
 
 viewportEl.addEventListener("scroll", () => {
@@ -1402,11 +1438,8 @@ $<HTMLDivElement>("grid").addEventListener("keydown", (e) => {
   e.preventDefault();
   selectedCell = { row, col };
   ensureRowVisible(row);
-  updateOpenButton();
   renderRows();
 });
-
-openBtn.onclick = () => void openSelected();
 
 // ---- 即時リロード（設定ダイアログ内・全データソース対象。要件: リロード中は可視化する）----
 let reloading = false;
