@@ -2747,16 +2747,34 @@ sidebarResizerEl.addEventListener("mousedown", (ev) => {
   document.addEventListener("mouseup", onUp);
 });
 
-// Ctrl++ / Ctrl+- / Ctrl+0（テンキー・Shift付き記号キーの各種配列に対応）でズーム変更。
+// Ctrl++ / Ctrl+- / Ctrl+0（JIS/US配列・テンキー・Shift有無の各種キー配列に対応）でズーム変更。
 document.addEventListener("keydown", (e) => {
   if (!(e.ctrlKey || e.metaKey)) return;
-  if (["+", "=", "Add"].includes(e.key)) {
+  
+  // 拡大 (Zoom In): JIS配列の「; / +」(Semicolon)、US配列の「= / +」(Equal)、テンキーの「+」、または key が "+" / "Add"
+  const isZoomIn =
+    e.key === "+" ||
+    e.key === "Add" ||
+    e.code === "NumpadAdd" ||
+    e.code === "Semicolon" ||
+    (e.code === "Equal" && !e.shiftKey);
+
+  // 縮小 (Zoom Out): マイナスキーまたはテンキーの「-」（拡大に該当しない場合のみ）
+  const isZoomOut =
+    !isZoomIn &&
+    (e.key === "-" ||
+      e.key === "_" ||
+      e.key === "Subtract" ||
+      e.code === "Minus" ||
+      e.code === "NumpadSubtract");
+
+  if (isZoomIn) {
     e.preventDefault();
     void setZoom(currentZoom + ZOOM_STEP);
-  } else if (["-", "_", "Subtract"].includes(e.key)) {
+  } else if (isZoomOut) {
     e.preventDefault();
     void setZoom(currentZoom - ZOOM_STEP);
-  } else if (e.key === "0") {
+  } else if (e.key === "0" || e.code === "Numpad0" || e.code === "Digit0") {
     e.preventDefault();
     void setZoom(1.0);
   }
