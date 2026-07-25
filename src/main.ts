@@ -2416,7 +2416,7 @@ function openAddDialog() {
   $<HTMLButtonElement>("f-name").value = "";
   typeSel.value = "csv";
   typeSel.disabled = false;
-  setConfigAccordionOpen(false);
+  setConfigAccordionOpen(true);
   renderTypeFields();
   dialog.showModal();
 }
