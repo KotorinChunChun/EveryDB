@@ -1642,6 +1642,12 @@ function tableOpenUrl(type_, cfg) {
     }
 }
 const dialog = $("add-dialog");
+const addConfigFieldset = $("add-config-fieldset");
+const configLegend = $("config-legend");
+const configLegendTitle = $("config-legend-title");
+const configAccordionBody = $("config-accordion-body");
+const configSummaryBadge = $("config-summary-badge");
+const openTableBtn = $("f-open-table");
 const typeSel = $("f-type");
 const dynamicEl = $("f-dynamic");
 const browseAreaEl = $("browse-area");
@@ -1666,6 +1672,65 @@ for (const t of TYPE_DEFS) {
 }
 function currentTypeDef() {
     return TYPE_DEFS.find((t) => t.value === typeSel.value);
+}
+/** グループボックスを折りたたみ / 展開する（デフォルトは閉じた状態） */
+function setConfigAccordionOpen(open) {
+    if (!addConfigFieldset || !configAccordionBody || !configLegendTitle)
+        return;
+    configAccordionBody.hidden = !open;
+    if (open) {
+        addConfigFieldset.classList.remove("collapsed");
+        configLegendTitle.textContent = "▼ 接続情報・ソース設定";
+    }
+    else {
+        addConfigFieldset.classList.add("collapsed");
+        configLegendTitle.textContent = "▶ 接続情報・ソース設定";
+    }
+    updateConfigSummaryBadge();
+}
+configLegend?.addEventListener("click", () => {
+    if (!configAccordionBody)
+        return;
+    setConfigAccordionOpen(configAccordionBody.hidden);
+});
+/** 折り畳み時に現在の設定概要をバッジ表示する。 */
+function updateConfigSummaryBadge() {
+    if (!configAccordionBody || !configSummaryBadge)
+        return;
+    const def = currentTypeDef();
+    if (!configAccordionBody.hidden) {
+        configSummaryBadge.hidden = true;
+        return;
+    }
+    configSummaryBadge.hidden = false;
+    configSummaryBadge.textContent = `[${def ? def.label : "未選択"}]`;
+}
+/** 「このテーブルを開く」ボタンの有効/無効・表示/非表示を更新する。 */
+function updateOpenTableButton() {
+    if (!openTableBtn)
+        return;
+    const def = currentTypeDef();
+    if (!def || dialogMode !== "edit") {
+        openTableBtn.hidden = true;
+        return;
+    }
+    const { config } = buildConfigFromFields();
+    const url = tableOpenUrl(def.value, config);
+    if (url) {
+        openTableBtn.hidden = false;
+        openTableBtn.disabled = false;
+        openTableBtn.onclick = async () => {
+            try {
+                await invoke("open_ref", { target: url });
+            }
+            catch (e) {
+                alert("テーブルを開けませんでした: " + String(e));
+            }
+        };
+    }
+    else {
+        openTableBtn.hidden = true;
+    }
 }
 function getFieldValue(f) {
     const el = document.getElementById(`fd-${f.key}`);
@@ -1795,6 +1860,8 @@ function renderTypeFields(prefill, hideKeys = []) {
         browseAreaEl.innerHTML = "";
     }
     resetRolesEditor();
+    updateConfigSummaryBadge();
+    updateOpenTableButton();
 }
 typeSel.onchange = () => renderTypeFields();
 function buildConfigFromFields() {
@@ -1983,10 +2050,14 @@ function openAddDialog() {
     $("f-name").value = "";
     typeSel.value = "csv";
     typeSel.disabled = false;
+    setConfigAccordionOpen(false);
     renderTypeFields();
     dialog.showModal();
 }
-$("f-name").addEventListener("input", () => { nameManuallyEdited = true; });
+$("f-name").addEventListener("input", () => {
+    nameManuallyEdited = true;
+    updateConfigSummaryBadge();
+});
 async function openEditDialog(id) {
     const detail = await invoke("get_source_detail", { id });
     const info = sources.find((s) => s.id === id);
@@ -2035,6 +2106,7 @@ async function openEditDialog(id) {
     else {
         belongsToEl.hidden = true;
     }
+    setConfigAccordionOpen(false);
     renderTypeFields(cfg, hiddenSharedKeys);
     dialog.showModal();
     // 編集ダイアログでは開いた直後にフィールド一覧を自動取得して表示する。

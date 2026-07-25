@@ -81,12 +81,23 @@
       <form method="dialog" id="add-form">
         <h3 id="add-dialog-title">テーブル追加</h3>
         <div id="f-last-loaded" class="last-loaded-hint" hidden></div>
-        <label>種別 <select id="f-type"></select></label>
-        <div id="f-belongs-to" class="belongs-to-hint" hidden></div>
-        <div id="f-dynamic"></div>
-        <label>表示名 <input id="f-name" type="text" required /></label>
+        <div class="name-open-row">
+          <label class="name-label">表示名 <input id="f-name" type="text" required /></label>
+          <button type="button" id="f-open-table" class="btn" title="ブラウザ等でこのテーブルを直接開く" hidden>↗ テーブルを開く</button>
+        </div>
 
-        <div id="browse-area" class="browse-area"></div>
+        <fieldset id="add-config-fieldset" class="roles-fieldset config-fieldset collapsed">
+          <legend id="config-legend" class="config-legend" title="クリックで折りたたみ / 展開">
+            <span id="config-legend-title" class="config-legend-title">▶ 接続情報・ソース設定</span>
+            <span id="config-summary-badge" class="config-summary-badge"></span>
+          </legend>
+          <div id="config-accordion-body" class="config-accordion-body" hidden>
+            <label>種別 <select id="f-type"></select></label>
+            <div id="f-belongs-to" class="belongs-to-hint" hidden></div>
+            <div id="f-dynamic"></div>
+            <div id="browse-area" class="browse-area"></div>
+          </div>
+        </fieldset>
 
         <fieldset class="roles-fieldset">
           <legend>表示・検索設定（任意）</legend>
