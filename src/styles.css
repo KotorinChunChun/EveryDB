@@ -1,0 +1,362 @@
+/* テーマ（要件 REQ-UI-02）: dark(既定) / light / night(高コントラスト) */
+:root,
+:root[data-theme="dark"] {
+  --bg: #1e1e1e;
+  --panel: #252526;
+  --panel-2: #2d2d30;
+  --border: #3c3c3c;
+  --text: #e0e0e0;
+  --muted: #9a9a9a;
+  --accent: #0e639c;
+  --accent-2: #1177bb;
+  --sel: #094771;
+  --row-alt: #232323;
+  font-family: "Segoe UI", "Yu Gothic UI", system-ui, sans-serif;
+  font-size: 13px;
+}
+
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --panel: #f3f3f3;
+  --panel-2: #e8e8e8;
+  --border: #cfcfcf;
+  --text: #1c1c1c;
+  --muted: #5f5f5f;
+  --accent: #0e639c;
+  --accent-2: #1177bb;
+  --sel: #cfe4f7;
+  --row-alt: #f7f7f7;
+}
+
+/* ナイトモード: 純黒背景+高コントラストで視認性を優先 */
+:root[data-theme="night"] {
+  --bg: #000000;
+  --panel: #0a0a0a;
+  --panel-2: #141414;
+  --border: #333333;
+  --text: #ffffff;
+  --muted: #b0b0b0;
+  --accent: #3399ff;
+  --accent-2: #5cb3ff;
+  --sel: #003a66;
+  --row-alt: #080808;
+}
+
+* { box-sizing: border-box; }
+
+/* hidden 属性は常に display:none を優先させる（.ctx-menu 等が display:flex を持つと
+   UA の [hidden] ルールが詳細度負けして消えなくなるため、明示的に打ち消す）。 */
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+}
+
+#app { display: flex; flex-direction: column; height: 100vh; }
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+
+.search {
+  flex: 1;
+  padding: 7px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 14px;
+}
+.search:focus { outline: none; border-color: var(--accent-2); }
+
+.btn {
+  padding: 7px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) { background: #3a3a3d; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn.primary { background: var(--accent); border-color: var(--accent); }
+.btn.primary:hover { background: var(--accent-2); }
+
+.limit-label { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.limit-label-row .row-limit { width: 120px; margin-top: 3px; }
+.reload-status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.spinner {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--accent-2);
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.zoom-row { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+.zoom-row .btn { padding: 5px 10px; }
+.zoom-value { min-width: 48px; text-align: center; color: var(--text); }
+.row-limit { width: 70px; padding: 6px 6px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; color: var(--text); }
+
+/* 参照ボタン付きパス入力 */
+.path-row { display: flex; gap: 6px; align-items: stretch; margin-top: 3px; }
+.path-row input { margin-top: 0 !important; }
+.path-row .browse-btn { flex: none; padding: 6px 10px; white-space: nowrap; }
+
+.body { flex: 1; display: flex; min-height: 0; }
+
+.sidebar {
+  width: 240px;
+  min-width: 120px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  padding: 10px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  flex: none;
+}
+.sidebar-resizer {
+  flex: none;
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+}
+.sidebar-resizer:hover, .sidebar-resizer.dragging { background: var(--accent-2); }
+.sidebar-title-row { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+.sidebar-title { font-weight: 600; color: var(--muted); font-size: 12px; }
+.sidebar-bulk { display: flex; gap: 6px; }
+.link-btn { background: none; border: none; color: var(--accent-2); cursor: pointer; font-size: 11px; padding: 0; }
+.link-btn:hover { text-decoration: underline; }
+.source-filter {
+  width: 100%; margin-bottom: 8px; padding: 5px 8px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 12px;
+}
+.source-filter:focus { outline: none; border-color: var(--accent-2); }
+
+.sources { display: flex; flex-direction: column; gap: 1px; }
+
+/* ツリー: 親（ファイル/サーバー）ノード */
+.tree-parent { display: flex; align-items: center; gap: 4px; padding: 3px 2px; border-radius: 3px; cursor: pointer; }
+.tree-parent:hover { background: var(--panel-2); }
+.tree-parent .twisty { width: 14px; flex: none; color: var(--muted); text-align: center; font-size: 10px; user-select: none; }
+.tree-parent .p-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.tree-parent .count { color: var(--muted); font-size: 11px; }
+.tree-children { display: flex; flex-direction: column; gap: 1px; margin-left: 16px; }
+.tree-children[hidden] { display: none; }
+.source-item {
+  display: flex; align-items: center; gap: 6px; padding: 4px 2px; border-radius: 3px;
+  cursor: grab;
+}
+.source-item:hover { background: var(--panel-2); }
+.source-item.drag-over { outline: 1px dashed var(--accent-2); }
+.source-item.dragging { opacity: 0.4; }
+.source-item label { flex: 1; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-item .count { color: var(--muted); font-size: 11px; }
+.source-item .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.source-item .mini-btn {
+  flex: none; width: 18px; height: 18px; line-height: 16px; text-align: center; padding: 0;
+  background: transparent; border: 1px solid transparent; border-radius: 3px; color: var(--muted); cursor: pointer;
+  font-size: 12px; opacity: 0; transition: opacity 0.1s;
+}
+.source-item:hover .mini-btn { opacity: 1; }
+.source-item .mini-btn:hover { background: var(--panel-2); border-color: var(--border); color: var(--text); }
+.dot.ok { background: #3fb950; }
+.dot.err { background: #f85149; }
+.dot.idle { background: #6e7681; }
+
+.status { margin-top: auto; padding-top: 10px; color: var(--muted); font-size: 11px; white-space: pre-wrap; }
+
+.content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+.grid { flex: 1; display: flex; flex-direction: column; min-height: 0; outline: none; }
+.grid-head {
+  /* 自身の幅はフレックス親(.grid)基準の可視幅のまま維持し、内側の grid-head-inner だけを
+     全列合計幅にすることで overflow:hidden が実際に効くようにする(以前は本要素自身に
+     合計幅を指定していたため隠すべき範囲が無く、scrollLeft 追従が機能しなかった)。 */
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  color: var(--muted);
+  overflow: hidden;
+  flex: none;
+}
+.grid-head-inner { display: flex; }
+.grid-viewport { flex: 1; overflow: auto; position: relative; }
+.grid-spacer { position: relative; }
+.grid-rows { position: absolute; left: 0; right: 0; top: 0; }
+
+.grid-row { display: flex; border-bottom: 1px solid #2a2a2a; }
+.grid-row.alt { background: var(--row-alt); }
+
+.cell {
+  padding: 4px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-right: 1px solid #2a2a2a;
+  min-width: 40px;
+  user-select: none;
+  flex: none;
+}
+.cell.head { cursor: default; position: relative; }
+.cell.head.draggable-col { cursor: grab; }
+.cell.head.dragging { opacity: 0.4; }
+.cell.head.drag-over { outline: 2px dashed var(--accent-2); outline-offset: -2px; }
+.cell.head .cell-head-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.cell.sel { background: var(--sel); outline: 1px solid var(--accent-2); outline-offset: -1px; }
+
+/* 列幅リサイズハンドル */
+.col-resize-handle {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 6px;
+  cursor: col-resize; z-index: 2;
+}
+.col-resize-handle:hover, .col-resize-handle.dragging { background: var(--accent-2); }
+
+.result-info { padding: 4px 10px; background: var(--panel); border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; }
+
+.dialog {
+  position: relative;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  min-width: 360px;
+}
+.dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+.dialog-close-x {
+  position: absolute; top: 10px; right: 10px; width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: none; border-radius: 4px; color: var(--muted);
+  cursor: pointer; font-size: 16px; line-height: 1; padding: 0;
+}
+.dialog-close-x:hover { background: var(--panel-2); color: var(--text); }
+.dialog h3 { margin: 0 0 14px; }
+.dialog label { display: block; margin-bottom: 10px; }
+.dialog label.check { display: flex; align-items: center; gap: 6px; }
+.dialog input[type="text"], .dialog select {
+  width: 100%;
+  margin-top: 3px;
+  padding: 6px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+}
+.dialog input[type="checkbox"] { width: auto; margin: 0; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+.manage-table { width: 100%; border-collapse: collapse; min-width: 460px; }
+.manage-table th, .manage-table td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--border); font-weight: normal; }
+.manage-table th { color: var(--muted); font-size: 12px; }
+.manage-table td.count { color: var(--muted); }
+.manage-table input.interval { width: 70px; padding: 4px 6px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; color: var(--text); }
+.btn.danger { background: #5a1d1d; border-color: #7a2a2a; }
+.btn.danger:hover { background: #7a2a2a; }
+.manage-empty { color: var(--muted); padding: 10px 0; }
+.manage-table .row-actions { display: flex; gap: 4px; }
+.column-map-table select {
+  width: 100%; padding: 5px 6px; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 4px; color: var(--text);
+}
+
+/* 右クリックコンテキストメニュー */
+.ctx-menu {
+  position: fixed; z-index: 1000; min-width: 160px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4); padding: 4px; display: flex; flex-direction: column;
+}
+.ctx-menu button {
+  display: block; width: 100%; text-align: left; padding: 6px 10px; background: none; border: none;
+  color: var(--text); border-radius: 4px; cursor: pointer; font-size: 13px;
+}
+.ctx-menu button:hover { background: var(--accent); }
+.ctx-menu button.danger:hover { background: #7a2a2a; }
+
+/* 検索履歴パネル */
+.history-panel {
+  position: absolute; top: 46px; left: 8px; width: 380px; max-height: 260px; overflow-y: auto;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; z-index: 50;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+.history-item { padding: 6px 10px; cursor: pointer; font-size: 12px; color: var(--text); }
+.history-item:hover { background: var(--accent); }
+.history-empty { padding: 8px 10px; color: var(--muted); font-size: 12px; }
+.preset-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.preset-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preset-del { flex: none; background: none; border: none; color: var(--muted); cursor: pointer; padding: 0 4px; font-size: 13px; }
+.preset-del:hover { color: #f85149; }
+
+/* 幅広ダイアログ・フィールド役割編集・ブラウズ領域 */
+.dialog.wide { min-width: 560px; max-width: 720px; }
+
+/* データソース追加/編集ダイアログ: ウィンドウの高さを活かして縦に伸ばし、右下ハンドルでサイズ可変にする。
+   flex 縦積みにして roles 一覧(roles-table-wrap)が残り高さを占有 → 中身が多くてもダイアログはビューポート内に収まる。 */
+#add-dialog {
+  display: flex;
+  flex-direction: column;
+  min-height: 360px;
+  max-height: 92vh;
+  height: 82vh;              /* 既定でウィンドウ高を活かす（resize で変更可） */
+  resize: both;
+  overflow: hidden;
+}
+#add-dialog #add-form { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+#add-dialog .roles-fieldset { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+#add-dialog .roles-table-wrap { max-height: none; flex: 1; min-height: 80px; }
+/* 上部の各フィールドは自然高のまま（伸びるのは roles 一覧のみ）。 */
+#add-dialog > #add-form > label,
+#add-dialog #f-dynamic,
+#add-dialog #f-belongs-to,
+#add-dialog .browse-area { flex: none; }
+.dialog-note { color: var(--muted); font-size: 12px; margin: -4px 0 12px; line-height: 1.5; }
+.last-loaded-hint { color: var(--muted); font-size: 11px; margin: -8px 0 12px; }
+.belongs-to-hint {
+  color: var(--muted); font-size: 12px; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 4px; padding: 6px 8px; margin: -4px 0 10px;
+}
+.form-error { color: #f85149; font-size: 12px; min-height: 1em; margin-bottom: 6px; }
+
+.browse-area { margin-bottom: 10px; }
+.browse-area .btn { margin-bottom: 6px; }
+
+.roles-fieldset { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin: 12px 0; }
+.roles-fieldset legend { color: var(--muted); font-size: 12px; padding: 0 4px; }
+.roles-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.roles-hint { color: var(--muted); font-size: 11px; }
+.roles-table-wrap { max-height: 260px; overflow-y: auto; }
+.roles-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.roles-table th, .roles-table td { padding: 4px 6px; border-bottom: 1px solid var(--border); text-align: center; }
+.roles-table th { color: var(--muted); font-weight: normal; }
+.roles-table td:nth-child(2), .roles-table th:nth-child(2) { text-align: left; }
+.roles-table td:nth-child(2) { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.roles-table input[type="text"] { width: 110px; padding: 3px 5px; margin: 0; font-size: 12px; }
+.roles-table .r-drag-handle { width: 18px; padding: 4px 2px; cursor: grab; color: var(--muted); user-select: none; }
+.roles-table tr.dragging { opacity: 0.4; }
+.roles-table tr.drag-over { outline: 1px dashed var(--accent-2); outline-offset: -1px; }
+
+/* ピッカー系(Notion DB / テーブル一括 / SharePoint) */
+.picker-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px; }
+.picker-item { padding: 7px 10px; cursor: pointer; border-bottom: 1px solid #2a2a2a; font-size: 13px; }
+.picker-item:last-child { border-bottom: none; }
+.picker-item:hover { background: var(--panel-2); }
+.picker-empty { padding: 12px; color: var(--muted); text-align: center; }
+.picker-list.checklist .picker-item { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.picker-list.checklist .picker-item:hover { background: var(--panel-2); }
+.picker-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.picker-item .badge { margin-left: auto; font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; }
+
+.sp-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.sp-tab { padding: 5px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px 4px 0 0; color: var(--muted); cursor: pointer; }
+.sp-tab.active { color: var(--text); border-bottom-color: var(--panel-2); background: var(--accent); }
+.sp-step { margin-bottom: 4px; }
+.sp-selected-site { font-size: 12px; color: var(--muted); margin-bottom: 6px; }

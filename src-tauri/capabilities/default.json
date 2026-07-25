@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "EveryDB の既定権限。fs:scope は意図的に空（全域許可を置かない）。TSV 出力は dialog の保存ダイアログ経由であり、ユーザーが選んだパスは dialog プラグインが自動で fs スコープへ追加するため、事前の全域許可は不要。",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "opener:allow-open-path",
+    "opener:allow-open-url",
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "fs:allow-write-text-file"
+  ]
+}

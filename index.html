@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>いつでも、どこでも、データをちゅんちゅん - EveryDB</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="toolbar">
+        <input id="search" class="search" type="text" placeholder="検索…（半角スペース区切りで複数語 AND / Alt+Ctrl+D で呼び出し）" autocomplete="off" spellcheck="false" />
+        <div id="history-panel" class="history-panel" hidden></div>
+        <button id="preset-save" class="btn" title="現在の検索条件をお気に入りに保存">☆保存</button>
+        <button id="preset-list-btn" class="btn" title="お気に入りから呼び出し">★一覧</button>
+        <div id="preset-panel" class="history-panel" hidden></div>
+        <button id="export" class="btn" title="現在の検索結果を TSV でエクスポート">TSV出力</button>
+        <button id="open" class="btn" title="選択行のファイル/リソースを開く" disabled>開く</button>
+        <button id="add" class="btn" title="テーブルを追加（新しい接続先の場合は接続情報もあわせて入力）">＋ テーブル追加</button>
+        <button id="manage" class="btn" title="テーブルの削除・更新間隔の設定（データソース全体の一覧）">データソース管理</button>
+        <button id="settings" class="btn" title="アプリ設定">⚙ 設定</button>
+      </header>
+
+      <div class="body">
+        <aside class="sidebar">
+          <div class="sidebar-title-row">
+            <div class="sidebar-title">データソース一覧（検索範囲）</div>
+            <div class="sidebar-bulk">
+              <button id="select-all" class="link-btn" title="全選択">全選択</button>
+              <button id="select-none" class="link-btn" title="全解除">全解除</button>
+            </div>
+          </div>
+          <input id="source-filter" class="source-filter" type="text" placeholder="データソースを絞り込み…" autocomplete="off" spellcheck="false" />
+          <div id="sources" class="sources"></div>
+          <div id="status" class="status"></div>
+        </aside>
+
+        <div id="sidebar-resizer" class="sidebar-resizer" title="ドラッグして幅を変更"></div>
+
+        <main class="content">
+          <div id="grid" class="grid" tabindex="0">
+            <div id="grid-head" class="grid-head"></div>
+            <div id="grid-viewport" class="grid-viewport">
+              <div id="grid-spacer" class="grid-spacer">
+                <div id="grid-rows" class="grid-rows"></div>
+              </div>
+            </div>
+          </div>
+          <div id="result-info" class="result-info"></div>
+        </main>
+      </div>
+    </div>
+
+    <!-- グリッドセルの右クリックコピーメニュー -->
+    <div id="grid-ctx-menu" class="ctx-menu" hidden>
+      <button data-copy="value">値をコピー</button>
+      <button data-copy="tsv">行をTSVコピー</button>
+      <button data-copy="tsv-header">見出し付きTSVコピー</button>
+      <button data-copy="json">JSONコピー</button>
+    </div>
+
+    <!-- テーブル右クリックコンテキストメニュー -->
+    <div id="ctx-menu" class="ctx-menu" hidden>
+      <button data-action="view">編集</button>
+      <button data-action="duplicate">複製</button>
+      <button data-action="reload">再読込</button>
+      <button data-action="open-table" hidden>このテーブルを開く</button>
+      <button data-action="delete" class="danger">削除</button>
+    </div>
+
+    <!-- 接続先（ツリーの親）右クリックコンテキストメニュー -->
+    <div id="parent-ctx-menu" class="ctx-menu" hidden>
+      <button data-action="edit">編集</button>
+      <button data-action="reload">再読込（配下の全テーブル）</button>
+      <button data-action="open">接続先を開く</button>
+      <button data-action="delete" class="danger">削除（配下の全テーブル）</button>
+    </div>
+
+    <!-- テーブル追加/編集ダイアログ（種別ごとの動的フィールド + フィールド役割編集。新規の接続先の場合は接続情報もここで入力） -->
+    <dialog id="add-dialog" class="dialog wide">
+      <form method="dialog" id="add-form">
+        <h3 id="add-dialog-title">テーブル追加</h3>
+        <div id="f-last-loaded" class="last-loaded-hint" hidden></div>
+        <label>種別 <select id="f-type"></select></label>
+        <div id="f-belongs-to" class="belongs-to-hint" hidden></div>
+        <div id="f-dynamic"></div>
+        <label>表示名 <input id="f-name" type="text" required /></label>
+
+        <div id="browse-area" class="browse-area"></div>
+
+        <fieldset class="roles-fieldset">
+          <legend>表示・検索設定（任意）</legend>
+          <span id="roles-hint" class="roles-hint">接続情報を入力してから取得してください</span>
+          <div id="roles-table-wrap" class="roles-table-wrap" hidden>
+            <table class="roles-table">
+              <thead>
+                <tr><th></th><th>元の列名</th><th>表示</th><th>検索対象</th><th>見出し</th><th>開く参照</th><th>表示名(エイリアス)</th></tr>
+              </thead>
+              <tbody id="roles-rows"></tbody>
+            </table>
+          </div>
+          <div class="roles-toolbar">
+            <button type="button" id="fetch-fields" class="btn">再読込</button>
+            <button type="button" id="reset-fields" class="btn">リセット</button>
+          </div>
+        </fieldset>
+
+        <div class="dialog-actions">
+          <button value="cancel" class="btn" formnovalidate>キャンセル</button>
+          <button value="ok" class="btn primary">保存してリロード</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Notion データベース ピッカー -->
+    <dialog id="notion-picker" class="dialog">
+      <h3>Notion データベースを選択</h3>
+      <div id="notion-picker-list" class="picker-list"></div>
+      <div class="dialog-actions">
+        <button id="notion-picker-close" class="btn">閉じる</button>
+      </div>
+    </dialog>
+
+    <!-- Excel/SQLite/Access テーブル一括選択ダイアログ -->
+    <dialog id="table-picker" class="dialog wide">
+      <h3 id="table-picker-title">テーブル一覧</h3>
+      <div class="picker-toolbar">
+        <button type="button" id="table-picker-all" class="link-btn">全選択</button>
+        <button type="button" id="table-picker-none" class="link-btn">全解除</button>
+        <span id="table-picker-count" class="roles-hint"></span>
+      </div>
+      <div id="table-picker-list" class="picker-list checklist"></div>
+      <div id="table-picker-error" class="form-error"></div>
+      <div class="dialog-actions">
+        <button id="table-picker-cancel" class="btn">キャンセル</button>
+        <button id="table-picker-add" class="btn primary">選択した項目を一括追加</button>
+      </div>
+    </dialog>
+
+    <!-- SharePoint サイト/チーム → リスト・ライブラリ ピッカー -->
+    <dialog id="sp-picker" class="dialog wide">
+      <h3 id="sp-picker-title">SharePoint から選択</h3>
+      <div id="sp-step-source" class="sp-step">
+        <div class="sp-tabs">
+          <button type="button" id="sp-tab-sites" class="sp-tab active">サイト</button>
+          <button type="button" id="sp-tab-teams" class="sp-tab">Teams チーム</button>
+        </div>
+        <input id="sp-filter" class="search" type="text" placeholder="絞り込み…" />
+        <div id="sp-source-list" class="picker-list"></div>
+      </div>
+      <div id="sp-step-resources" class="sp-step" hidden>
+        <div class="sp-selected-site"></div>
+        <div id="sp-resource-list" class="picker-list checklist"></div>
+      </div>
+      <div class="dialog-actions">
+        <button id="sp-picker-cancel" class="btn">キャンセル</button>
+        <button id="sp-picker-add" class="btn primary" hidden>選択した項目を一括追加</button>
+      </div>
+    </dialog>
+
+    <!-- データソース管理ダイアログ（全テーブルの一覧） -->
+    <dialog id="manage-dialog" class="dialog wide">
+      <button id="manage-close-x" class="dialog-close-x" type="button" title="閉じる">×</button>
+      <h3>データソース管理</h3>
+      <table class="manage-table">
+        <thead>
+          <tr><th>名前</th><th>種別</th><th>件数</th><th>更新間隔(分)</th><th></th></tr>
+        </thead>
+        <tbody id="manage-rows"></tbody>
+      </table>
+      <div class="dialog-actions">
+        <button id="manage-close" class="btn">閉じる</button>
+      </div>
+    </dialog>
+
+    <!-- 接続先（ツリーの親）右クリック: 接続設定の一括編集 -->
+    <dialog id="parent-dialog" class="dialog wide">
+      <button id="parent-close-x" class="dialog-close-x" type="button" title="閉じる">×</button>
+      <h3 id="parent-dialog-title">接続設定</h3>
+      <div id="parent-type-label" class="belongs-to-hint"></div>
+      <label>表示名（接続先のツリー見出し。空欄で自動）
+        <input id="parent-label" type="text" placeholder="例: 経理システム" />
+      </label>
+      <div id="parent-dynamic"></div>
+      <div id="parent-scope-hint" class="roles-hint"></div>
+      <button type="button" id="parent-manage-tables" class="btn" hidden>テーブルの追加/削除…</button>
+      <div id="parent-error" class="form-error"></div>
+      <div class="dialog-actions">
+        <button id="parent-cancel" class="btn" type="button">キャンセル</button>
+        <button id="parent-save" class="btn primary" type="button">保存してリロード</button>
+      </div>
+    </dialog>
+
+    <!-- 接続先ダイアログ内: 配下テーブルのチェックで追加/削除 -->
+    <dialog id="parent-table-picker" class="dialog wide">
+      <button id="parent-table-picker-close-x" class="dialog-close-x" type="button" title="閉じる">×</button>
+      <h3>テーブルの追加/削除</h3>
+      <div class="picker-toolbar">
+        <button type="button" id="parent-table-picker-all" class="link-btn">全選択</button>
+        <button type="button" id="parent-table-picker-none" class="link-btn">全解除</button>
+      </div>
+      <div id="parent-table-picker-list" class="picker-list checklist"></div>
+      <div id="parent-table-picker-error" class="form-error"></div>
+      <div class="dialog-actions">
+        <button id="parent-table-picker-cancel" class="btn" type="button">キャンセル</button>
+        <button id="parent-table-picker-apply" class="btn primary" type="button">適用</button>
+      </div>
+    </dialog>
+
+    <!-- マスターパスワード 初回設定（必須・キャンセル不可） -->
+    <dialog id="mp-setup-dialog" class="dialog">
+      <form method="dialog" id="mp-setup-form">
+        <h3>マスターパスワードの設定</h3>
+        <p class="dialog-note">
+          Notion/SharePoint 等のシークレットを扱う前に、閲覧用のマスターパスワードを設定してください。
+          設定後、シークレットを「表示」する際にこのパスワードを求めます（一度入力すれば 10 分間は再要求しません）。
+        </p>
+        <label>パスワード <input id="mp-setup-pw1" type="password" autocomplete="new-password" required /></label>
+        <label>確認 <input id="mp-setup-pw2" type="password" autocomplete="new-password" required /></label>
+        <div id="mp-setup-error" class="form-error"></div>
+        <div class="dialog-actions">
+          <button value="ok" class="btn primary">設定する</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- マスターパスワード 入力（閲覧解錠） -->
+    <dialog id="mp-verify-dialog" class="dialog">
+      <form method="dialog" id="mp-verify-form">
+        <h3>マスターパスワード</h3>
+        <p class="dialog-note">シークレットを表示するにはマスターパスワードを入力してください。</p>
+        <label>パスワード <input id="mp-verify-pw" type="password" autocomplete="current-password" required /></label>
+        <div id="mp-verify-error" class="form-error"></div>
+        <div class="dialog-actions">
+          <button value="cancel" class="btn" formnovalidate>キャンセル</button>
+          <button value="ok" class="btn primary">解錠</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- 列見出し右クリック: 列名/表示状態のテーブル別対応編集 -->
+    <dialog id="column-map-dialog" class="dialog wide">
+      <button id="column-map-close-x" class="dialog-close-x" type="button" title="閉じる">×</button>
+      <h3 id="column-map-title">列の設定</h3>
+      <label>表示名（この列に対応する全テーブルへ適用）
+        <input id="cm-display-name" type="text" />
+      </label>
+      <label class="check"><input id="cm-visible" type="checkbox" /> この列を表示する</label>
+      <div id="column-map-hint" class="roles-hint"></div>
+      <table class="manage-table column-map-table">
+        <thead><tr><th>テーブル</th><th>対応する元フィールド</th></tr></thead>
+        <tbody id="column-map-rows"></tbody>
+      </table>
+      <div class="dialog-actions">
+        <button id="column-map-cancel" class="btn" type="button">キャンセル</button>
+        <button id="column-map-save" class="btn primary" type="button">保存</button>
+      </div>
+    </dialog>
+
+    <!-- アプリ設定 -->
+    <dialog id="settings-dialog" class="dialog">
+      <h3>設定</h3>
+      <label class="check"><input id="s-autostart" type="checkbox" /> Windows ログイン時に自動起動する</label>
+      <label>テーマ
+        <select id="s-theme">
+          <option value="dark">ダーク</option>
+          <option value="light">ライト</option>
+          <option value="night">ナイト（高コントラスト）</option>
+        </select>
+      </label>
+      <label>表示倍率
+        <div class="zoom-row">
+          <button type="button" id="s-zoom-out" class="btn">－</button>
+          <span id="s-zoom-value" class="zoom-value">100%</span>
+          <button type="button" id="s-zoom-in" class="btn">＋</button>
+          <button type="button" id="s-zoom-reset" class="btn">リセット</button>
+        </div>
+        <span class="roles-hint">Ctrl++ / Ctrl+- / Ctrl+0 でも変更できます</span>
+      </label>
+      <label class="limit-label-row" title="検索結果の最大行数">検索結果の上限件数
+        <input id="row-limit" class="row-limit" type="number" min="1" max="1000000" value="10000" />
+      </label>
+      <label>データ更新
+        <div class="zoom-row">
+          <button type="button" id="s-reload" class="btn">今すぐ全ソースを更新</button>
+          <span id="reload-status" class="reload-status" hidden><span class="spinner"></span>更新中…</span>
+        </div>
+        <span class="roles-hint">応答が一時的に遅くなる場合があります</span>
+      </label>
+      <div class="dialog-actions">
+        <button id="settings-close" class="btn primary">閉じる</button>
+      </div>
+    </dialog>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
