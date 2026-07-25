@@ -14,7 +14,7 @@
         <button id="preset-save" class="btn" title="現在の検索条件をお気に入りに保存">☆保存</button>
         <button id="preset-list-btn" class="btn" title="お気に入りから呼び出し">★一覧</button>
         <div id="preset-panel" class="history-panel" hidden></div>
-        <button id="export" class="btn" title="現在の検索結果を TSV でエクスポート">TSV出力</button>
+        <button id="export" class="btn" title="現在の検索結果を TSV/CSV/JSON でエクスポート">出力</button>
         <button id="settings" class="btn" title="アプリ設定">⚙ 設定</button>
       </header>
 
@@ -336,6 +336,34 @@
       <div class="dialog-actions">
         <button id="confirm-dialog-cancel" class="btn" type="button">キャンセル</button>
         <button id="confirm-dialog-ok" class="btn danger" type="button">削除する</button>
+      </div>
+    </dialog>
+
+    <!-- 検索結果の出力（TSV/CSV/JSON + 文字コード） -->
+    <dialog id="export-dialog" class="dialog">
+      <button id="export-close-x" class="dialog-close-x" type="button" title="閉じる">×</button>
+      <h3>検索結果を出力</h3>
+      <div id="export-count" class="roles-hint"></div>
+      <label>形式
+        <div class="zoom-row">
+          <label class="check"><input type="radio" name="export-format" id="export-format-tsv" value="tsv" checked /> TSV</label>
+          <label class="check"><input type="radio" name="export-format" id="export-format-csv" value="csv" /> CSV</label>
+          <label class="check"><input type="radio" name="export-format" id="export-format-json" value="json" /> JSON</label>
+        </div>
+      </label>
+      <label>文字コード
+        <select id="export-encoding">
+          <option value="utf8bom">UTF-8（BOM付き・既定、Excel向け）</option>
+          <option value="utf8">UTF-8（BOMなし）</option>
+          <option value="sjis">Shift_JIS</option>
+        </select>
+        <span id="export-encoding-hint" class="roles-hint"></span>
+      </label>
+      <div id="export-error" class="form-error"></div>
+      <div class="dialog-actions">
+        <span id="export-status" class="reload-status" hidden><span class="spinner"></span>出力中…</span>
+        <button id="export-cancel" class="btn" type="button">キャンセル</button>
+        <button id="export-ok" class="btn primary" type="button">エクスポート</button>
       </div>
     </dialog>
 

@@ -112,6 +112,7 @@ pub fn run() {
             commands::list_search_presets,
             commands::delete_search_preset,
             commands::open_ref,
+            commands::encode_shift_jis,
             commands::mp_status,
             commands::mp_set,
             commands::mp_verify,

@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { writeFile } from "@tauri-apps/plugin-fs";
 
 // ==== 型 ====
 interface SourceInfo {
@@ -2394,26 +2394,112 @@ $<HTMLButtonElement>("s-reload").onclick = () => void reloadAllSources();
 // ---- 行数上限の変更で再検索 ----
 $<HTMLInputElement>("row-limit").addEventListener("change", () => runSearch());
 
-// ---- TSV エクスポート（現在の検索結果を保存）----
+// ---- 出力（現在の検索結果を TSV/CSV/JSON で保存。要件 v0.0.4: 出力ダイアログ化）----
+type ExportFormat = "tsv" | "csv" | "json";
+type ExportEncoding = "utf8bom" | "utf8" | "sjis";
+
 function tsvEscape(v: string): string {
   // タブ・改行を空白に置換して 1 セル 1 値を保つ。
   return v.replace(/[\t\r\n]+/g, " ");
 }
-$<HTMLButtonElement>("export").onclick = async () => {
+/** RFC4180 ふう CSV エスケープ: カンマ・ダブルクオート・改行を含む値だけ引用符で囲む。 */
+function csvEscape(v: string): string {
+  if (/[,"\r\n]/.test(v)) {
+    return `"${v.replace(/"/g, '""')}"`;
+  }
+  return v;
+}
+
+function buildExportText(format: ExportFormat): string {
+  if (format === "json") {
+    const data = rows.map((r) => Object.fromEntries(columns.map((c, i) => [c, cellText(r, i)])));
+    return JSON.stringify(data, null, 2);
+  }
+  const escape = format === "csv" ? csvEscape : tsvEscape;
+  const sep = format === "csv" ? "," : "\t";
+  const header = columns.map(escape).join(sep);
+  const lines = rows.map((r) => columns.map((_, c) => escape(cellText(r, c))).join(sep));
+  return [header, ...lines].join("\r\n");
+}
+
+const EXPORT_FORMAT_INFO: Record<ExportFormat, { ext: string; filterName: string; extra: string[] }> = {
+  tsv: { ext: "tsv", filterName: "TSV", extra: ["txt"] },
+  csv: { ext: "csv", filterName: "CSV", extra: [] },
+  json: { ext: "json", filterName: "JSON", extra: [] },
+};
+
+/** テキストを指定の文字コードのバイト列にする。Shift_JIS はブラウザ標準では変換できないため Rust 側に委ねる。 */
+async function encodeForExport(text: string, encoding: ExportEncoding): Promise<Uint8Array> {
+  if (encoding === "sjis") {
+    return new Uint8Array(await invoke<number[]>("encode_shift_jis", { text }));
+  }
+  const body = new TextEncoder().encode(text);
+  if (encoding === "utf8bom") {
+    const withBom = new Uint8Array(body.length + 3);
+    withBom.set([0xef, 0xbb, 0xbf], 0);
+    withBom.set(body, 3);
+    return withBom;
+  }
+  return body;
+}
+
+function currentExportFormat(): ExportFormat {
+  return (document.querySelector<HTMLInputElement>('input[name="export-format"]:checked')?.value as ExportFormat) ?? "tsv";
+}
+
+const exportEncodingSel = $<HTMLSelectElement>("export-encoding");
+const exportEncodingHint = $<HTMLDivElement>("export-encoding-hint");
+function updateExportEncodingState() {
+  const isJson = currentExportFormat() === "json";
+  exportEncodingSel.disabled = isJson;
+  exportEncodingHint.textContent = isJson ? "JSON は UTF-8（BOMなし）固定です" : "";
+  if (isJson) exportEncodingSel.value = "utf8";
+}
+for (const el of document.querySelectorAll<HTMLInputElement>('input[name="export-format"]')) {
+  el.addEventListener("change", updateExportEncodingState);
+}
+
+$<HTMLButtonElement>("export").onclick = () => {
   if (rows.length === 0) { resultInfo.textContent = "エクスポートする結果がありません"; return; }
-  const header = columns.map(tsvEscape).join("\t");
-  const lines = rows.map((r) => columns.map((_, c) => tsvEscape(cellText(r, c))).join("\t"));
-  const tsv = [header, ...lines].join("\r\n");
+  $<HTMLDivElement>("export-error").textContent = "";
+  $<HTMLDivElement>("export-count").textContent = `${rows.length} 件 / ${columns.length} 列を出力します`;
+  $<HTMLInputElement>("export-format-tsv").checked = true;
+  exportEncodingSel.value = "utf8bom";
+  updateExportEncodingState();
+  $<HTMLDialogElement>("export-dialog").showModal();
+};
+$<HTMLButtonElement>("export-cancel").onclick = () => $<HTMLDialogElement>("export-dialog").close();
+$<HTMLButtonElement>("export-close-x").onclick = () => $<HTMLDialogElement>("export-dialog").close();
+
+$<HTMLButtonElement>("export-ok").onclick = async () => {
+  const format = currentExportFormat();
+  const encoding = exportEncodingSel.value as ExportEncoding;
+  const info = EXPORT_FORMAT_INFO[format];
+  const errEl = $<HTMLDivElement>("export-error");
+  const statusEl = $<HTMLSpanElement>("export-status");
+  const okBtn = $<HTMLButtonElement>("export-ok");
+  const cancelBtn = $<HTMLButtonElement>("export-cancel");
+  errEl.textContent = "";
   try {
     const path = await saveDialog({
-      defaultPath: "everydb_export.tsv",
-      filters: [{ name: "TSV", extensions: ["tsv", "txt"] }],
+      defaultPath: `everydb_export.${info.ext}`,
+      filters: [{ name: info.filterName, extensions: [info.ext, ...info.extra] }],
     });
     if (!path) return;
-    await writeTextFile(path, tsv);
+    okBtn.disabled = true;
+    cancelBtn.disabled = true;
+    statusEl.hidden = false;
+    const text = buildExportText(format);
+    const bytes = await encodeForExport(text, format === "json" ? "utf8" : encoding);
+    await writeFile(path, bytes);
+    $<HTMLDialogElement>("export-dialog").close();
     resultInfo.textContent = `エクスポート完了: ${path}（${rows.length} 件）`;
   } catch (e) {
-    resultInfo.textContent = "エクスポート失敗: " + String(e);
+    errEl.textContent = "エクスポート失敗: " + String(e);
+  } finally {
+    okBtn.disabled = false;
+    cancelBtn.disabled = false;
+    statusEl.hidden = true;
   }
 };
 
