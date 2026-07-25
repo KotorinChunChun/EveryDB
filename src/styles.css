@@ -144,21 +144,50 @@ body {
 
 .sources { display: flex; flex-direction: column; gap: 1px; }
 
-/* ツリー: 親（ファイル/サーバー）ノード */
-.tree-parent { display: flex; align-items: center; gap: 4px; padding: 3px 2px; border-radius: 3px; cursor: pointer; }
+/* ツリー: グループ・親（ファイル/サーバー）ノード */
+.tree-group { display: flex; flex-direction: column; gap: 1px; position: relative; border-radius: 3px; }
+.tree-parent { display: flex; align-items: center; gap: 4px; padding: 3px 2px; border-radius: 3px; cursor: grab; }
 .tree-parent:hover { background: var(--panel-2); }
-.tree-parent .twisty { width: 14px; flex: none; color: var(--muted); text-align: center; font-size: 10px; user-select: none; }
+.tree-parent .twisty { width: 14px; flex: none; color: var(--muted); text-align: center; font-size: 10px; user-select: none; cursor: pointer; padding: 2px 0; }
+.tree-parent .twisty:hover { color: var(--text); }
 .tree-parent .p-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .tree-parent .count { color: var(--muted); font-size: 11px; }
 .tree-children { display: flex; flex-direction: column; gap: 1px; margin-left: 16px; }
 .tree-children[hidden] { display: none; }
 .source-item {
   display: flex; align-items: center; gap: 6px; padding: 4px 2px; border-radius: 3px;
-  cursor: grab;
+  cursor: grab; position: relative;
 }
 .source-item:hover { background: var(--panel-2); }
-.source-item.drag-over { outline: 1px dashed var(--accent-2); }
-.source-item.dragging { opacity: 0.4; }
+
+/* ドラッグ移動元（グループ全体または単独アイテムの半透明・破線表示） */
+.tree-group.dragging, .source-item.dragging { opacity: 0.4; }
+.tree-group.dragging { outline: 1px dashed var(--muted); }
+
+/* ドラッグ移動先（接続先単位・テーブル単位での破線囲い ＋ 境界線部分の太線バー） */
+.tree-group.drop-target-before, .tree-group.drop-target-after,
+.source-item.drop-target-before, .source-item.drop-target-after {
+  outline: 1px dashed var(--accent-2);
+  outline-offset: -1px;
+  background: rgba(17, 119, 187, 0.08);
+}
+.tree-group.drop-target-before::before,
+.source-item.drop-target-before::before,
+.tree-group.drop-target-after::after,
+.source-item.drop-target-after::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0;
+  height: 3px;
+  background: var(--accent-2);
+  box-shadow: 0 0 6px var(--accent-2);
+  z-index: 10;
+  pointer-events: none;
+}
+.tree-group.drop-target-before::before,
+.source-item.drop-target-before::before { top: -1px; }
+.tree-group.drop-target-after::after,
+.source-item.drop-target-after::after { bottom: -1px; }
 .source-item label { flex: 1; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source-item .count { color: var(--muted); font-size: 11px; }
 .source-item .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }

@@ -172,6 +172,103 @@ async function refreshSidebar() {
 }
 
 let dragSrcId: number | null = null;
+let dragParentKey: string | null = null;
+
+async function performReorder(targetParentKey: string | null, targetId: number | null, insertAfter: boolean = false) {
+  if (dragSrcId === null && dragParentKey === null) return;
+
+  const currentOrder = sources.map((x) => x.id);
+
+  let movingIds: number[] = [];
+  if (dragParentKey !== null) {
+    if (dragParentKey === targetParentKey) return;
+    movingIds = sources.filter((x) => x.parent === dragParentKey).map((x) => x.id);
+  } else if (dragSrcId !== null) {
+    if (dragSrcId === targetId) return;
+    movingIds = [dragSrcId];
+  }
+  if (movingIds.length === 0) return;
+
+  const movingSet = new Set(movingIds);
+  const remainingOrder = currentOrder.filter((id) => !movingSet.has(id));
+
+  let targetIndex = remainingOrder.length;
+  if (targetId !== null) {
+    const idx = remainingOrder.indexOf(targetId);
+    if (idx !== -1) targetIndex = insertAfter ? idx + 1 : idx;
+  } else if (targetParentKey !== null) {
+    if (insertAfter) {
+      const targetGroupLast = [...sources].reverse().find((x) => x.parent === targetParentKey && !movingSet.has(x.id));
+      if (targetGroupLast) {
+        const idx = remainingOrder.indexOf(targetGroupLast.id);
+        if (idx !== -1) targetIndex = idx + 1;
+      }
+    } else {
+      const targetGroupFirst = sources.find((x) => x.parent === targetParentKey && !movingSet.has(x.id));
+      if (targetGroupFirst) {
+        const idx = remainingOrder.indexOf(targetGroupFirst.id);
+        if (idx !== -1) targetIndex = idx;
+      }
+    }
+  }
+
+  remainingOrder.splice(targetIndex, 0, ...movingIds);
+  await invoke("reorder_sources", { orderedIds: remainingOrder });
+  await refreshSidebar();
+}
+
+let currentDropTarget: HTMLElement | null = null;
+let currentDropIsAfter: boolean | null = null;
+
+function clearDropTargets() {
+  if (currentDropTarget) {
+    currentDropTarget.classList.remove("drop-target-before", "drop-target-after");
+  } else {
+    document.querySelectorAll(".drop-target-before, .drop-target-after").forEach((el) => {
+      el.classList.remove("drop-target-before", "drop-target-after");
+    });
+  }
+  currentDropTarget = null;
+  currentDropIsAfter = null;
+}
+
+function getDropTargetElement(el: HTMLElement): HTMLElement {
+  if (dragParentKey !== null) {
+    const group = el.closest<HTMLElement>(".tree-group");
+    if (group) return group;
+  }
+  return el;
+}
+
+function handleDragOver(ev: DragEvent, el: HTMLElement): boolean {
+  ev.preventDefault();
+  ev.stopPropagation();
+  const targetEl = getDropTargetElement(el);
+  const rect = targetEl.getBoundingClientRect();
+  const isAfter = ev.clientY >= rect.top + rect.height / 2;
+
+  if (currentDropTarget === targetEl && currentDropIsAfter === isAfter) {
+    return isAfter;
+  }
+
+  if (currentDropTarget && currentDropTarget !== targetEl) {
+    currentDropTarget.classList.remove("drop-target-before", "drop-target-after");
+  } else if (currentDropTarget === targetEl) {
+    targetEl.classList.remove(isAfter ? "drop-target-before" : "drop-target-after");
+  }
+
+  targetEl.classList.add(isAfter ? "drop-target-after" : "drop-target-before");
+  currentDropTarget = targetEl;
+  currentDropIsAfter = isAfter;
+  return isAfter;
+}
+
+sourcesEl.addEventListener("dragleave", (ev) => {
+  if (!sourcesEl.contains(ev.relatedTarget as Node)) {
+    clearDropTargets();
+  }
+});
+
 const collapsedParents = new Set<string>();
 let sourceFilter = "";
 
@@ -247,20 +344,31 @@ function makeSourceItem(s: SourceInfo): HTMLElement {
   });
 
   // ---- ドラッグ並び替え ----
-  item.addEventListener("dragstart", () => { dragSrcId = s.id; item.classList.add("dragging"); });
-  item.addEventListener("dragend", () => item.classList.remove("dragging"));
-  item.addEventListener("dragover", (ev) => { ev.preventDefault(); item.classList.add("drag-over"); });
-  item.addEventListener("dragleave", () => item.classList.remove("drag-over"));
+  item.addEventListener("dragstart", () => {
+    dragSrcId = s.id; dragParentKey = null;
+    item.classList.add("dragging");
+  });
+  item.addEventListener("dragend", () => {
+    item.classList.remove("dragging");
+    clearDropTargets();
+  });
+  item.addEventListener("dragover", (ev) => {
+    handleDragOver(ev as DragEvent, item);
+  });
   item.addEventListener("drop", async (ev) => {
     ev.preventDefault();
-    item.classList.remove("drag-over");
-    if (dragSrcId === null || dragSrcId === s.id) return;
-    const order = sources.map((x) => x.id);
-    const from = order.indexOf(dragSrcId);
-    const to = order.indexOf(s.id);
-    order.splice(to, 0, order.splice(from, 1)[0]);
-    await invoke("reorder_sources", { orderedIds: order });
-    await refreshSidebar();
+    ev.stopPropagation();
+    const targetEl = getDropTargetElement(item);
+    const rect = targetEl.getBoundingClientRect();
+    const isAfter = (ev as MouseEvent).clientY >= rect.top + rect.height / 2;
+    clearDropTargets();
+    if (dragParentKey !== null) {
+      const group = item.closest<HTMLElement>(".tree-group");
+      const parentKey = group ? group.dataset.parentKey ?? null : null;
+      if (parentKey) await performReorder(parentKey, null, isAfter);
+    } else {
+      await performReorder(null, s.id, isAfter);
+    }
   });
   return item;
 }
@@ -303,13 +411,20 @@ function renderSources() {
     const twisty = document.createElement("span");
     twisty.className = "twisty";
     twisty.textContent = collapsed ? "▶" : "▼";
+    const toggleCollapse = (ev?: Event) => {
+      if (ev) ev.stopPropagation();
+      if (collapsed) collapsedParents.delete(s.parent);
+      else collapsedParents.add(s.parent);
+      renderSources();
+    };
+    twisty.onclick = toggleCollapse;
 
     const pcb = document.createElement("input");
     pcb.type = "checkbox";
     pcb.checked = selCount === children.length;
     pcb.indeterminate = selCount > 0 && selCount < children.length;
-    pcb.onclick = (ev) => {
-      ev.stopPropagation();
+    const toggleCheck = (ev?: Event) => {
+      if (ev) ev.stopPropagation();
       const turnOn = !(selCount === children.length);
       for (const c of children) {
         if (turnOn) selectedSourceIds.add(c.id);
@@ -318,6 +433,7 @@ function renderSources() {
       renderSources();
       runSearch();
     };
+    pcb.onclick = toggleCheck;
 
     const plabel = document.createElement("span");
     plabel.className = "p-label";
@@ -328,23 +444,62 @@ function renderSources() {
     pcount.className = "count";
     pcount.textContent = `${children.length}`;
 
+    const groupWrap = document.createElement("div");
+    groupWrap.className = "tree-group";
+    groupWrap.dataset.parentKey = s.parent;
+
     parentRow.append(twisty, pcb, plabel, pcount);
-    parentRow.onclick = () => {
-      if (collapsed) collapsedParents.delete(s.parent);
-      else collapsedParents.add(s.parent);
-      renderSources();
+    parentRow.draggable = true;
+
+    let clickTimer: ReturnType<typeof setTimeout> | null = null;
+    parentRow.onclick = (ev) => {
+      if (ev.target === twisty || ev.target === pcb) return;
+      if (clickTimer) clearTimeout(clickTimer);
+      clickTimer = setTimeout(() => {
+        clickTimer = null;
+        toggleCheck();
+      }, 180);
+    };
+    parentRow.ondblclick = (ev) => {
+      if (ev.target === twisty || ev.target === pcb) return;
+      if (clickTimer) {
+        clearTimeout(clickTimer);
+        clickTimer = null;
+      }
+      toggleCollapse();
     };
     parentRow.addEventListener("contextmenu", (ev) => {
       ev.preventDefault();
       openParentContextMenu(ev as MouseEvent, s.parent);
     });
-    sourcesEl.appendChild(parentRow);
+    parentRow.addEventListener("dragstart", () => {
+      dragParentKey = s.parent; dragSrcId = null;
+      groupWrap.classList.add("dragging");
+    });
+    parentRow.addEventListener("dragend", () => {
+      groupWrap.classList.remove("dragging");
+      clearDropTargets();
+    });
+    parentRow.addEventListener("dragover", (ev) => {
+      handleDragOver(ev as DragEvent, parentRow);
+    });
+    parentRow.addEventListener("drop", async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const targetEl = getDropTargetElement(parentRow);
+      const rect = targetEl.getBoundingClientRect();
+      const isAfter = (ev as MouseEvent).clientY >= rect.top + rect.height / 2;
+      clearDropTargets();
+      await performReorder(s.parent, null, isAfter);
+    });
 
     const childWrap = document.createElement("div");
     childWrap.className = "tree-children";
     childWrap.hidden = collapsed && !q; // 絞り込み中は展開して見せる
     for (const c of visibleChildren) childWrap.appendChild(makeSourceItem(c));
-    sourcesEl.appendChild(childWrap);
+
+    groupWrap.append(parentRow, childWrap);
+    sourcesEl.appendChild(groupWrap);
   }
   updateStatus();
 }
