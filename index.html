@@ -138,6 +138,7 @@
         </fieldset>
 
         <div class="dialog-actions">
+          <span id="add-save-status" class="reload-status" hidden><span class="spinner"></span>保存中…（初回取得のため数秒かかる場合があります）</span>
           <button value="cancel" class="btn" formnovalidate>キャンセル</button>
           <button value="ok" class="btn primary">保存してリロード</button>
         </div>
@@ -220,6 +221,7 @@
 
       <div id="parent-error" class="form-error"></div>
       <div class="dialog-actions">
+        <span id="parent-save-status" class="reload-status" hidden><span class="spinner"></span>保存中…（初回取得のため数秒かかる場合があります）</span>
         <button id="parent-cancel" class="btn" type="button">キャンセル</button>
         <button id="parent-save" class="btn primary" type="button">保存してリロード</button>
       </div>

@@ -1494,6 +1494,11 @@ function renderRows() {
 }
 
 function selectCell(row: number, col: number) {
+  // セルクリックは mousedown で処理しており、renderRows() が同期的にセル DOM を
+  // 作り直すため、クリックされた要素は click イベント発火前に DOM から切り離される。
+  // その結果 document 側の click リスナー（closeAllContextMenus）まで伝播せず、
+  // 右クリックメニューを出した後に別セルをクリックしても閉じないバグになる。ここで明示的に閉じる。
+  closeAllContextMenus();
   selectedCell = { row, col };
   renderRows();
   $<HTMLDivElement>("grid").focus();
@@ -2046,7 +2051,13 @@ $<HTMLButtonElement>("parent-save").onclick = async () => {
   }
 
   const saveBtn = $<HTMLButtonElement>("parent-save");
+  const cancelBtn = $<HTMLButtonElement>("parent-cancel");
+  const closeXBtn = $<HTMLButtonElement>("parent-close-x");
+  const statusEl = $<HTMLSpanElement>("parent-save-status");
   saveBtn.disabled = true;
+  cancelBtn.disabled = true;
+  closeXBtn.disabled = true;
+  statusEl.hidden = false;
   try {
     await invoke("set_parent_label", { parentKey, label: newLabel });
     if (newLabel) parentLabelOverrides.set(parentKey, newLabel);
@@ -2103,6 +2114,9 @@ $<HTMLButtonElement>("parent-save").onclick = async () => {
     errEl.textContent = "保存に失敗: " + String(e);
   } finally {
     saveBtn.disabled = false;
+    cancelBtn.disabled = false;
+    closeXBtn.disabled = false;
+    statusEl.hidden = true;
   }
 };
 
@@ -3141,10 +3155,20 @@ $<HTMLButtonElement>("add").onclick = () => openAddDialog();
 $<HTMLFormElement>("add-form").addEventListener("submit", async (e) => {
   const submitter = (e as SubmitEvent).submitter as HTMLButtonElement | null;
   if (submitter && submitter.value === "cancel") return;
+  // method="dialog" のフォームは、既定動作としてこの submit ハンドラの同期部分が終わった時点で
+  // ダイアログを閉じてしまう。初回取得（reload_one）が終わるまではダイアログを開いたままにして
+  // 読み込み中であることを示すため、既定動作を止める（要件: 保存時のフリーズ感の解消）。
+  e.preventDefault();
   const name = $<HTMLInputElement>("f-name").value.trim();
   const { config, missingText } = buildConfigFromFields();
   if (!name || missingText) return;
   Object.assign(config, collectRoleConfig());
+  const okBtn = submitter ?? $<HTMLButtonElement>("add-form").querySelector<HTMLButtonElement>('button[value="ok"]')!;
+  const cancelBtn = $<HTMLButtonElement>("add-form").querySelector<HTMLButtonElement>('button[value="cancel"]')!;
+  const statusEl = $<HTMLSpanElement>("add-save-status");
+  okBtn.disabled = true;
+  cancelBtn.disabled = true;
+  statusEl.hidden = false;
   try {
     if (dialogMode === "edit" && editingId !== null) {
       await invoke("update_source", { id: editingId, name, configJson: JSON.stringify(config) });
@@ -3157,8 +3181,13 @@ $<HTMLFormElement>("add-form").addEventListener("submit", async (e) => {
     }
     typeSel.disabled = false;
     await loadSources();
+    dialog.close();
   } catch (err) {
     alert("保存に失敗: " + String(err));
+  } finally {
+    okBtn.disabled = false;
+    cancelBtn.disabled = false;
+    statusEl.hidden = true;
   }
 });
 

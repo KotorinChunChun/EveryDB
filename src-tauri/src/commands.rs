@@ -86,8 +86,14 @@ pub fn list_sources(state: State<'_, AppState>) -> Result<Vec<SourceInfo>, Strin
     db::list_sources(&conn).map_err(err_to_string)
 }
 
+// add_source / update_source / add_source_from_sibling / delete_source は非同期コマンドにする。
+// これらは初回 fetch（reload_one）でリモート先（Notion/Graph/DB等）への通信を伴い数秒かかることが
+// あるが、素の同期 fn のままだと Tauri がメインスレッド上で実行するため、その間ウィンドウ全体が
+// 応答しなくなる（要件: 「保存してリロード」でフリーズする不具合）。async fn にするだけで Tauri の
+// 非同期ランタイム側のスレッドで実行されるようになり、UI スレッドは塞がれない
+// （フロント側の読み込み中スピナー表示 §2-2 が実際に描画されるためにもこれが前提になる）。
 #[tauri::command]
-pub fn add_source(
+pub async fn add_source(
     state: State<'_, AppState>,
     type_: String,
     name: String,
@@ -137,7 +143,7 @@ fn fill_shared_from_sibling(
 /// その値で追加すると壊れたソースができてしまう。ここでは**暗号化されたままの値をコピー**する
 /// ことで、UI が平文の秘密情報を扱わずに済むようにしている。
 #[tauri::command]
-pub fn add_source_from_sibling(
+pub async fn add_source_from_sibling(
     state: State<'_, AppState>,
     sibling_id: i64,
     type_: String,
@@ -161,7 +167,7 @@ pub fn add_source_from_sibling(
 }
 
 #[tauri::command]
-pub fn delete_source(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+pub async fn delete_source(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
     db::delete_source(&conn, id).map_err(err_to_string)
 }
@@ -188,7 +194,7 @@ pub fn get_source_detail(state: State<'_, AppState>, id: i64) -> Result<serde_js
 /// ソースの設定を編集保存する（要件 §9-1）。プレースホルダーのままの秘密フィールドは
 /// 旧暗号化値を維持する。保存後は再取得して最新状態を反映する。
 #[tauri::command]
-pub fn update_source(
+pub async fn update_source(
     state: State<'_, AppState>,
     id: i64,
     name: String,
