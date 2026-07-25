@@ -438,6 +438,41 @@ pub fn get_theme(state: State<'_, AppState>) -> Result<String, String> {
     Ok(db::get_meta(&conn, THEME_META_KEY).map_err(err_to_string)?.unwrap_or_else(|| "dark".to_string()))
 }
 
+// ---- UI 設定: 起動ショートカットキー（要件 §9-5）----
+const HOTKEY_META_KEY: &str = "ui_hotkey";
+const DEFAULT_HOTKEY: &str = "Alt+Ctrl+D";
+
+/// 起動ショートカットキーを設定・変更し、永続化する。
+#[tauri::command]
+pub fn set_hotkey(app: AppHandle, state: State<'_, AppState>, hotkey: String) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let trimmed = hotkey.trim();
+    if trimmed.is_empty() {
+        return Err("ショートカットキーが空です".to_string());
+    }
+    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+    let old = db::get_meta(&conn, HOTKEY_META_KEY)
+        .map_err(err_to_string)?
+        .unwrap_or_else(|| DEFAULT_HOTKEY.to_string());
+
+    // 既存のショートカットを全て解除し、新ショートカットを登録試行する
+    let _ = app.global_shortcut().unregister_all();
+    if let Err(e) = app.global_shortcut().register(trimmed) {
+        // 失敗時は旧キーを再登録してエラーを返す
+        let _ = app.global_shortcut().register(old.as_str());
+        return Err(format!("キーの登録に失敗しました: {}", e));
+    }
+    db::set_meta(&conn, HOTKEY_META_KEY, trimmed).map_err(err_to_string)
+}
+
+#[tauri::command]
+pub fn get_hotkey(state: State<'_, AppState>) -> Result<String, String> {
+    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+    Ok(db::get_meta(&conn, HOTKEY_META_KEY)
+        .map_err(err_to_string)?
+        .unwrap_or_else(|| DEFAULT_HOTKEY.to_string()))
+}
+
 // ---- UI 設定: サイドバー幅（左右分割のドラッグリサイズ）----
 const SIDEBAR_WIDTH_META_KEY: &str = "ui_sidebar_width";
 const DEFAULT_SIDEBAR_WIDTH: i64 = 240;

@@ -2573,6 +2573,8 @@ $<HTMLButtonElement>("settings").onclick = async () => {
     $<HTMLInputElement>("s-autostart").checked = enabled;
   } catch { /* noop */ }
   $<HTMLSelectElement>("s-theme").value = currentTheme;
+  const hotkeyInput = $<HTMLInputElement>("s-hotkey");
+  if (hotkeyInput) hotkeyInput.value = currentHotkey;
   updateZoomLabel();
   $<HTMLDialogElement>("settings-dialog").showModal();
 };
@@ -2612,6 +2614,70 @@ $<HTMLSelectElement>("s-theme").addEventListener("change", async (e) => {
   } catch (err) {
     console.error("テーマ保存に失敗:", err);
   }
+});
+
+// ---- 起動ショートカットキー（要件 §9-5） ----
+let currentHotkey = "Alt+Ctrl+D";
+
+function updateSearchPlaceholder(hotkey: string) {
+  if (searchInput) {
+    searchInput.placeholder = `検索…（半角スペース区切りで複数語 AND / ${hotkey} で呼び出し）`;
+  }
+}
+
+async function initHotkey() {
+  try {
+    const hk = await invoke<string>("get_hotkey");
+    currentHotkey = hk || "Alt+Ctrl+D";
+  } catch {
+    currentHotkey = "Alt+Ctrl+D";
+  }
+  updateSearchPlaceholder(currentHotkey);
+}
+
+async function applyAndSaveHotkey(newKey: string) {
+  const hotkeyInput = $<HTMLInputElement>("s-hotkey");
+  try {
+    await invoke("set_hotkey", { hotkey: newKey });
+    currentHotkey = newKey;
+    if (hotkeyInput) hotkeyInput.value = currentHotkey;
+    updateSearchPlaceholder(currentHotkey);
+  } catch (err) {
+    alert("ショートカットキーの変更に失敗しました: " + String(err));
+    if (hotkeyInput) hotkeyInput.value = currentHotkey;
+  }
+}
+
+$<HTMLInputElement>("s-hotkey")?.addEventListener("keydown", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (["Control", "Alt", "Shift", "Meta", "ControlLeft", "ControlRight", "AltLeft", "AltRight", "ShiftLeft", "ShiftRight", "MetaLeft", "MetaRight"].includes(e.key)) {
+    return;
+  }
+  const mods: string[] = [];
+  if (e.altKey) mods.push("Alt");
+  if (e.ctrlKey) mods.push("Ctrl");
+  if (e.shiftKey) mods.push("Shift");
+  if (e.metaKey) mods.push("Super");
+  
+  if (mods.length === 0 && !e.key.startsWith("F")) {
+    return;
+  }
+  
+  let key = e.key;
+  if (key === " ") key = "Space";
+  else if (key === "ArrowUp") key = "Up";
+  else if (key === "ArrowDown") key = "Down";
+  else if (key === "ArrowLeft") key = "Left";
+  else if (key === "ArrowRight") key = "Right";
+  else if (key.length === 1) key = key.toUpperCase();
+  
+  const hotkeyStr = [...mods, key].join("+");
+  void applyAndSaveHotkey(hotkeyStr);
+});
+
+$<HTMLButtonElement>("s-hotkey-reset")?.addEventListener("click", () => {
+  void applyAndSaveHotkey("Alt+Ctrl+D");
 });
 
 // ---- ズーム（要件 REQ-UI-01） ----
@@ -2711,6 +2777,7 @@ listen("focus-search", () => {
 
 (async () => {
   await initTheme();
+  await initHotkey();
   await initZoom();
   await initSidebarWidth();
   await loadParentLabels();

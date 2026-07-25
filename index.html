@@ -279,6 +279,13 @@
           <option value="night">ナイト（高コントラスト）</option>
         </select>
       </label>
+      <label>起動ショートカットキー
+        <div class="zoom-row">
+          <input id="s-hotkey" type="text" class="row-limit" style="width: 170px; text-align: center; cursor: pointer;" value="Alt+Ctrl+D" readonly placeholder="キーを押して設定" title="ここをクリックしてから、設定したいキーボードの組み合わせ（Alt, Ctrl, Shift 等 + キー）を押してください" />
+          <button type="button" id="s-hotkey-reset" class="btn" title="既定の Alt+Ctrl+D に戻す">既定に戻す</button>
+        </div>
+        <span id="s-hotkey-hint" class="roles-hint">入力欄をクリックし、設定したいキーを押してください（例: Alt+Ctrl+D）</span>
+      </label>
       <label>表示倍率
         <div class="zoom-row">
           <button type="button" id="s-zoom-out" class="btn">－</button>

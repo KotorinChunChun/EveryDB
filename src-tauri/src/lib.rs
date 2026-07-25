@@ -52,8 +52,9 @@ pub fn run() {
             std::fs::create_dir_all(&dir)?;
             let conn = Connection::open(dir.join("cache.db"))?;
             db::init_schema(&conn)?;
-            // 前回のズーム倍率を復元する（要件 REQ-UI-01）。
+            // 前回のズーム倍率とホットキーを復元する（要件 REQ-UI-01 / §9-5）。
             let saved_zoom: f64 = db::get_meta(&conn, "ui_zoom")?.and_then(|s| s.parse().ok()).unwrap_or(1.0);
+            let saved_hotkey: String = db::get_meta(&conn, "ui_hotkey")?.unwrap_or_else(|| "Alt+Ctrl+D".to_string());
             app.manage(AppState::new(conn));
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_zoom(saved_zoom);
@@ -76,8 +77,8 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // グローバルホットキー Alt+Ctrl+D でウィンドウ表示（要件 §9-5 / Everything ライク）。
-            app.global_shortcut().register("Alt+Ctrl+D")?;
+            // グローバルホットキーでウィンドウ表示（要件 §9-5 / Everything ライク）。
+            let _ = app.global_shortcut().register(saved_hotkey.as_str());
 
             // "--minimized"（自動起動経由）の場合はウィンドウを出さずトレイ常駐のまま待機する。
             let launched_minimized = std::env::args().any(|a| a == "--minimized");
@@ -135,6 +136,8 @@ pub fn run() {
             commands::get_zoom,
             commands::set_theme,
             commands::get_theme,
+            commands::set_hotkey,
+            commands::get_hotkey,
             commands::set_sidebar_width,
             commands::get_sidebar_width,
             commands::list_parent_labels,
