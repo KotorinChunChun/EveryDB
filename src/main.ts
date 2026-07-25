@@ -1683,6 +1683,7 @@ function guideNameFor(type_: string): string | null {
   if (type_ === "box_files") return "box";
   if (type_ === "postgres") return "postgresql";
   if (type_ === "mysql") return "mysql";
+  if (type_ === "postal_code" || type_ === "corporate_number") return "gov-data";
   if (PATH_GROUPED_TYPES.has(type_)) return "local-files";
   return null;
 }
@@ -2547,6 +2548,30 @@ const BROWSER_OPTIONS = [
   { value: "brave", label: "Brave" }, { value: "vivaldi", label: "Vivaldi" }, { value: "firefox", label: "Firefox" },
 ];
 
+/** 法人番号 全件データの都道府県選択肢。ラベルは国税庁サイトの表示文字列と完全一致させる必要がある
+ * （Rust 側が HTML から `<dt class="mb05">県名</dt>` を文字列一致で探すため）。 */
+const PREFECTURE_OPTIONS = [
+  "北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県", "茨城県", "栃木県", "群馬県",
+  "埼玉県", "千葉県", "東京都", "神奈川県", "新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県",
+  "岐阜県", "静岡県", "愛知県", "三重県", "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県",
+  "鳥取県", "島根県", "岡山県", "広島県", "山口県", "徳島県", "香川県", "愛媛県", "高知県", "福岡県",
+  "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県", "全国",
+].map((name) => ({ value: name, label: name }));
+
+/** 政府公開データ（郵便番号・法人番号）に共通の「取得元」フィールド。既定は自動ダウンロード、
+ * サイト構造の変更などに備えて手動でダウンロード済みの zip/csv を指定する経路も用意する。 */
+const GOV_DATA_SOURCE_FIELDS: FieldDef[] = [
+  { key: "source", label: "取得元", kind: "select", options: [
+    { value: "auto", label: "自動ダウンロード(既定)" },
+    { value: "file", label: "ファイル指定(手動でダウンロード済みの zip/csv)" },
+  ] },
+  {
+    key: "path", label: "ファイル指定時のパス(zip または csv)", kind: "text", optional: true, browse: "file",
+    placeholder: "取得元が『ファイル指定』のときのみ使用します",
+    dialogFilters: [{ name: "zip / csv", extensions: ["zip", "csv"] }],
+  },
+];
+
 const GRAPH_AUTH_FIELDS: FieldDef[] = [
   { key: "tenant_id", label: "テナントID", kind: "text", placeholder: "ディレクトリ(テナント) ID", helpUrl: ENTRA_APPS_URL },
   { key: "client_id", label: "クライアントID", kind: "text", placeholder: "アプリケーション(クライアント) ID", helpUrl: ENTRA_APPS_URL },
@@ -2637,6 +2662,11 @@ const TYPE_DEFS: TypeDef[] = [
     { key: "client_secret", label: "クライアントシークレット", kind: "password", helpUrl: "https://app.box.com/developers/console" },
     { key: "enterprise_id", label: "Enterprise ID", kind: "text" },
     { key: "folder_id", label: "開始フォルダID(任意)", kind: "text", placeholder: "0 (ルート)", optional: true },
+  ] },
+  { value: "postal_code", label: "郵便番号データベース(日本郵便)", fields: [...GOV_DATA_SOURCE_FIELDS] },
+  { value: "corporate_number", label: "法人番号 全件データ(国税庁)", fields: [
+    { key: "prefecture", label: "都道府県", kind: "select", options: PREFECTURE_OPTIONS },
+    ...GOV_DATA_SOURCE_FIELDS,
   ] },
 ];
 

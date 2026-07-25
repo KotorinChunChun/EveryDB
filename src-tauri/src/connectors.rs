@@ -3,6 +3,7 @@ use csv::ReaderBuilder;
 use rusqlite::{Connection, OpenFlags};
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use std::io::Read;
 
 use crate::graph::GraphClient;
 use crate::model::Record;
@@ -77,6 +78,8 @@ pub fn build_connector(type_: &str, config_json: &str) -> Result<Box<dyn Connect
         "postgres" => Ok(Box::new(from_str::<PostgresConnector>(config_json)?)),
         "mysql" => Ok(Box::new(from_str::<MysqlConnector>(config_json)?)),
         "box_files" => Ok(Box::new(from_str::<BoxConnector>(config_json)?)),
+        "postal_code" => Ok(Box::new(from_str::<PostalCodeConnector>(config_json)?)),
+        "corporate_number" => Ok(Box::new(from_str::<CorporateNumberConnector>(config_json)?)),
         other => Err(anyhow!("未対応のデータソース種別: {other}")),
     }
 }
@@ -2849,5 +2852,307 @@ impl BoxConnector {
             }
         }
         Ok(())
+    }
+}
+
+// ---- 政府公開データ（郵便番号 / 法人番号）共通ヘルパー ----
+// どちらも「ネットから zip を自動ダウンロード」「手動でダウンロード済みの zip/csv を指定」の
+// 2 経路を持つため、zip 展開と HTTP バイト取得の処理を共通化する。
+
+fn response_bytes(resp: ureq::Response) -> Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    resp.into_reader().read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+/// zip バイト列から最初に見つかった `.csv` エントリを展開する（署名ファイル `.asc` 等は無視）。
+fn extract_first_csv_from_zip(bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| anyhow!("zip の展開に失敗しました: {e}"))?;
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).map_err(|e| anyhow!("zip 展開エラー: {e}"))?;
+        if file.name().to_ascii_lowercase().ends_with(".csv") {
+            let mut buf = Vec::new();
+            file.read_to_end(&mut buf)?;
+            return Ok(buf);
+        }
+    }
+    Err(anyhow!("zip 内に CSV ファイルが見つかりません"))
+}
+
+/// `source=file` のとき、指定パスが `.zip` なら展開して中の CSV を、`.csv` ならそのまま読む。
+fn read_csv_bytes_from_path(path: &str) -> Result<Vec<u8>> {
+    let bytes = std::fs::read(path).map_err(|e| anyhow!("ファイルの読み込みに失敗しました: {e}"))?;
+    if path.to_ascii_lowercase().ends_with(".zip") {
+        extract_first_csv_from_zip(&bytes)
+    } else {
+        Ok(bytes)
+    }
+}
+
+/// UTF-8 CSV（ヘッダーなし想定・政府公開データの生ファイル）を行の配列として読む。
+fn read_csv_rows(bytes: &[u8]) -> Result<Vec<csv::StringRecord>> {
+    let text = String::from_utf8(bytes.to_vec())
+        .map_err(|_| anyhow!("CSV の文字コードが UTF-8 ではありません（Shift_JIS 版を指定していないか確認してください）"))?;
+    let mut rdr = ReaderBuilder::new().has_headers(false).from_reader(text.as_bytes());
+    let mut out = Vec::new();
+    for rec in rdr.records() {
+        out.push(rec?);
+    }
+    Ok(out)
+}
+
+// ---- 郵便番号データベース（日本郵便）----
+const KEN_ALL_URL: &str = "https://www.post.japanpost.jp/service/search/zipcode/download/utf/zip/utf_ken_all.zip";
+
+#[derive(Deserialize)]
+struct PostalCodeConnector {
+    /// "auto"(既定・自動ダウンロード) | "file"(手動でダウンロード済みの zip/csv を指定)
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(flatten)]
+    common: CommonCfg,
+}
+
+impl Connector for PostalCodeConnector {
+    fn fetch(&self) -> Result<Vec<Record>> {
+        let bytes = if self.source.as_deref() == Some("file") {
+            let path = self
+                .path
+                .as_deref()
+                .filter(|p| !p.is_empty())
+                .ok_or_else(|| anyhow!("『ファイル指定』を選んだ場合はパスの入力が必要です"))?;
+            read_csv_bytes_from_path(path)?
+        } else {
+            let resp = ureq::get(KEN_ALL_URL).call().map_err(|e| {
+                anyhow!(
+                    "郵便番号データのダウンロードに失敗しました: {e}。\
+                     手動でダウンロードした zip/csv を『ファイル指定』で指定してください"
+                )
+            })?;
+            extract_first_csv_from_zip(&response_bytes(resp)?)?
+        };
+        let rows = read_csv_rows(&bytes)?;
+        let mut out = Vec::new();
+        for rec in rows {
+            let get = |i: usize| rec.get(i).unwrap_or("").to_string();
+            // KEN_ALL.CSV(UTF-8版) の列位置（0-based）。§0-2 で実データ確認済み。
+            let postal = get(2);
+            let pairs = vec![
+                ("郵便番号".to_string(), postal),
+                ("都道府県".to_string(), get(6)),
+                ("市区町村".to_string(), get(7)),
+                ("町域".to_string(), get(8)),
+                ("都道府県カナ".to_string(), get(3)),
+                ("市区町村カナ".to_string(), get(4)),
+                ("町域カナ".to_string(), get(5)),
+            ];
+            out.push(make_record(pairs, "", &self.common));
+        }
+        Ok(out)
+    }
+}
+
+// ---- 法人番号 全件データ（国税庁 法人番号公表サイト）----
+const HOUJIN_INDEX_URL: &str = "https://www.houjin-bangou.nta.go.jp/download/zenken/index.html";
+const HOUJIN_TOKEN_FIELD: &str =
+    "jp.go.nta.houjin_bangou.framework.web.common.CNSFWTokenProcessor.request.token";
+
+#[derive(Deserialize)]
+struct CorporateNumberConnector {
+    /// 都道府県名（サイト表示のとおり。例: "岐阜県"、全国分なら "全国"）。
+    prefecture: String,
+    /// "auto"(既定・自動ダウンロード) | "file"(手動でダウンロード済みの zip/csv を指定)
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(flatten)]
+    common: CommonCfg,
+}
+
+impl Connector for CorporateNumberConnector {
+    fn fetch(&self) -> Result<Vec<Record>> {
+        let bytes = if self.source.as_deref() == Some("file") {
+            let path = self
+                .path
+                .as_deref()
+                .filter(|p| !p.is_empty())
+                .ok_or_else(|| anyhow!("『ファイル指定』を選んだ場合はパスの入力が必要です"))?;
+            read_csv_bytes_from_path(path)?
+        } else {
+            let zip_bytes = houjin_bangou_download(&self.prefecture).map_err(|e| {
+                anyhow!(
+                    "{e}。サイト構造の変更、またはネットワーク要因が考えられます。\
+                     手動でダウンロードした zip を『ファイル指定』で指定してください"
+                )
+            })?;
+            extract_first_csv_from_zip(&zip_bytes)?
+        };
+        let rows = read_csv_rows(&bytes)?;
+        let mut out = Vec::new();
+        for rec in rows {
+            let get = |i: usize| rec.get(i).unwrap_or("").to_string();
+            // 全件データ CSV の列位置（0-based）。実データの値から逆引きで確認した対応（§0-2）。
+            let name = get(6);
+            let pairs = vec![
+                ("法人番号".to_string(), get(1)),
+                ("商号又は名称".to_string(), name.clone()),
+                ("法人種別".to_string(), get(8)),
+                ("都道府県".to_string(), get(9)),
+                ("市区町村".to_string(), get(10)),
+                ("丁目番地等".to_string(), get(11)),
+                ("郵便番号".to_string(), get(15)),
+                ("更新年月日".to_string(), get(4)),
+                ("法人番号指定年月日".to_string(), get(22)),
+                ("フリガナ".to_string(), get(28)),
+                ("英語表記(名称)".to_string(), get(24)),
+                ("英語表記(都道府県)".to_string(), get(25)),
+                ("英語表記(所在地)".to_string(), get(26)),
+            ];
+            let mut r = make_record(pairs, "", &self.common);
+            if self.common.label_column.is_none() {
+                r.label = Some(name);
+            }
+            out.push(r);
+        }
+        Ok(out)
+    }
+}
+
+/// 法人番号公表サイトの一覧ページから CSRF トークンと都道府県の ID を取得し、
+/// 同一セッション（Cookie）で POST してダウンロードする（§0-2 で実測確認済みの手順）。
+fn houjin_bangou_download(prefecture: &str) -> Result<Vec<u8>> {
+    let agent = ureq::AgentBuilder::new().build();
+    let resp = agent
+        .get(HOUJIN_INDEX_URL)
+        .call()
+        .map_err(|e| anyhow!("法人番号公表サイトへの接続に失敗しました: {e}"))?;
+    let body = resp.into_string().map_err(|e| anyhow!("ページの読み込みに失敗しました: {e}"))?;
+    let token = extract_between(&body, &format!("name=\"{HOUJIN_TOKEN_FIELD}\" value=\""), "\"")
+        .ok_or_else(|| anyhow!("ページ内に CSRF トークンが見つかりません"))?;
+    let file_no = extract_file_no_for_prefecture(&body, prefecture)
+        .ok_or_else(|| anyhow!("都道府県『{prefecture}』のダウンロードIDが見つかりません"))?;
+    let resp2 = agent
+        .post(HOUJIN_INDEX_URL)
+        .send_form(&[(HOUJIN_TOKEN_FIELD, token.as_str()), ("selDlFileNo", file_no.as_str()), ("event", "download")])
+        .map_err(|e| anyhow!("ダウンロードのリクエストに失敗しました: {e}"))?;
+    response_bytes(resp2)
+}
+
+fn extract_between(s: &str, start: &str, end: &str) -> Option<String> {
+    let i = s.find(start)? + start.len();
+    let rest = &s[i..];
+    let j = rest.find(end)?;
+    Some(rest[..j].to_string())
+}
+
+/// 「csv-unicode」セクション内で、指定した都道府県名の `<dt>` 直後にある `doDownload(ID)` を探す。
+/// 同じ都道府県でも形式（Shift-JIS/Unicode/XML）ごとに ID が異なるため、セクションで範囲を絞る。
+fn extract_file_no_for_prefecture(html: &str, prefecture: &str) -> Option<String> {
+    let sec_start = html.find("id=\"csv-unicode\"")?;
+    let sec_end = html[sec_start..].find("id=\"xml-unicode\"").map(|i| sec_start + i).unwrap_or(html.len());
+    let section = &html[sec_start..sec_end];
+    let dt_marker = format!("<dt class=\"mb05\">{prefecture}</dt>");
+    let dt_pos = section.find(&dt_marker)?;
+    let after = &section[dt_pos + dt_marker.len()..];
+    let call_pos = after.find("doDownload(")?;
+    let after_call = &after[call_pos + "doDownload(".len()..];
+    let end_pos = after_call.find(')')?;
+    Some(after_call[..end_pos].trim().to_string())
+}
+
+#[cfg(test)]
+mod gov_data_tests {
+    use super::*;
+
+    fn fetch(type_: &str, cfg: serde_json::Value) -> Vec<Record> {
+        build_connector(type_, &cfg.to_string()).unwrap().fetch().unwrap()
+    }
+
+    /// 実サイトの構造を模した最小限の HTML（3 形式セクション、同一都道府県でも ID が異なる）。
+    const MOCK_HOUJIN_HTML: &str = concat!(
+        r#"<form id="appForm" action="/download/zenken/index.html" method="post">"#,
+        r#"<input type="hidden" name="jp.go.nta.houjin_bangou.framework.web.common.CNSFWTokenProcessor.request.token" value="mock-token-123"/>"#,
+        r#"</form>"#,
+        r#"<h2 id="csv-sjis">CSV形式・Shift_JIS</h2>"#,
+        r#"<dt class="mb05">岐阜県</dt><a onclick="return doDownload(11111);">zip</a>"#,
+        r#"<h2 id="csv-unicode">CSV形式・Unicode</h2>"#,
+        r#"<dt class="mb05">全国</dt><a onclick="return doDownload(20000);">zip</a>"#,
+        r#"<dt class="mb05">岐阜県</dt><a onclick="return doDownload(27505);">zip</a>"#,
+        r#"<h2 id="xml-unicode">XML形式・Unicode</h2>"#,
+        r#"<dt class="mb05">岐阜県</dt><a onclick="return doDownload(33333);">zip</a>"#,
+    );
+
+    #[test]
+    fn extracts_token_from_mock_page() {
+        let token = extract_between(
+            MOCK_HOUJIN_HTML,
+            &format!("name=\"{HOUJIN_TOKEN_FIELD}\" value=\""),
+            "\"",
+        );
+        assert_eq!(token.as_deref(), Some("mock-token-123"));
+    }
+
+    #[test]
+    fn picks_file_no_from_csv_unicode_section_only() {
+        // csv-sjis(11111) / xml-unicode(33333) ではなく csv-unicode(27505) が選ばれること。
+        assert_eq!(extract_file_no_for_prefecture(MOCK_HOUJIN_HTML, "岐阜県").as_deref(), Some("27505"));
+        assert_eq!(extract_file_no_for_prefecture(MOCK_HOUJIN_HTML, "全国").as_deref(), Some("20000"));
+        assert_eq!(extract_file_no_for_prefecture(MOCK_HOUJIN_HTML, "存在しない県"), None);
+    }
+
+    fn build_test_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut zw = zip::ZipWriter::new(&mut buf);
+            let opts: zip::write::FileOptions<()> =
+                zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            for (name, data) in entries {
+                zw.start_file(*name, opts).unwrap();
+                std::io::Write::write_all(&mut zw, data).unwrap();
+            }
+            zw.finish().unwrap();
+        }
+        buf.into_inner()
+    }
+
+    #[test]
+    fn extract_first_csv_from_zip_ignores_asc_signature_file() {
+        let zip_bytes = build_test_zip(&[
+            ("21_gifu_all_20260630.csv.asc", b"signature-bytes-not-csv"),
+            ("21_gifu_all_20260630.csv", "1,1000012160079,\"多治見検察審査会\"".as_bytes()),
+        ]);
+        let csv_bytes = extract_first_csv_from_zip(&zip_bytes).unwrap();
+        assert_eq!(String::from_utf8(csv_bytes).unwrap(), "1,1000012160079,\"多治見検察審査会\"");
+    }
+
+    #[test]
+    fn read_csv_rows_parses_quoted_japanese_fields() {
+        let rows = read_csv_rows("1,1000012160079,\"多治見検察審査会\",\"岐阜県\"\n".as_bytes()).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get(2), Some("多治見検察審査会"));
+        assert_eq!(rows[0].get(3), Some("岐阜県"));
+    }
+
+    // 実ネットワークへ接続する実機検証。実行: cargo test --lib -- --ignored gov_data
+    #[test]
+    #[ignore = "requires network access; downloads real government data"]
+    fn postal_code_live_downloads_and_parses() {
+        let recs = fetch("postal_code", serde_json::json!({}));
+        println!("postal_code rows = {}", recs.len());
+        assert!(!recs.is_empty());
+        assert!(recs.iter().any(|r| r.fields.get("郵便番号").and_then(|v| v.as_str()) == Some("5070023")));
+    }
+
+    #[test]
+    #[ignore = "requires network access; downloads real government data (岐阜県)"]
+    fn corporate_number_live_downloads_gifu() {
+        let recs = fetch("corporate_number", serde_json::json!({ "prefecture": "岐阜県" }));
+        println!("corporate_number (岐阜県) rows = {}", recs.len());
+        assert!(!recs.is_empty());
+        assert!(recs.iter().any(|r| r.fields.get("法人番号").and_then(|v| v.as_str()) == Some("1000012160079")));
     }
 }
