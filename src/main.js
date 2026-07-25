@@ -401,19 +401,31 @@ gridCtxMenu.addEventListener("click", async (ev) => {
     if (!btn)
         return;
     closeAllContextMenus();
-    switch (btn.dataset.copy) {
-        case "value":
-            await copySelected();
-            break;
-        case "tsv":
-            await copyRowAsTsv();
-            break;
-        case "tsv-header":
-            await copyRowAsTsvWithHeader();
-            break;
-        case "json":
-            await copyRowAsJson();
-            break;
+    if (btn.dataset.copy) {
+        switch (btn.dataset.copy) {
+            case "value":
+                await copySelected();
+                break;
+            case "tsv":
+                await copyRowAsTsv();
+                break;
+            case "tsv-header":
+                await copyRowAsTsvWithHeader();
+                break;
+            case "json":
+                await copyRowAsJson();
+                break;
+        }
+    }
+    else if (btn.dataset.action === "hide-source") {
+        if (!selectedCell)
+            return;
+        const r = rows[selectedCell.row];
+        if (!r)
+            return;
+        selectedSourceIds.delete(r.source_id);
+        renderSources();
+        await runSearch();
     }
 });
 ctxMenu.addEventListener("click", async (ev) => {
