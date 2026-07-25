@@ -1684,6 +1684,7 @@ function guideNameFor(type_: string): string | null {
   if (type_ === "postgres") return "postgresql";
   if (type_ === "mysql") return "mysql";
   if (type_ === "postal_code" || type_ === "corporate_number") return "gov-data";
+  if (type_ === "web_page") return "web-page";
   if (PATH_GROUPED_TYPES.has(type_)) return "local-files";
   return null;
 }
@@ -2510,7 +2511,7 @@ $<HTMLButtonElement>("export-ok").onclick = async () => {
 interface FieldDef {
   key: string;
   label: string;
-  kind: "text" | "checkbox" | "list" | "password" | "select" | "number";
+  kind: "text" | "checkbox" | "list" | "password" | "select" | "number" | "textarea";
   placeholder?: string;
   default?: boolean;
   optional?: boolean;
@@ -2667,6 +2668,22 @@ const TYPE_DEFS: TypeDef[] = [
   { value: "corporate_number", label: "法人番号 全件データ(国税庁)", fields: [
     { key: "prefecture", label: "都道府県", kind: "select", options: PREFECTURE_OPTIONS },
     ...GOV_DATA_SOURCE_FIELDS,
+  ] },
+  { value: "web_page", label: "WEBサイト(HTML表 / CSSセレクタ / JSON API)", fields: [
+    { key: "url", label: "URL", kind: "text", placeholder: "https://example.com/search?q=... （GETクエリ込みで指定）" },
+    { key: "mode", label: "取り込み方式", kind: "select", options: [
+      { value: "html_table", label: "HTML表(table)を自動取込" },
+      { value: "css_selector", label: "CSSセレクタで行/列を指定" },
+      { value: "json_api", label: "JSON APIを取込" },
+    ] },
+    { key: "table_index", label: "何番目の<table>か（html_table用、既定0）", kind: "number", min: 0, optional: true, placeholder: "0" },
+    { key: "has_header", label: "先頭行を見出しにする（html_table用）", kind: "checkbox", default: true },
+    { key: "row_selector", label: "行のCSSセレクタ（css_selector用）", kind: "text", optional: true, placeholder: "例: article.post" },
+    {
+      key: "columns", label: "列定義（css_selector・json_api用。1行に1列）", kind: "textarea", optional: true,
+      placeholder: "css_selector例:\nタイトル=h2 a\nURL=h2 a@href\n\njson_api例:\nタイトル=title\nいいね=liked_count",
+    },
+    { key: "json_root", label: "配列を取り出すJSONパス（json_api用、空欄=レスポンス自体が配列）", kind: "text", optional: true, placeholder: "例: articles" },
   ] },
 ];
 
@@ -2937,6 +2954,15 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
       }
       if (prefill && typeof prefill[f.key] === "string") sel.value = prefill[f.key] as string;
       label.appendChild(sel);
+    } else if (f.kind === "textarea") {
+      label.textContent = f.label;
+      const ta = document.createElement("textarea");
+      ta.id = `fd-${f.key}`;
+      ta.rows = 4;
+      ta.className = "web-page-columns";
+      if (f.placeholder) ta.placeholder = f.placeholder;
+      if (prefill && typeof prefill[f.key] === "string") ta.value = prefill[f.key] as string;
+      label.appendChild(ta);
     } else {
       label.textContent = f.label;
       const input = document.createElement("input");

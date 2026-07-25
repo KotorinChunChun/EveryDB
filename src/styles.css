@@ -375,7 +375,7 @@ tr.drop-target-after td::after { bottom: -1px; }
 .dialog h3 { margin: 0 0 14px; }
 .dialog label { display: block; margin-bottom: 10px; }
 .dialog label.check { display: flex; align-items: center; gap: 6px; }
-.dialog input[type="text"], .dialog select {
+.dialog input[type="text"], .dialog select, .dialog textarea {
   width: 100%;
   margin-top: 3px;
   padding: 6px 8px;
@@ -385,6 +385,9 @@ tr.drop-target-after td::after { bottom: -1px; }
   color: var(--text);
 }
 .dialog input[type="checkbox"] { width: auto; margin: 0; }
+.dialog textarea { resize: vertical; box-sizing: border-box; }
+/* WEBサイト種別の CSS セレクタ/JSONパス列定義。等幅で見やすくする。 */
+.dialog textarea.web-page-columns { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
 .btn.danger { background: #5a1d1d; border-color: #7a2a2a; }

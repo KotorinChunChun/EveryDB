@@ -80,6 +80,7 @@ pub fn build_connector(type_: &str, config_json: &str) -> Result<Box<dyn Connect
         "box_files" => Ok(Box::new(from_str::<BoxConnector>(config_json)?)),
         "postal_code" => Ok(Box::new(from_str::<PostalCodeConnector>(config_json)?)),
         "corporate_number" => Ok(Box::new(from_str::<CorporateNumberConnector>(config_json)?)),
+        "web_page" => Ok(Box::new(from_str::<WebPageConnector>(config_json)?)),
         other => Err(anyhow!("未対応のデータソース種別: {other}")),
     }
 }
@@ -3064,6 +3065,231 @@ fn extract_file_no_for_prefecture(html: &str, prefecture: &str) -> Option<String
     Some(after_call[..end_pos].trim().to_string())
 }
 
+// ---- WEBサイトの情報をデータソース化（要件: HTML表 / CSS セレクタ / JSON API の3モード）----
+// 実測（§0-2）: 例に挙がった zenn.dev の検索結果ページは JS 描画で HTML に結果が無く、
+// 実データは JSON API から取得されている。「ページの HTML をそのまま取り込む」単一方式では
+// この具体例そのものが満たせないため、3モードを用意する。
+
+const JS_RENDERED_HINT: &str =
+    "このページは JavaScript で描画されており HTML に結果が含まれていない可能性があります。\
+     ブラウザの開発者ツールの Network タブで実際のデータ取得先 API を確認し、\
+     json_api モードで指定してください。";
+
+#[derive(Deserialize)]
+struct WebPageConnector {
+    url: String,
+    #[serde(default = "default_web_page_mode")]
+    mode: String, // "html_table" | "css_selector" | "json_api"
+    #[serde(default)]
+    table_index: Option<u32>,
+    #[serde(default = "default_true")]
+    has_header: bool,
+    #[serde(default)]
+    row_selector: Option<String>,
+    /// css_selector: 1行に「表示名=セレクタ[@属性名]」/ json_api: 1行に「表示名=ドットパス」。
+    #[serde(default)]
+    columns: Option<String>,
+    /// json_api: レスポンスから配列を取り出すドットパス。空欄ならレスポンス自体が配列。
+    #[serde(default)]
+    json_root: Option<String>,
+    #[serde(flatten)]
+    common: CommonCfg,
+}
+
+fn default_web_page_mode() -> String {
+    "html_table".to_string()
+}
+
+impl Connector for WebPageConnector {
+    fn fetch(&self) -> Result<Vec<Record>> {
+        let resp = ureq::get(&self.url).call();
+        let body = match resp {
+            Ok(r) => r.into_string().map_err(|e| anyhow!("本文の読み込みに失敗しました: {e}"))?,
+            Err(ureq::Error::Status(code, r)) => {
+                return Err(anyhow!("HTTP {code}: {}", r.into_string().unwrap_or_default()))
+            }
+            Err(e) => return Err(anyhow!("URL への接続に失敗しました: {e}")),
+        };
+        match self.mode.as_str() {
+            "json_api" => self.fetch_json_api(&body),
+            "css_selector" => self.fetch_css_selector(&body),
+            _ => self.fetch_html_table(&body),
+        }
+    }
+}
+
+impl WebPageConnector {
+    fn fetch_html_table(&self, body: &str) -> Result<Vec<Record>> {
+        let doc = scraper::Html::parse_document(body);
+        let table_sel = scraper::Selector::parse("table").map_err(|e| anyhow!("内部エラー(tableセレクタ): {e:?}"))?;
+        let tr_sel = scraper::Selector::parse("tr").map_err(|e| anyhow!("内部エラー(trセレクタ): {e:?}"))?;
+        let cell_sel = scraper::Selector::parse("th,td").map_err(|e| anyhow!("内部エラー(th,tdセレクタ): {e:?}"))?;
+        let idx = self.table_index.unwrap_or(0) as usize;
+        let table_count = doc.select(&table_sel).count();
+        let table = doc.select(&table_sel).nth(idx).ok_or_else(|| {
+            anyhow!("{idx} 番目の <table> が見つかりません（ページ内に table は {table_count} 個）。{JS_RENDERED_HINT}")
+        })?;
+
+        let mut headers: Vec<String> = Vec::new();
+        let mut out = Vec::new();
+        let mut first_row = true;
+        for tr in table.select(&tr_sel) {
+            let cells: Vec<String> =
+                tr.select(&cell_sel).map(|c| c.text().collect::<Vec<_>>().join("").trim().to_string()).collect();
+            if cells.is_empty() {
+                continue;
+            }
+            if first_row && self.has_header {
+                headers = cells;
+                first_row = false;
+                continue;
+            }
+            first_row = false;
+            let pairs: Vec<(String, String)> = cells
+                .into_iter()
+                .enumerate()
+                .map(|(i, v)| (headers.get(i).cloned().unwrap_or_else(|| format!("列{}", i + 1)), v))
+                .collect();
+            out.push(make_record(pairs, &self.url, &self.common));
+        }
+        if out.is_empty() {
+            return Err(anyhow!("テーブルからデータ行を取得できませんでした。{JS_RENDERED_HINT}"));
+        }
+        Ok(out)
+    }
+
+    fn fetch_css_selector(&self, body: &str) -> Result<Vec<Record>> {
+        let doc = scraper::Html::parse_document(body);
+        let row_selector_str = self
+            .row_selector
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| anyhow!("css_selector モードには row_selector の指定が必要です"))?;
+        let row_sel =
+            scraper::Selector::parse(row_selector_str).map_err(|e| anyhow!("row_selector の解析に失敗しました: {e:?}"))?;
+        let columns_spec = self
+            .columns
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| anyhow!("css_selector モードには columns の指定が必要です（例: タイトル=h2 a）"))?;
+        let parsed = parse_css_columns(columns_spec);
+        if parsed.is_empty() {
+            return Err(anyhow!("columns の書式が正しくありません（1行に『表示名=セレクタ』、属性を取るなら『表示名=セレクタ@属性名』）"));
+        }
+        let compiled: Vec<(String, scraper::Selector, Option<String>)> = parsed
+            .into_iter()
+            .map(|(name, sel, attr)| {
+                scraper::Selector::parse(&sel)
+                    .map(|s| (name.clone(), s, attr))
+                    .map_err(|e| anyhow!("『{name}』のセレクタが不正です: {e:?}"))
+            })
+            .collect::<Result<_>>()?;
+
+        let mut out = Vec::new();
+        for row in doc.select(&row_sel) {
+            let pairs: Vec<(String, String)> = compiled
+                .iter()
+                .map(|(name, sel, attr)| {
+                    let value = row
+                        .select(sel)
+                        .next()
+                        .map(|el| match attr {
+                            Some(a) => el.value().attr(a).unwrap_or("").to_string(),
+                            None => el.text().collect::<Vec<_>>().join("").trim().to_string(),
+                        })
+                        .unwrap_or_default();
+                    (name.clone(), value)
+                })
+                .collect();
+            out.push(make_record(pairs, &self.url, &self.common));
+        }
+        if out.is_empty() {
+            return Err(anyhow!("row_selector に一致する要素が見つかりませんでした。{JS_RENDERED_HINT}"));
+        }
+        Ok(out)
+    }
+
+    fn fetch_json_api(&self, body: &str) -> Result<Vec<Record>> {
+        let root: Value = serde_json::from_str(body).map_err(|e| anyhow!("JSON の解析に失敗しました: {e}"))?;
+        let root_path = self.json_root.as_deref().unwrap_or("").trim();
+        let target = json_path_get(&root, root_path)
+            .ok_or_else(|| anyhow!("json_root『{root_path}』に一致するデータが見つかりません"))?;
+        let array = target.as_array().ok_or_else(|| anyhow!("json_root で指定した先が配列ではありません"))?;
+        let columns_spec = self.columns.as_deref().unwrap_or("").trim();
+        let cols = parse_plain_columns(columns_spec);
+
+        let mut out = Vec::new();
+        for item in array {
+            let pairs: Vec<(String, String)> = if !cols.is_empty() {
+                cols.iter()
+                    .map(|(name, path)| {
+                        let v = json_path_get(item, path);
+                        (name.clone(), v.map(json_scalar_to_string).unwrap_or_default())
+                    })
+                    .collect()
+            } else if let Some(obj) = item.as_object() {
+                obj.iter().map(|(k, v)| (k.clone(), json_scalar_to_string(v))).collect()
+            } else {
+                vec![("値".to_string(), json_scalar_to_string(item))]
+            };
+            out.push(make_record(pairs, &self.url, &self.common));
+        }
+        if out.is_empty() {
+            return Err(anyhow!("json_root で指定した配列は取得できましたが要素が 0 件でした"));
+        }
+        Ok(out)
+    }
+}
+
+/// css_selector 用の列定義パーサー。1 行 = 「表示名=セレクタ[@属性名]」。
+fn parse_css_columns(spec: &str) -> Vec<(String, String, Option<String>)> {
+    spec.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() {
+                return None;
+            }
+            let (name, rest) = line.split_once('=')?;
+            let rest = rest.trim();
+            if let Some((sel, attr)) = rest.rsplit_once('@') {
+                Some((name.trim().to_string(), sel.trim().to_string(), Some(attr.trim().to_string())))
+            } else {
+                Some((name.trim().to_string(), rest.to_string(), None))
+            }
+        })
+        .collect()
+}
+
+/// json_api 用の列定義パーサー。1 行 = 「表示名=ドットパス」（属性の概念は無い）。
+fn parse_plain_columns(spec: &str) -> Vec<(String, String)> {
+    spec.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() {
+                return None;
+            }
+            let (name, path) = line.split_once('=')?;
+            Some((name.trim().to_string(), path.trim().to_string()))
+        })
+        .collect()
+}
+
+/// ドット区切りの JSON パスをたどる（配列は数値インデックスで指定）。空文字はルート自身を返す。
+fn json_path_get<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    if path.is_empty() {
+        return Some(value);
+    }
+    let mut cur = value;
+    for part in path.split('.') {
+        if let Ok(idx) = part.parse::<usize>() {
+            cur = cur.get(idx)?;
+        } else {
+            cur = cur.get(part)?;
+        }
+    }
+    Some(cur)
+}
+
 #[cfg(test)]
 mod gov_data_tests {
     use super::*;
@@ -3154,5 +3380,152 @@ mod gov_data_tests {
         println!("corporate_number (岐阜県) rows = {}", recs.len());
         assert!(!recs.is_empty());
         assert!(recs.iter().any(|r| r.fields.get("法人番号").and_then(|v| v.as_str()) == Some("1000012160079")));
+    }
+}
+
+#[cfg(test)]
+mod web_page_tests {
+    use super::*;
+
+    /// ネットワークへは繋がず、パース処理（fetch_html_table 等）を直接呼ぶための素の接続子。
+    fn conn(mode: &str) -> WebPageConnector {
+        WebPageConnector {
+            url: "https://example.com/mock".to_string(),
+            mode: mode.to_string(),
+            table_index: None,
+            has_header: true,
+            row_selector: None,
+            columns: None,
+            json_root: None,
+            common: CommonCfg::default(),
+        }
+    }
+
+    const MOCK_TABLE_HTML: &str = r#"
+        <html><body>
+          <p>本文中の table ではない部分</p>
+          <table>
+            <tr><th>名前</th><th>URL</th></tr>
+            <tr><td>記事A</td><td>https://example.com/a</td></tr>
+            <tr><td>記事B</td><td>https://example.com/b</td></tr>
+          </table>
+        </body></html>
+    "#;
+
+    #[test]
+    fn html_table_mode_reads_header_and_rows() {
+        let recs = conn("html_table").fetch_html_table(MOCK_TABLE_HTML).unwrap();
+        assert_eq!(recs.len(), 2);
+        assert_eq!(recs[0].fields.get("名前").and_then(|v| v.as_str()), Some("記事A"));
+        assert_eq!(recs[0].fields.get("URL").and_then(|v| v.as_str()), Some("https://example.com/a"));
+    }
+
+    #[test]
+    fn html_table_mode_errors_with_js_rendered_hint_when_no_table() {
+        let err = conn("html_table")
+            .fetch_html_table("<html><body>結果はここにはありません</body></html>")
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("JavaScript"));
+    }
+
+    const MOCK_LIST_HTML: &str = r#"
+        <html><body>
+          <div class="not-a-post">無視されるべき要素</div>
+          <article class="post"><h2><a href="/p/1">記事1</a></h2><span class="date">2026-01-01</span></article>
+          <article class="post"><h2><a href="/p/2">記事2</a></h2><span class="date">2026-01-02</span></article>
+        </body></html>
+    "#;
+
+    #[test]
+    fn css_selector_mode_extracts_text_and_attribute() {
+        let mut c = conn("css_selector");
+        c.row_selector = Some("article.post".to_string());
+        c.columns = Some("タイトル=h2 a\nURL=h2 a@href\n日付=span.date".to_string());
+        let recs = c.fetch_css_selector(MOCK_LIST_HTML).unwrap();
+        assert_eq!(recs.len(), 2);
+        assert_eq!(recs[0].fields.get("タイトル").and_then(|v| v.as_str()), Some("記事1"));
+        assert_eq!(recs[0].fields.get("URL").and_then(|v| v.as_str()), Some("/p/1"));
+        assert_eq!(recs[0].fields.get("日付").and_then(|v| v.as_str()), Some("2026-01-01"));
+    }
+
+    #[test]
+    fn css_selector_mode_errors_when_row_selector_missing() {
+        let mut c = conn("css_selector");
+        c.columns = Some("a=b".to_string());
+        assert!(c.fetch_css_selector(MOCK_LIST_HTML).is_err());
+    }
+
+    const MOCK_JSON_BODY: &str = r#"{
+        "articles": [
+            { "title": "VBAの話", "liked_count": 3, "user": { "name": "たろう" } },
+            { "title": "別の記事", "liked_count": 1, "user": { "name": "はなこ" } }
+        ]
+    }"#;
+
+    #[test]
+    fn json_api_mode_flattens_top_level_keys_when_columns_empty() {
+        // zenn.dev の実測構造を模した最小 JSON（articles 配列、各要素はフラットなオブジェクト）。
+        let mut c = conn("json_api");
+        c.json_root = Some("articles".to_string());
+        let recs = c.fetch_json_api(MOCK_JSON_BODY).unwrap();
+        assert_eq!(recs.len(), 2);
+        assert_eq!(recs[0].fields.get("title").and_then(|v| v.as_str()), Some("VBAの話"));
+        assert_eq!(recs[0].fields.get("liked_count").and_then(|v| v.as_str()), Some("3"));
+    }
+
+    #[test]
+    fn json_api_mode_uses_explicit_dot_path_columns() {
+        let mut c = conn("json_api");
+        c.json_root = Some("articles".to_string());
+        c.columns = Some("タイトル=title\nいいね=liked_count\n投稿者=user.name".to_string());
+        let recs = c.fetch_json_api(MOCK_JSON_BODY).unwrap();
+        assert_eq!(recs.len(), 2);
+        assert_eq!(recs[0].fields.get("タイトル").and_then(|v| v.as_str()), Some("VBAの話"));
+        assert_eq!(recs[0].fields.get("投稿者").and_then(|v| v.as_str()), Some("たろう"));
+    }
+
+    #[test]
+    fn json_api_mode_root_array_when_json_root_empty() {
+        let recs = conn("json_api").fetch_json_api(r#"[{"a":1},{"a":2}]"#).unwrap();
+        assert_eq!(recs.len(), 2);
+    }
+
+    #[test]
+    fn parse_css_columns_splits_name_selector_and_optional_attribute() {
+        let cols = parse_css_columns("タイトル=h2 a\nURL=a@href\n\n  空行は無視  =x");
+        assert_eq!(cols.len(), 3);
+        assert_eq!(cols[0], ("タイトル".to_string(), "h2 a".to_string(), None));
+        assert_eq!(cols[1], ("URL".to_string(), "a".to_string(), Some("href".to_string())));
+    }
+
+    #[test]
+    fn json_path_get_navigates_dots_and_array_indices() {
+        let v = serde_json::json!({ "a": { "b": [10, 20, { "c": "x" }] } });
+        assert_eq!(json_path_get(&v, "a.b.0"), Some(&serde_json::json!(10)));
+        assert_eq!(json_path_get(&v, "a.b.2.c"), Some(&serde_json::json!("x")));
+        assert_eq!(json_path_get(&v, "a.missing"), None);
+        assert_eq!(json_path_get(&v, ""), Some(&v));
+    }
+
+    // 実ネットワークへ接続する実機検証。実行: cargo test --lib -- --ignored web_page
+    #[test]
+    #[ignore = "requires network access; hits the real zenn.dev search API"]
+    fn zenn_search_api_live() {
+        let recs = build_connector(
+            "web_page",
+            &serde_json::json!({
+                "url": "https://zenn.dev/api/search?q=vba&source=articles",
+                "mode": "json_api",
+                "json_root": "articles",
+                "columns": "タイトル=title\nいいね=liked_count",
+            })
+            .to_string(),
+        )
+        .unwrap()
+        .fetch()
+        .unwrap();
+        println!("zenn articles = {}", recs.len());
+        assert!(!recs.is_empty());
     }
 }
