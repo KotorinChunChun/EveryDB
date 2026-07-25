@@ -110,7 +110,10 @@
             <span id="config-summary-badge" class="config-summary-badge"></span>
           </legend>
           <div id="config-accordion-body" class="config-accordion-body" hidden>
-            <label>種別 <select id="f-type"></select></label>
+            <div class="type-row">
+              <label class="type-label">種別 <select id="f-type"></select></label>
+              <button type="button" id="f-guide" class="btn" title="この種別の接続手順書を開く">📖 手順書</button>
+            </div>
             <div id="f-belongs-to" class="belongs-to-hint" hidden></div>
             <div id="f-dynamic"></div>
             <div id="browse-area" class="browse-area"></div>
@@ -191,7 +194,10 @@
     <dialog id="parent-dialog" class="dialog wide">
       <button id="parent-close-x" class="dialog-close-x" type="button" title="閉じる">×</button>
       <h3 id="parent-dialog-title">接続設定</h3>
-      <div id="parent-type-label" class="belongs-to-hint"></div>
+      <div class="type-row">
+        <div id="parent-type-label" class="belongs-to-hint"></div>
+        <button type="button" id="parent-guide" class="btn" title="この種別の接続手順書を開く">📖 手順書</button>
+      </div>
       <label>表示名（接続先のツリー見出し。空欄で自動）
         <input id="parent-label" type="text" placeholder="例: 経理システム" />
       </label>
@@ -308,6 +314,16 @@
       </label>
       <div class="dialog-actions">
         <button id="settings-close" class="btn primary">閉じる</button>
+      </div>
+    </dialog>
+
+    <!-- 接続先種別ごとの手順書（docs/guides/*.md をビルド時に取り込んで表示） -->
+    <dialog id="guide-dialog" class="dialog wide">
+      <button id="guide-close-x" class="dialog-close-x" type="button" title="閉じる">×</button>
+      <h3 id="guide-title">手順書</h3>
+      <div id="guide-body" class="guide-body"></div>
+      <div class="dialog-actions">
+        <button id="guide-close" class="btn primary" type="button">閉じる</button>
       </div>
     </dialog>
 

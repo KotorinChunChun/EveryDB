@@ -426,6 +426,39 @@ tr.drop-target-after td::after { bottom: -1px; }
 /* 幅広ダイアログ・フィールド役割編集・ブラウズ領域 */
 .dialog.wide { min-width: 560px; max-width: 720px; }
 
+/* 種別セレクト（または種別ラベル）と「📖 手順書」ボタンの並び */
+.type-row { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 10px; }
+.type-row .type-label { flex: 1; margin-bottom: 0; }
+.type-row > .btn { flex: none; height: 28px; padding: 0 12px; }
+.type-row #parent-type-label { flex: 1; }
+
+/* 手順書ダイアログ（docs/guides/*.md の簡易 Markdown 表示） */
+#guide-dialog { max-height: 90vh; display: flex; flex-direction: column; }
+.guide-body {
+  flex: 1; min-height: 0; overflow-y: auto; padding-right: 6px;
+  font-size: 13px; line-height: 1.7;
+}
+.guide-body h2 { font-size: 15px; margin: 18px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.guide-body h3 { font-size: 13px; margin: 14px 0 4px; color: var(--muted); }
+.guide-body p { margin: 6px 0; }
+.guide-body ul, .guide-body ol { margin: 6px 0; padding-left: 22px; }
+.guide-body li { margin: 3px 0; }
+.guide-body code {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 3px;
+  padding: 0 4px; font-size: 12px;
+}
+.guide-body pre {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px;
+  padding: 8px 10px; overflow-x: auto; margin: 8px 0;
+}
+.guide-body pre code { background: none; border: none; padding: 0; }
+.guide-body a { color: var(--accent-2); cursor: pointer; }
+.guide-body table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 12px; }
+.guide-body th, .guide-body td {
+  border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top;
+}
+.guide-body th { background: var(--panel-2); color: var(--muted); }
+
 /* 接続設定ダイアログ: 下部にテーブル一覧を内包するため、はみ出したらダイアログ自体をスクロールさせる。 */
 #parent-dialog { max-height: 92vh; overflow-y: auto; }
 #parent-tables-fieldset .picker-list { max-height: 260px; }

@@ -1,0 +1,76 @@
+# Microsoft 365（Graph API）の接続手順
+
+対象の EveryDB 種別: **EntraID ユーザー / グループ / デバイス一覧、Intune デバイス一覧、
+Microsoft 365 ライセンス一覧、Teams チーム一覧、SharePoint リスト / ドキュメントライブラリ、
+Outlook 予定表、OneDrive、Teams タスク & Planner**
+
+## 概要
+
+Microsoft Entra ID（旧 Azure AD）にアプリを登録し、**クライアントシークレット**による
+アプリケーション認証（ユーザーの対話ログインを伴わない）で Microsoft Graph からデータを取得します。
+必要な API アクセス許可には**テナント管理者の同意**が必要です。
+
+## 事前に必要なもの
+
+- Microsoft 365 テナントの**全体管理者**（または、アプリ登録と管理者の同意ができる権限）
+- 取り込みたいデータに対応する Graph アクセス許可（下表）
+
+## 手順
+
+1. 入力欄の横の **🔑 取得…** を押して [Entra 管理センターのアプリ登録](https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) を開きます。
+2. **新規登録** を押し、名前（例: `EveryDB`）を入力して登録します。
+   サポートされるアカウントの種類は「この組織ディレクトリのみ」で構いません。
+3. 登録直後の**概要**画面に出る次の 2 つをコピーします。
+   - **アプリケーション (クライアント) ID** → EveryDB の「クライアントID」
+   - **ディレクトリ (テナント) ID** → EveryDB の「テナントID」
+4. 左メニュー **証明書とシークレット** → **新しいクライアント シークレット** を作成します。
+   作成直後に表示される **値**（Value）をコピーします（**ID ではありません**。
+   画面を離れると二度と表示されません）。→ EveryDB の「クライアントシークレット(値)」
+5. 左メニュー **API のアクセス許可** → **アクセス許可の追加** → **Microsoft Graph** →
+   **アプリケーションの許可** から、下表のうち必要なものを追加します。
+6. 同じ画面で **「（テナント名）に管理者の同意を与えます」** を押します。
+   状態がすべて「付与されました」になれば完了です。
+7. EveryDB の接続設定画面で **⟳ 更新** を押し、取り込みたいテーブルにチェックを入れて
+   **保存してリロード**を押します。
+
+## 必要な Graph アクセス許可
+
+| EveryDB の種別 | 必要なアプリケーションの許可 |
+| :--- | :--- |
+| EntraID ユーザー一覧 | `User.Read.All` |
+| EntraID グループ一覧 / Teams チーム一覧 | `Group.Read.All` |
+| EntraID デバイス一覧 | `Device.Read.All` |
+| Intune デバイス一覧 | `DeviceManagementManagedDevices.Read.All` |
+| Microsoft 365 ライセンス一覧 | `Organization.Read.All` |
+| SharePoint リスト / ライブラリ | `Sites.Read.All` |
+| Outlook 予定表 | `Calendars.Read` |
+| OneDrive | `Files.Read.All` |
+| Teams タスク & Planner | `Tasks.Read.All`, `Group.Read.All` |
+
+## EveryDB 側の入力項目
+
+| 項目 | 入力する値 | 備考 |
+| :--- | :--- | :--- |
+| テナントID | 手順 3 のディレクトリ (テナント) ID | 接続先で共通 |
+| クライアントID | 手順 3 のアプリケーション (クライアント) ID | 接続先で共通 |
+| クライアントシークレット(値) | 手順 4 の**値** | 有効期限に注意（既定 6〜24 か月） |
+| サイトURL（SharePoint のみ） | `https://<テナント>.sharepoint.com/sites/<サイト名>` | サイト/チームから選択も可能 |
+| 対象ユーザー（予定表 / OneDrive） | UPN またはメールアドレス | 接続設定のテーブル一覧からは追加できません |
+| 対象チーム(グループ)のID（Planner） | Entra のグループ ID | 同上 |
+
+「Outlook 予定表 / OneDrive / Teams タスク & Planner」は対象を指定する必要があるため、
+接続設定画面のテーブル一覧には出ません。データソース一覧の **＋追加** から個別に追加してください。
+
+## よくあるエラーと対処
+
+| 症状 | 原因 | 対処 |
+| :--- | :--- | :--- |
+| `401 invalid_client` | シークレットの**ID** を貼った / 期限切れ | 手順 4 の**値**を貼り直す |
+| `403 Authorization_RequestDenied` | アクセス許可が無い・同意していない | 手順 5〜6 を実施 |
+| `AADSTS700016` | クライアント ID がテナントに存在しない | テナント ID とクライアント ID の対応を確認 |
+| SharePoint で 0 件 | サイト URL の誤り / `Sites.Read.All` 不足 | サイト URL を「サイト/チームから選択」で入れ直す |
+
+## 参考リンク
+
+- [Entra 管理センター（アプリ登録）](https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade)
+- [Microsoft Graph のアクセス許可リファレンス](https://learn.microsoft.com/graph/permissions-reference)

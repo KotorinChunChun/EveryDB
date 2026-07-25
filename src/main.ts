@@ -1662,6 +1662,205 @@ $<HTMLButtonElement>("column-map-save").onclick = async () => {
 // ============================================================
 /** テキスト/パスワード系フィールドを任意のコンテナへ描画する簡易レンダラー（接続先ダイアログ用）。
  * renderTypeFields と異なり、共有(接続)フィールドは常に text/password + 任意の参照ボタンのみのため専用に用意する。 */
+// ============================================================
+// 接続先種別ごとの手順書（docs/guides/*.md）
+// ビルド時に文字列として取り込むので、配布物にも必ず同梱される（ファイルアクセス権限も不要）。
+// ============================================================
+const GUIDE_DOCS = import.meta.glob("/docs/guides/*.md", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
+
+/** 種別キー → 手順書のファイル名（拡張子なし）。複数種別で 1 本を共有する。 */
+function guideNameFor(type_: string): string | null {
+  if (type_ === "notion") return "notion";
+  if (type_.startsWith("graph")) return "microsoft365";
+  if (type_ === "google_sheets") return "google-sheets";
+  if (type_ === "ical_calendar") return "ical";
+  if (type_ === "airtable") return "airtable";
+  if (type_ === "box_files") return "box";
+  if (type_ === "postgres") return "postgresql";
+  if (type_ === "mysql") return "mysql";
+  if (PATH_GROUPED_TYPES.has(type_)) return "local-files";
+  return null;
+}
+
+function guideTextFor(type_: string): string | null {
+  const name = guideNameFor(type_);
+  return name ? GUIDE_DOCS[`/docs/guides/${name}.md`] ?? null : null;
+}
+
+/** 折り返された行をつなぐ。日本語はそのまま連結し、英数字同士の境目だけ空白を入れる。 */
+function joinWrapped(a: string, b: string): string {
+  if (!a) return b;
+  const needSpace = /[A-Za-z0-9)\]]$/.test(a) && /^[A-Za-z0-9([]/.test(b);
+  return a + (needSpace ? " " : "") + b;
+}
+
+/** インライン記法（**強調** / `コード` / [表示](URL)）を DOM として組み立てる。 */
+function appendInlineMarkdown(parent: HTMLElement, text: string) {
+  const re = /\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+    if (m[1] !== undefined) {
+      const b = document.createElement("strong");
+      b.textContent = m[1];
+      parent.appendChild(b);
+    } else if (m[2] !== undefined) {
+      const c = document.createElement("code");
+      c.textContent = m[2];
+      parent.appendChild(c);
+    } else {
+      // リンクはアプリ内で遷移させず、既定のブラウザで開く。
+      const url = m[4];
+      const a = document.createElement("a");
+      a.textContent = m[3];
+      a.href = "#";
+      a.title = url;
+      a.onclick = (ev) => {
+        ev.preventDefault();
+        void invoke("open_ref", { target: url }).catch(() => {});
+      };
+      parent.appendChild(a);
+    }
+    last = re.lastIndex;
+  }
+  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+}
+
+/** 手順書用の最小限の Markdown レンダラ（見出し / 箇条書き / 番号付き / 表 / コード / 段落）。 */
+function renderMarkdownInto(container: HTMLElement, md: string) {
+  container.innerHTML = "";
+  const lines = md.replace(/<!--[\s\S]*?-->/g, "").split(/\r?\n/);
+  let i = 0;
+  const isTableRow = (s: string) => s.trim().startsWith("|");
+  const cellsOf = (s: string) => s.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.trim() === "") { i++; continue; }
+
+    // コードブロック
+    if (line.trim().startsWith("```")) {
+      i++;
+      const buf: string[] = [];
+      while (i < lines.length && !lines[i].trim().startsWith("```")) buf.push(lines[i++]);
+      i++; // 閉じフェンス
+      const pre = document.createElement("pre");
+      const code = document.createElement("code");
+      code.textContent = buf.join("\n");
+      pre.appendChild(code);
+      container.appendChild(pre);
+      continue;
+    }
+
+    // 見出し
+    const h = /^(#{1,4})\s+(.*)$/.exec(line);
+    if (h) {
+      const el = document.createElement(`h${h[1].length}`);
+      appendInlineMarkdown(el, h[2]);
+      container.appendChild(el);
+      i++;
+      continue;
+    }
+
+    // 表（次の行が区切り行のときだけ表として扱う）
+    if (isTableRow(line) && i + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const htr = document.createElement("tr");
+      for (const c of cellsOf(line)) {
+        const th = document.createElement("th");
+        appendInlineMarkdown(th, c);
+        htr.appendChild(th);
+      }
+      thead.appendChild(htr);
+      table.appendChild(thead);
+      i += 2;
+      const tbody = document.createElement("tbody");
+      while (i < lines.length && isTableRow(lines[i])) {
+        const tr = document.createElement("tr");
+        for (const c of cellsOf(lines[i])) {
+          const td = document.createElement("td");
+          appendInlineMarkdown(td, c);
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+        i++;
+      }
+      table.appendChild(tbody);
+      container.appendChild(table);
+      continue;
+    }
+
+    // 箇条書き / 番号付き（インデントされた次行は同じ項目の折り返しとして扱う）
+    const bullet = /^(\s*)([-*]|\d+\.)\s+(.*)$/.exec(line);
+    if (bullet) {
+      const ordered = /\d/.test(bullet[2]);
+      const list = document.createElement(ordered ? "ol" : "ul");
+      while (i < lines.length) {
+        const m2 = /^(\s*)([-*]|\d+\.)\s+(.*)$/.exec(lines[i]);
+        if (!m2 || /\d/.test(m2[2]) !== ordered) break;
+        let text = m2[3];
+        i++;
+        while (i < lines.length && /^\s+\S/.test(lines[i]) && !/^(\s*)([-*]|\d+\.)\s+/.test(lines[i]) && !lines[i].trim().startsWith("```")) {
+          text = joinWrapped(text, lines[i].trim());
+          i++;
+        }
+        const li = document.createElement("li");
+        appendInlineMarkdown(li, text);
+        list.appendChild(li);
+      }
+      container.appendChild(list);
+      continue;
+    }
+
+    // 段落（空行・他ブロックが来るまでを 1 つにまとめる）
+    let text = "";
+    while (i < lines.length && lines[i].trim() !== "" && !/^(#{1,4})\s/.test(lines[i])
+      && !isTableRow(lines[i]) && !/^(\s*)([-*]|\d+\.)\s+/.test(lines[i]) && !lines[i].trim().startsWith("```")) {
+      text = joinWrapped(text, lines[i].trim());
+      i++;
+    }
+    const p = document.createElement("p");
+    appendInlineMarkdown(p, text);
+    container.appendChild(p);
+  }
+}
+
+const guideDialog = $<HTMLDialogElement>("guide-dialog");
+const guideBody = $<HTMLDivElement>("guide-body");
+
+function openGuide(type_: string) {
+  const md = guideTextFor(type_);
+  if (!md) return;
+  // 先頭の h1 はダイアログのタイトルにするので本文からは省く。
+  const firstH1 = /^#\s+(.*)$/m.exec(md);
+  $<HTMLHeadingElement>("guide-title").textContent = firstH1 ? firstH1[1] : "接続手順書";
+  renderMarkdownInto(guideBody, firstH1 ? md.replace(firstH1[0], "") : md);
+  guideBody.scrollTop = 0;
+  guideDialog.showModal();
+}
+
+$<HTMLButtonElement>("guide-close").onclick = () => guideDialog.close();
+$<HTMLButtonElement>("guide-close-x").onclick = () => guideDialog.close();
+$<HTMLButtonElement>("f-guide").onclick = () => openGuide(typeSel.value);
+$<HTMLButtonElement>("parent-guide").onclick = () => {
+  if (parentDialogState) openGuide(parentDialogState.repType);
+};
+
+/** API キー・トークンの取得ページを既定のブラウザで開くボタン。 */
+function makeApiKeyButton(url: string): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn browse-btn";
+  btn.textContent = "🔑 取得…";
+  btn.title = `${url} を既定のブラウザで開きます`;
+  btn.onclick = () => void invoke("open_ref", { target: url }).catch((e) => {
+    console.error("取得ページを開けませんでした:", e);
+  });
+  return btn;
+}
+
 function renderFieldsInto(container: HTMLElement, idPrefix: string, fields: FieldDef[], prefill?: Record<string, unknown>) {
   container.innerHTML = "";
   for (const f of fields) {
@@ -1676,26 +1875,30 @@ function renderFieldsInto(container: HTMLElement, idPrefix: string, fields: Fiel
       const v = prefill[f.key];
       if (v !== undefined && v !== null) input.value = String(v);
     }
-    if (f.browse) {
+    if (f.browse || f.helpUrl) {
       const row = document.createElement("div");
       row.className = "path-row";
-      const browseBtn = document.createElement("button");
-      browseBtn.type = "button";
-      browseBtn.className = "btn browse-btn";
-      browseBtn.textContent = "参照…";
-      browseBtn.onclick = async () => {
-        try {
-          const picked = await openDialog({
-            directory: f.browse === "folder",
-            multiple: false,
-            filters: f.browse === "file" ? f.dialogFilters : undefined,
-          });
-          if (typeof picked === "string") input.value = picked;
-        } catch (e) {
-          console.error("ファイル選択に失敗:", e);
-        }
-      };
-      row.append(input, browseBtn);
+      row.appendChild(input);
+      if (f.browse) {
+        const browseBtn = document.createElement("button");
+        browseBtn.type = "button";
+        browseBtn.className = "btn browse-btn";
+        browseBtn.textContent = "参照…";
+        browseBtn.onclick = async () => {
+          try {
+            const picked = await openDialog({
+              directory: f.browse === "folder",
+              multiple: false,
+              filters: f.browse === "file" ? f.dialogFilters : undefined,
+            });
+            if (typeof picked === "string") input.value = picked;
+          } catch (e) {
+            console.error("ファイル選択に失敗:", e);
+          }
+        };
+        row.appendChild(browseBtn);
+      }
+      if (f.helpUrl) row.appendChild(makeApiKeyButton(f.helpUrl));
       label.appendChild(row);
     } else {
       label.appendChild(input);
@@ -1773,6 +1976,7 @@ async function openParentSettingsDialog(parentKey: string) {
   errEl.textContent = "";
   $<HTMLDivElement>("parent-dialog-title").textContent = `接続設定: ${parentLabel(parentKey)}`;
   $<HTMLDivElement>("parent-type-label").textContent = `種別: ${parentKindLabel(parentKindOf(repType), repType)}`;
+  $<HTMLButtonElement>("parent-guide").hidden = guideTextFor(repType) === null;
   $<HTMLInputElement>("parent-label").value = parentLabelOverrides.get(parentKey) ?? "";
   $<HTMLDivElement>("parent-scope-hint").textContent =
     `この接続情報は次の ${children.length} 個のテーブルに反映されます: ${children.map((c) => c.name).join(", ")}`;
@@ -2213,6 +2417,8 @@ interface FieldDef {
   options?: { value: string; label: string }[]; // kind: "select" 用
   min?: number; // kind: "number" 用
   dialogFilters?: { name: string; extensions: string[] }[]; // browse: "file" 用の拡張子フィルタ
+  /** API キー・トークンの取得ページ。指定すると入力欄の横に「🔑 取得…」ボタンを出す。 */
+  helpUrl?: string;
 }
 interface TypeDef {
   value: string;
@@ -2231,10 +2437,14 @@ const SQLITE_FILTERS = [{ name: "SQLite データベース", extensions: ["sqlit
 const ACCDB_FILTERS = [{ name: "Access データベース", extensions: ["accdb", "mdb"] }];
 const TEXT_FILTERS = [{ name: "テキストファイル", extensions: ["txt"] }];
 const JSON_FILTERS = [{ name: "JSON ファイル", extensions: ["json"] }];
+/** API キー・トークンの取得ページ（入力欄の「🔑 取得…」ボタンから開く）。 */
+const ENTRA_APPS_URL = "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade";
+const NOTION_INTEGRATIONS_URL = "https://www.notion.so/my-integrations";
+
 const GRAPH_AUTH_FIELDS: FieldDef[] = [
-  { key: "tenant_id", label: "テナントID", kind: "text", placeholder: "ディレクトリ(テナント) ID" },
-  { key: "client_id", label: "クライアントID", kind: "text", placeholder: "アプリケーション(クライアント) ID" },
-  { key: "client_secret", label: "クライアントシークレット(値)", kind: "password", placeholder: "シークレットの値(ID ではない)" },
+  { key: "tenant_id", label: "テナントID", kind: "text", placeholder: "ディレクトリ(テナント) ID", helpUrl: ENTRA_APPS_URL },
+  { key: "client_id", label: "クライアントID", kind: "text", placeholder: "アプリケーション(クライアント) ID", helpUrl: ENTRA_APPS_URL },
+  { key: "client_secret", label: "クライアントシークレット(値)", kind: "password", placeholder: "シークレットの値(ID ではない)", helpUrl: ENTRA_APPS_URL },
 ];
 const TYPE_DEFS: TypeDef[] = [
   { value: "csv", label: "CSV ファイル", fields: [
@@ -2251,7 +2461,7 @@ const TYPE_DEFS: TypeDef[] = [
   { value: "folder", label: "フォルダのファイル一覧", fields: [{ key: "path", label: "フォルダパス", kind: "text", placeholder: "C:\\path\\to\\folder", browse: "folder" }, { key: "recursive", label: "サブフォルダも含める", kind: "checkbox", default: true }, { key: "extensions", label: "拡張子フィルタ (カンマ区切り・任意)", kind: "list", placeholder: "csv, xlsx" }] },
   { value: "ime_msime", label: "IME辞書: Microsoft IME", fields: [pathField(TEXT_FILTERS)] },
   { value: "ime_google", label: "IME辞書: Google 日本語入力", fields: [pathField(TEXT_FILTERS)] },
-  { value: "notion", label: "Notion データベース", fields: [{ key: "token", label: "インテグレーショントークン", kind: "password", placeholder: "ntn_..." }, { key: "database_id", label: "データベースID", kind: "text", placeholder: "URL 内の 32 桁 ID" }], browse: "notion" },
+  { value: "notion", label: "Notion データベース", fields: [{ key: "token", label: "インテグレーショントークン", kind: "password", placeholder: "ntn_...", helpUrl: NOTION_INTEGRATIONS_URL }, { key: "database_id", label: "データベースID", kind: "text", placeholder: "URL 内の 32 桁 ID" }], browse: "notion" },
   { value: "graph_entra_users", label: "EntraID ユーザー一覧", fields: [...GRAPH_AUTH_FIELDS] },
   { value: "graph_entra_groups", label: "EntraID グループ一覧", fields: [...GRAPH_AUTH_FIELDS] },
   { value: "graph_teams", label: "Teams チーム一覧", fields: [...GRAPH_AUTH_FIELDS] },
@@ -2278,7 +2488,7 @@ const TYPE_DEFS: TypeDef[] = [
     { key: "path", label: "Bookmarks / places.sqlite のパス", kind: "text", placeholder: "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Bookmarks", browse: "file" },
   ] },
   { value: "google_sheets", label: "Google スプレッドシート", fields: [
-    { key: "key_path", label: "サービスアカウント鍵(JSON)のパス", kind: "text", placeholder: "C:\\path\\to\\service-account.json", browse: "file", dialogFilters: JSON_FILTERS },
+    { key: "key_path", label: "サービスアカウント鍵(JSON)のパス", kind: "text", placeholder: "C:\\path\\to\\service-account.json", browse: "file", dialogFilters: JSON_FILTERS, helpUrl: "https://console.cloud.google.com/apis/credentials" },
     { key: "spreadsheet_id", label: "スプレッドシートID", kind: "text", placeholder: "URL の /d/ と /edit の間の文字列" },
     { key: "range", label: "範囲(任意)", kind: "text", placeholder: "Sheet1!A1:D50 / 空欄=先頭シート全域", optional: true },
     { key: "has_header", label: "先頭行はヘッダー", kind: "checkbox", default: true },
@@ -2287,7 +2497,7 @@ const TYPE_DEFS: TypeDef[] = [
     { key: "url", label: "公開 iCal URL", kind: "text", placeholder: "https://calendar.google.com/calendar/ical/.../public/basic.ics" },
   ] },
   { value: "airtable", label: "Airtable", fields: [
-    { key: "token", label: "Personal Access Token", kind: "password", placeholder: "pat..." },
+    { key: "token", label: "Personal Access Token", kind: "password", placeholder: "pat...", helpUrl: "https://airtable.com/create/tokens" },
     { key: "base_id", label: "Base ID", kind: "text", placeholder: "app..." },
     { key: "table", label: "テーブル ID または名前", kind: "text", placeholder: "tbl... または テーブル名" },
     { key: "view", label: "ビュー(任意)", kind: "text", placeholder: "viw... または ビュー名", optional: true },
@@ -2319,8 +2529,8 @@ const TYPE_DEFS: TypeDef[] = [
     { key: "ssl_accept_invalid_certs", label: "自己署名証明書を許可(社内サーバー向け)", kind: "checkbox", default: false },
   ] },
   { value: "box_files", label: "Box (ファイル一覧)", fields: [
-    { key: "client_id", label: "クライアントID", kind: "text" },
-    { key: "client_secret", label: "クライアントシークレット", kind: "password" },
+    { key: "client_id", label: "クライアントID", kind: "text", helpUrl: "https://app.box.com/developers/console" },
+    { key: "client_secret", label: "クライアントシークレット", kind: "password", helpUrl: "https://app.box.com/developers/console" },
     { key: "enterprise_id", label: "Enterprise ID", kind: "text" },
     { key: "folder_id", label: "開始フォルダID(任意)", kind: "text", placeholder: "0 (ルート)", optional: true },
   ] },
@@ -2609,30 +2819,34 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
       if (f.key === "path") {
         input.addEventListener("input", () => maybeAutoFillName(input.value));
       }
-      if (f.browse) {
-        // 参照ボタン付き（ファイル/フォルダ選択ダイアログ）。
+      if (f.browse || f.helpUrl) {
+        // 参照ボタン（ファイル/フォルダ選択）と、API キー取得ページを開くボタン。
         const row = document.createElement("div");
         row.className = "path-row";
-        const browseBtn = document.createElement("button");
-        browseBtn.type = "button";
-        browseBtn.className = "btn browse-btn";
-        browseBtn.textContent = "参照…";
-        browseBtn.onclick = async () => {
-          try {
-            const picked = await openDialog({
-              directory: f.browse === "folder",
-              multiple: false,
-              filters: f.browse === "file" ? f.dialogFilters : undefined,
-            });
-            if (typeof picked === "string") {
-              input.value = picked;
-              if (f.key === "path") maybeAutoFillName(picked);
+        row.appendChild(input);
+        if (f.browse) {
+          const browseBtn = document.createElement("button");
+          browseBtn.type = "button";
+          browseBtn.className = "btn browse-btn";
+          browseBtn.textContent = "参照…";
+          browseBtn.onclick = async () => {
+            try {
+              const picked = await openDialog({
+                directory: f.browse === "folder",
+                multiple: false,
+                filters: f.browse === "file" ? f.dialogFilters : undefined,
+              });
+              if (typeof picked === "string") {
+                input.value = picked;
+                if (f.key === "path") maybeAutoFillName(picked);
+              }
+            } catch (e) {
+              console.error("ファイル選択に失敗:", e);
             }
-          } catch (e) {
-            console.error("ファイル選択に失敗:", e);
-          }
-        };
-        row.append(input, browseBtn);
+          };
+          row.appendChild(browseBtn);
+        }
+        if (f.helpUrl) row.appendChild(makeApiKeyButton(f.helpUrl));
         label.appendChild(row);
       } else {
         label.appendChild(input);
@@ -2646,6 +2860,7 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
   } else {
     browseAreaEl.innerHTML = "";
   }
+  $<HTMLButtonElement>("f-guide").hidden = guideTextFor(typeSel.value) === null;
   resetRolesEditor();
   updateConfigSummaryBadge();
   updateOpenTableButton();
