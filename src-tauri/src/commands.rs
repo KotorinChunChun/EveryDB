@@ -390,6 +390,13 @@ pub fn browse_accdb_tables(path: String) -> Result<Vec<String>, String> {
     crate::browse::list_accdb_tables(&crate::connectors::strip_path_quotes(&path)).map_err(err_to_string)
 }
 
+/// ブラウザ系データソース（閲覧履歴/ブックマーク/ダウンロード履歴）のパス指定を「候補から選ぶだけ」
+/// にするための一覧取得（要件: パス指定が難しいので自動で候補を探して選ばせてほしい）。
+#[tauri::command]
+pub fn browse_browser_profiles(browser: String, target: String) -> Result<Vec<crate::browse::BrowserProfileEntry>, String> {
+    crate::browse::browse_browser_profiles(&browser, &target).map_err(err_to_string)
+}
+
 #[tauri::command]
 pub fn set_refresh_interval(state: State<'_, AppState>, id: i64, seconds: i64) -> Result<(), String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;

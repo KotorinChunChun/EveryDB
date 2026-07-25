@@ -2521,6 +2521,10 @@ interface FieldDef {
   dialogFilters?: { name: string; extensions: string[] }[]; // browse: "file" 用の拡張子フィルタ
   /** API キー・トークンの取得ページ。指定すると入力欄の横に「🔑 取得…」ボタンを出す。 */
   helpUrl?: string;
+  /** ブラウザのプロファイル候補（History/Bookmarks/places.sqlite）を自動検出して選ばせる。
+   * 値は探すファイルの種別（"history" は閲覧履歴・ダウンロード履歴の両方に使う。Chromium系では同じ
+   * History ファイルを共有するため）。同じダイアログ内の "browser" セレクトの現在値を見て検索する。 */
+  browserProfile?: "history" | "bookmarks";
 }
 interface TypeDef {
   value: string;
@@ -2607,15 +2611,15 @@ const TYPE_DEFS: TypeDef[] = [
   { value: "graph_planner", label: "Teams タスク & Planner", fields: [...GRAPH_AUTH_FIELDS, { key: "group_id", label: "対象チーム(グループ)のID", kind: "text", placeholder: "Entra管理センター等で確認したグループID" }] },
   { value: "browser_history", label: "ブラウザ: 閲覧履歴", fields: [
     { key: "browser", label: "ブラウザ", kind: "select", options: BROWSER_OPTIONS },
-    { key: "path", label: "History / places.sqlite のパス", kind: "text", placeholder: "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\History", browse: "file" },
+    { key: "path", label: "History / places.sqlite のパス", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "history" },
   ] },
   { value: "browser_bookmarks", label: "ブラウザ: ブックマーク", fields: [
     { key: "browser", label: "ブラウザ", kind: "select", options: BROWSER_OPTIONS },
-    { key: "path", label: "Bookmarks / places.sqlite のパス", kind: "text", placeholder: "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Bookmarks", browse: "file" },
+    { key: "path", label: "Bookmarks / places.sqlite のパス", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "bookmarks" },
   ] },
   { value: "browser_downloads", label: "ブラウザ: ダウンロード履歴", fields: [
     { key: "browser", label: "ブラウザ", kind: "select", options: BROWSER_OPTIONS },
-    { key: "path", label: "History / places.sqlite のパス", kind: "text", placeholder: "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\History（Chromium系は履歴と同じファイル）", browse: "file" },
+    { key: "path", label: "History / places.sqlite のパス（Chromium系は履歴と同じファイル）", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "history" },
   ] },
   { value: "google_sheets", label: "Google スプレッドシート", fields: [
     { key: "key_path", label: "サービスアカウント鍵(JSON)のパス", kind: "text", placeholder: "C:\\path\\to\\service-account.json", browse: "file", dialogFilters: JSON_FILTERS, helpUrl: "https://console.cloud.google.com/apis/credentials" },
@@ -2979,8 +2983,9 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
       if (f.key === "path") {
         input.addEventListener("input", () => maybeAutoFillName(input.value));
       }
-      if (f.browse || f.helpUrl) {
-        // 参照ボタン（ファイル/フォルダ選択）と、API キー取得ページを開くボタン。
+      if (f.browse || f.helpUrl || f.browserProfile) {
+        // 参照ボタン（ファイル/フォルダ選択）、API キー取得ページを開くボタン、
+        // ブラウザプロファイル候補を自動検出するボタン。
         const row = document.createElement("div");
         row.className = "path-row";
         row.appendChild(input);
@@ -3005,6 +3010,15 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
             }
           };
           row.appendChild(browseBtn);
+        }
+        if (f.browserProfile) {
+          const pickBtn = document.createElement("button");
+          pickBtn.type = "button";
+          pickBtn.className = "btn browse-btn";
+          pickBtn.textContent = "候補から選択…";
+          pickBtn.title = "インストール済みのブラウザからプロファイル（History/Bookmarks）を自動検出します";
+          pickBtn.onclick = () => openBrowserProfilePicker(f.browserProfile!, input);
+          row.appendChild(pickBtn);
         }
         if (f.helpUrl) row.appendChild(makeApiKeyButton(f.helpUrl));
         label.appendChild(row);
@@ -3420,6 +3434,38 @@ async function openNotionPicker() {
   }
 }
 $<HTMLButtonElement>("notion-picker-close").onclick = () => $<HTMLDialogElement>("notion-picker").close();
+
+// ---- ブラウザのプロファイル候補ピッカー（要件: パス指定を候補から選ぶだけにしたい）----
+async function openBrowserProfilePicker(target: "history" | "bookmarks", pathInput: HTMLInputElement) {
+  const browserSel = document.getElementById("fd-browser") as HTMLSelectElement | null;
+  const browser = browserSel?.value ?? "chrome";
+  const listEl = $<HTMLDivElement>("browser-profile-picker-list");
+  listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
+  const dlg = $<HTMLDialogElement>("browser-profile-picker");
+  dlg.showModal();
+  try {
+    const entries = await invoke<{ label: string; path: string }[]>("browse_browser_profiles", { browser, target });
+    listEl.innerHTML = "";
+    if (entries.length === 0) {
+      listEl.innerHTML = "<div class='picker-empty'>候補が見つかりませんでした</div>";
+    }
+    for (const entry of entries) {
+      const item = document.createElement("div");
+      item.className = "picker-item";
+      item.textContent = entry.label;
+      item.title = entry.path;
+      item.onclick = () => {
+        pathInput.value = entry.path;
+        maybeAutoFillName(entry.path);
+        dlg.close();
+      };
+      listEl.appendChild(item);
+    }
+  } catch (e) {
+    setPickerMessage(listEl, `取得失敗: ${String(e)}`);
+  }
+}
+$<HTMLButtonElement>("browser-profile-picker-close").onclick = () => $<HTMLDialogElement>("browser-profile-picker").close();
 
 // ---- Excel/SQLite/Access テーブル一括ピッカー ----
 const tablePickerDlg = $<HTMLDialogElement>("table-picker");

@@ -134,6 +134,7 @@ pub fn run() {
             commands::browse_excel_tables,
             commands::browse_sqlite_tables,
             commands::browse_accdb_tables,
+            commands::browse_browser_profiles,
             commands::autostart_status,
             commands::autostart_set,
             commands::set_zoom,
