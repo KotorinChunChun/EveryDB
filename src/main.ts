@@ -320,6 +320,89 @@ function parentLabel(parent: string): string {
   return parent;
 }
 
+// ---- 管理モード（旧「データソース管理」ダイアログの置き換え）----
+// サイドバー右上の「管理」トグルで ON にすると、ペイン幅を広げて
+// 種別・件数・最終更新日時・更新間隔・更新/編集/削除ボタンを一覧上に出す。
+let manageMode = false;
+/** 管理モードに入る直前のサイドバー幅（OFF で復元する）。 */
+let widthBeforeManage: number | null = null;
+const MANAGE_MIN_W = 720;
+const manageToggleBtn = $<HTMLButtonElement>("manage-toggle");
+const manageHeadEl = $<HTMLDivElement>("manage-head");
+
+function setManageMode(on: boolean) {
+  manageMode = on;
+  sidebarEl.classList.toggle("manage", on);
+  manageToggleBtn.classList.toggle("active", on);
+  manageToggleBtn.setAttribute("aria-pressed", String(on));
+  manageHeadEl.hidden = !on;
+  if (on) {
+    widthBeforeManage = Math.round(sidebarEl.getBoundingClientRect().width);
+    // 検索結果側が潰れない範囲で、必要な列が収まる幅まで広げる。
+    const maxW = Math.max(MANAGE_MIN_W, window.innerWidth - 320);
+    sidebarEl.style.width = Math.min(Math.max(MANAGE_MIN_W, widthBeforeManage), maxW) + "px";
+  } else if (widthBeforeManage !== null) {
+    sidebarEl.style.width = widthBeforeManage + "px";
+    widthBeforeManage = null;
+  }
+  renderSources();
+}
+
+manageToggleBtn.onclick = () => setManageMode(!manageMode);
+
+/** 種別キーを閲覧用ラベルへ（未知の種別はキーのまま）。 */
+function typeLabel(type_: string): string {
+  return TYPE_DEFS.find((t) => t.value === type_)?.label ?? type_;
+}
+
+/** 最終更新日時を「MM-DD HH:mm」に短縮する（元の値は title で出す）。 */
+function shortTimestamp(ts: string | null): string {
+  if (!ts) return "―";
+  const m = /(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(ts);
+  return m ? `${m[2]}-${m[3]} ${m[4]}:${m[5]}` : ts;
+}
+
+/** 管理モードの行アクション用の小さなアイコンボタン。 */
+function makeManageButton(text: string, title: string, onClick: () => void | Promise<void>, danger = false): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "m-btn" + (danger ? " danger" : "");
+  btn.textContent = text;
+  btn.title = title;
+  btn.onclick = async (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    await onClick();
+  };
+  return btn;
+}
+
+/** 更新間隔（分）の入力欄。ドラッグ並べ替えと干渉しないよう、フォーカス中は親の draggable を外す。 */
+function makeIntervalInput(minutes: number | null, onCommit: (minutes: number) => Promise<void>, row: HTMLElement): HTMLInputElement {
+  const input = document.createElement("input");
+  input.type = "number";
+  input.className = "m-interval";
+  input.min = "1";
+  input.value = minutes === null ? "" : String(minutes);
+  if (minutes === null) input.placeholder = "―";
+  input.title = minutes === null ? "配下のテーブルで間隔が揃っていません。入力すると全テーブルへ一括設定します" : "自動更新の間隔（分）";
+  // draggable な祖先の中では入力欄のテキスト選択ができないため、操作中だけ解除する。
+  input.addEventListener("mousedown", (ev) => { ev.stopPropagation(); row.draggable = false; });
+  input.addEventListener("blur", () => { row.draggable = true; });
+  input.addEventListener("click", (ev) => ev.stopPropagation());
+  input.addEventListener("dblclick", (ev) => ev.stopPropagation());
+  input.onchange = async () => {
+    const m = Math.max(1, parseInt(input.value, 10) || 1);
+    input.value = String(m);
+    try {
+      await onCommit(m);
+    } catch (e) {
+      alert("更新間隔の設定に失敗: " + String(e));
+    }
+  };
+  return input;
+}
+
 /** 1 つのテーブル（または単独の接続先）の行を作る。 */
 function makeSourceItem(s: SourceInfo): HTMLElement {
   const item = document.createElement("div");
@@ -364,7 +447,47 @@ function makeSourceItem(s: SourceInfo): HTMLElement {
   reloadBtn.textContent = "⟳";
   reloadBtn.onclick = async (ev) => { ev.stopPropagation(); await reloadOne(s.id); };
 
-  item.append(dot, cb, label, count, reloadBtn);
+  if (manageMode) {
+    const typeSpan = document.createElement("span");
+    typeSpan.className = "m-type";
+    typeSpan.textContent = typeLabel(s.type_);
+    typeSpan.title = s.type_;
+
+    count.classList.add("m-count");
+
+    const lastSpan = document.createElement("span");
+    lastSpan.className = "m-last" + (s.status === "error" ? " err" : "");
+    lastSpan.textContent = shortTimestamp(s.last_success_at);
+    lastSpan.title = s.status === "error"
+      ? `最終成功: ${s.last_success_at ?? "なし"}\n直近の更新は失敗: ${s.last_error ?? ""}`
+      : `最終成功: ${s.last_success_at ?? "なし"}`;
+
+    const intervalInput = makeIntervalInput(
+      Math.max(1, Math.round(s.refresh_interval / 60)),
+      async (m) => {
+        await invoke("set_refresh_interval", { id: s.id, seconds: m * 60 });
+        s.refresh_interval = m * 60;
+      },
+      item,
+    );
+
+    const actions = document.createElement("span");
+    actions.className = "m-actions";
+    actions.append(
+      makeManageButton("⟳", "このテーブルを再読込", () => reloadOne(s.id)),
+      makeManageButton("✎", "このテーブルの設定を編集", () => openEditDialog(s.id)),
+      makeManageButton("🗑", "このテーブルを削除", async () => {
+        if (!await confirmDelete(`「${s.name}」を削除しますか？\n（キャッシュも消えます）`)) return;
+        await invoke("delete_source", { id: s.id });
+        selectedSourceIds.delete(s.id);
+        await loadSources();
+      }, true),
+    );
+
+    item.append(dot, cb, label, typeSpan, count, lastSpan, intervalInput, actions);
+  } else {
+    item.append(dot, cb, label, count, reloadBtn);
+  }
   item.addEventListener("contextmenu", (ev) => {
     ev.preventDefault();
     openContextMenu(ev as MouseEvent, s.id);
@@ -467,15 +590,72 @@ function renderSources() {
     plabel.textContent = parentLabel(s.parent);
     plabel.title = s.parent;
 
-    const pcount = document.createElement("span");
-    pcount.className = "count";
-    pcount.textContent = `${children.length}`;
-
     const groupWrap = document.createElement("div");
     groupWrap.className = "tree-group";
     groupWrap.dataset.parentKey = s.parent;
 
-    parentRow.append(twisty, pcb, plabel, pcount);
+    // 接続先のテーブル数は表示しない（要件）。件数はツールチップにのみ残す。
+    plabel.title = `${s.parent}\n(${children.length} テーブル)`;
+    parentRow.append(twisty, pcb, plabel);
+    if (manageMode) {
+      const parentKey = s.parent;
+      const totalRecords = children.reduce((a, c) => a + c.record_count, 0);
+      const lastSuccess = children.map((c) => c.last_success_at).filter(Boolean).sort().pop() ?? null;
+      const hasError = children.some((c) => c.status === "error");
+      // 配下で更新間隔が揃っているときだけ数値を出す（揃っていなければ空欄＝一括設定用）。
+      const intervals = new Set(children.map((c) => c.refresh_interval));
+      const commonMinutes = intervals.size === 1 ? Math.max(1, Math.round([...intervals][0] / 60)) : null;
+
+      const ptype = document.createElement("span");
+      ptype.className = "m-type";
+      ptype.textContent = typeLabel(children[0].type_);
+      ptype.title = `${children.length} 個のテーブル: ${children.map((c) => c.name).join(", ")}`;
+
+      const ptotal = document.createElement("span");
+      ptotal.className = "count m-count total";
+      ptotal.textContent = String(totalRecords);
+      ptotal.title = `配下 ${children.length} テーブルの合計件数`;
+
+      const plast = document.createElement("span");
+      plast.className = "m-last" + (hasError ? " err" : "");
+      plast.textContent = shortTimestamp(lastSuccess);
+      plast.title = hasError ? `配下に更新失敗中のテーブルがあります（最新の成功: ${lastSuccess ?? "なし"}）` : `配下で最も新しい成功: ${lastSuccess ?? "なし"}`;
+
+      const pinterval = makeIntervalInput(commonMinutes, async (m) => {
+        for (const c of children) {
+          await invoke("set_refresh_interval", { id: c.id, seconds: m * 60 });
+          c.refresh_interval = m * 60;
+        }
+        renderSources();
+      }, parentRow);
+
+      const pactions = document.createElement("span");
+      pactions.className = "m-actions";
+      pactions.append(
+        makeManageButton("⟳", "配下のテーブルをすべて再読込", async () => {
+          resultInfo.textContent = "リロード中…";
+          try {
+            await invoke("reload_sources", { sourceIds: children.map((c) => c.id) });
+          } catch (e) {
+            resultInfo.textContent = "リロード失敗: " + String(e);
+          }
+          await refreshSidebar();
+          await runSearch();
+        }),
+        makeManageButton("⚙", "この接続先の接続設定を編集", () => openParentSettingsDialog(parentKey)),
+        makeManageButton("🗑", "配下のテーブルをすべて削除", async () => {
+          const names = children.map((c) => c.name).join("、");
+          if (!await confirmDelete(`「${parentLabel(parentKey)}」配下の ${children.length} 個のテーブルをすべて削除しますか？\n（${names}）\nキャッシュも消えます。`)) return;
+          for (const c of children) {
+            await invoke("delete_source", { id: c.id });
+            selectedSourceIds.delete(c.id);
+          }
+          await loadSources();
+        }, true),
+      );
+
+      parentRow.append(ptype, ptotal, plast, pinterval, pactions);
+    }
     parentRow.draggable = true;
 
     let clickTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2864,79 +3044,6 @@ $<HTMLButtonElement>("sp-tab-teams").onclick = async () => {
 $<HTMLButtonElement>("sp-picker-cancel").onclick = () => $<HTMLDialogElement>("sp-picker").close();
 
 // ============================================================
-// データソース管理ダイアログ（テーブルの削除・更新間隔 + 編集/複製へのショートカット）
-// ============================================================
-const manageDialog = $<HTMLDialogElement>("manage-dialog");
-const manageRows = $<HTMLTableSectionElement>("manage-rows");
-
-function renderManageRows() {
-  manageRows.innerHTML = "";
-  if (sources.length === 0) {
-    const tr = document.createElement("tr");
-    const td = document.createElement("td");
-    td.colSpan = 5;
-    td.className = "manage-empty";
-    td.textContent = "データソースがありません。";
-    tr.appendChild(td);
-    manageRows.appendChild(tr);
-    return;
-  }
-  for (const s of sources) {
-    const tr = document.createElement("tr");
-
-    const nameTd = document.createElement("td");
-    nameTd.textContent = s.name;
-    const typeTd = document.createElement("td");
-    typeTd.textContent = s.type_;
-    const countTd = document.createElement("td");
-    countTd.className = "count";
-    countTd.textContent = String(s.record_count);
-
-    const intervalTd = document.createElement("td");
-    const intervalInput = document.createElement("input");
-    intervalInput.type = "number";
-    intervalInput.className = "interval";
-    intervalInput.min = "1";
-    intervalInput.value = String(Math.max(1, Math.round(s.refresh_interval / 60)));
-    intervalInput.onchange = async () => {
-      const minutes = Math.max(1, parseInt(intervalInput.value, 10) || 1);
-      intervalInput.value = String(minutes);
-      await invoke("set_refresh_interval", { id: s.id, seconds: minutes * 60 });
-      s.refresh_interval = minutes * 60;
-    };
-    intervalTd.appendChild(intervalInput);
-
-    const actionsTd = document.createElement("td");
-    actionsTd.className = "row-actions";
-    const editBtn = document.createElement("button");
-    editBtn.className = "btn";
-    editBtn.textContent = "編集";
-    editBtn.onclick = async () => { manageDialog.close(); await openEditDialog(s.id); };
-    const delBtn = document.createElement("button");
-    delBtn.className = "btn danger";
-    delBtn.textContent = "削除";
-    delBtn.onclick = async () => {
-      if (!await confirmDelete(`「${s.name}」を削除しますか？\n（キャッシュも消えます）`)) return;
-      await invoke("delete_source", { id: s.id });
-      selectedSourceIds.delete(s.id);
-      await loadSources();
-      renderManageRows();
-    };
-    actionsTd.append(editBtn, delBtn);
-
-    tr.append(nameTd, typeTd, countTd, intervalTd, actionsTd);
-    manageRows.appendChild(tr);
-  }
-}
-
-$<HTMLButtonElement>("manage").onclick = () => {
-  renderManageRows();
-  manageDialog.showModal();
-};
-$<HTMLButtonElement>("manage-close").onclick = () => manageDialog.close();
-$<HTMLButtonElement>("manage-close-x").onclick = () => manageDialog.close();
-
-// ============================================================
 // 設定ダイアログ（自動起動 / テーマ / ズーム。要件 §9-5, REQ-UI-01, REQ-UI-02）
 // ============================================================
 $<HTMLButtonElement>("settings").onclick = async () => {
@@ -3108,7 +3215,9 @@ sidebarResizerEl.addEventListener("mousedown", (ev) => {
   sidebarResizerEl.classList.add("dragging");
   document.body.style.cursor = "col-resize";
   function onMove(e: MouseEvent) {
-    const w = Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, startW + (e.clientX - startX)));
+    // 管理モードでは列が多いぶん上限を広げる。
+    const maxW = manageMode ? Math.max(SIDEBAR_MAX_W, window.innerWidth - 320) : SIDEBAR_MAX_W;
+    const w = Math.min(maxW, Math.max(SIDEBAR_MIN_W, startW + (e.clientX - startX)));
     sidebarEl.style.width = w + "px";
   }
   function onUp() {
@@ -3117,6 +3226,12 @@ sidebarResizerEl.addEventListener("mousedown", (ev) => {
     sidebarResizerEl.classList.remove("dragging");
     document.body.style.cursor = "";
     const w = Math.round(sidebarEl.getBoundingClientRect().width);
+    // 管理モード中の幅は一時的なものなので永続化しない（次回起動時に広いままにならないよう、
+    // 管理モードを抜けたときに復元する幅の方を更新しておく）。
+    if (manageMode) {
+      widthBeforeManage = widthBeforeManage === null ? w : widthBeforeManage;
+      return;
+    }
     void invoke("set_sidebar_width", { width: w }).catch(() => {});
   }
   document.addEventListener("mousemove", onMove);

@@ -131,9 +131,18 @@ body {
   background: transparent;
 }
 .sidebar-resizer:hover, .sidebar-resizer.dragging { background: var(--accent-2); }
-.sidebar-title-row { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
-.sidebar-title { font-weight: 600; color: var(--muted); font-size: 12px; }
-.sidebar-bulk { display: flex; gap: 6px; }
+.sidebar-title-row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.sidebar-title { font-weight: 600; color: var(--muted); font-size: 12px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-bulk { display: flex; gap: 6px; flex: none; }
+
+/* 管理モードのトグル（旧「データソース管理」ダイアログの置き換え） */
+.manage-toggle {
+  flex: none; padding: 2px 8px; font-size: 11px; cursor: pointer;
+  background: var(--panel-2); color: var(--muted);
+  border: 1px solid var(--border); border-radius: 4px;
+}
+.manage-toggle:hover { color: var(--text); border-color: var(--accent-2); }
+.manage-toggle.active { background: var(--accent); color: #fff; border-color: var(--accent-2); }
 .link-btn { background: none; border: none; color: var(--accent-2); cursor: pointer; font-size: 11px; padding: 0; }
 .link-btn:hover { text-decoration: underline; }
 .source-filter {
@@ -143,6 +152,43 @@ body {
 .source-filter:focus { outline: none; border-color: var(--accent-2); }
 
 .sources { display: flex; flex-direction: column; gap: 1px; }
+
+/* ---- 管理モード（サイドバー上で更新間隔・削除等まで操作する）----
+   名前欄だけが可変幅、右側の管理列は固定幅にすることで、ツリーのインデントに
+   関係なく見出し行（.manage-head）と縦位置が揃う。 */
+.manage-head {
+  display: flex; align-items: center; gap: 4px;
+  padding: 2px 2px 4px; margin-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted); font-size: 11px; font-weight: 600;
+}
+.manage-head[hidden] { display: none; }
+.manage-head .m-name { flex: 1; min-width: 0; }
+.m-type { flex: none; width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
+.m-count { flex: none; width: 60px; text-align: right; }
+.m-count.total { font-weight: 600; color: var(--text); }
+.m-last { flex: none; width: 92px; text-align: right; color: var(--muted); font-size: 11px; }
+.m-last.err { color: #f85149; }
+.m-actions { flex: none; display: flex; gap: 2px; width: 74px; justify-content: flex-end; }
+input.m-interval {
+  flex: none; width: 56px; padding: 1px 4px; text-align: right;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 3px;
+  color: var(--text); font-size: 11px;
+}
+input.m-interval:focus { outline: none; border-color: var(--accent-2); }
+/* 見出しの間隔列は入力欄と同じ幅にしておかないと、右側の固定列が横にずれる。 */
+.manage-head .m-interval { flex: none; width: 56px; text-align: right; }
+.m-btn {
+  width: 22px; height: 20px; line-height: 18px; padding: 0; text-align: center;
+  background: transparent; border: 1px solid transparent; border-radius: 3px;
+  color: var(--muted); cursor: pointer; font-size: 11px;
+}
+.m-btn:hover { background: var(--panel-2); border-color: var(--border); color: var(--text); }
+.m-btn.danger:hover { background: #7a2a2a; border-color: #a33; color: #fff; }
+/* 管理モードでは行が詰まりすぎないよう高さを揃え、テーブル行と接続先行で
+   要素間の gap も揃える（揃えないと固定幅の管理列が行ごとに横ずれする）。 */
+.sidebar.manage .source-item, .sidebar.manage .tree-parent { padding-top: 2px; padding-bottom: 2px; gap: 4px; }
+.sidebar.manage .source-item .mini-btn { display: none; }
 
 /* ツリー: グループ・親（ファイル/サーバー）ノード */
 .tree-group { display: flex; flex-direction: column; gap: 1px; position: relative; border-radius: 3px; }
@@ -325,15 +371,8 @@ tr.drop-target-after td::after { bottom: -1px; }
 .dialog input[type="checkbox"] { width: auto; margin: 0; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
-.manage-table { width: 100%; border-collapse: collapse; min-width: 460px; }
-.manage-table th, .manage-table td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--border); font-weight: normal; }
-.manage-table th { color: var(--muted); font-size: 12px; }
-.manage-table td.count { color: var(--muted); }
-.manage-table input.interval { width: 70px; padding: 4px 6px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; color: var(--text); }
 .btn.danger { background: #5a1d1d; border-color: #7a2a2a; }
 .btn.danger:hover { background: #7a2a2a; }
-.manage-empty { color: var(--muted); padding: 10px 0; }
-.manage-table .row-actions { display: flex; gap: 4px; }
 .column-map-table select {
   width: 100%; padding: 5px 6px; background: var(--panel-2); border: 1px solid var(--border);
   border-radius: 4px; color: var(--text);

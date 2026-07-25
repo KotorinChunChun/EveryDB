@@ -16,7 +16,6 @@
         <div id="preset-panel" class="history-panel" hidden></div>
         <button id="export" class="btn" title="現在の検索結果を TSV でエクスポート">TSV出力</button>
         <button id="add" class="btn" title="テーブルを追加（新しい接続先の場合は接続情報もあわせて入力）">＋ テーブル追加</button>
-        <button id="manage" class="btn" title="テーブルの削除・更新間隔の設定（データソース全体の一覧）">データソース管理</button>
         <button id="settings" class="btn" title="アプリ設定">⚙ 設定</button>
       </header>
 
@@ -28,8 +27,18 @@
               <button id="select-all" class="link-btn" title="全選択">全選択</button>
               <button id="select-none" class="link-btn" title="全解除">全解除</button>
             </div>
+            <button id="manage-toggle" class="manage-toggle" type="button" aria-pressed="false"
+                    title="管理モード: 幅を広げて更新間隔・最終更新日時・更新/編集/削除ボタンを表示します">管理</button>
           </div>
           <input id="source-filter" class="source-filter" type="text" placeholder="データソースを絞り込み…" autocomplete="off" spellcheck="false" />
+          <div id="manage-head" class="manage-head" hidden>
+            <span class="m-name">名前</span>
+            <span class="m-type">種別</span>
+            <span class="m-count">件数</span>
+            <span class="m-last">最終更新</span>
+            <span class="m-interval">間隔(分)</span>
+            <span class="m-actions">操作</span>
+          </div>
           <div id="sources" class="sources"></div>
           <div id="status" class="status"></div>
         </aside>
@@ -169,21 +178,6 @@
       <div class="dialog-actions">
         <button id="sp-picker-cancel" class="btn">キャンセル</button>
         <button id="sp-picker-add" class="btn primary" hidden>選択した項目を一括追加</button>
-      </div>
-    </dialog>
-
-    <!-- データソース管理ダイアログ（全テーブルの一覧） -->
-    <dialog id="manage-dialog" class="dialog wide">
-      <button id="manage-close-x" class="dialog-close-x" type="button" title="閉じる">×</button>
-      <h3>データソース管理</h3>
-      <table class="manage-table">
-        <thead>
-          <tr><th>名前</th><th>種別</th><th>件数</th><th>更新間隔(分)</th><th></th></tr>
-        </thead>
-        <tbody id="manage-rows"></tbody>
-      </table>
-      <div class="dialog-actions">
-        <button id="manage-close" class="btn">閉じる</button>
       </div>
     </dialog>
 
