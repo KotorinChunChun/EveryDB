@@ -1049,7 +1049,7 @@ function renderHead() {
       cell.addEventListener("dragover", (ev) => {
         handleColDragOver(ev as DragEvent, cell);
       });
-      cell.addEventListener("drop", (ev) => {
+      cell.addEventListener("drop", async (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
         const rect = cell.getBoundingClientRect();
@@ -1064,8 +1064,49 @@ function renderHead() {
         if (isAfter) targetIndex += 1;
         remainingOrder.splice(targetIndex, 0, gridDragSrcCol);
         gridColumnOrder = remainingOrder;
+        // 即座にグリッドへ反映する
+        rebuildColumns();
         renderHead();
         renderRows();
+
+        // バックグラウンドで全データソースの column_order を更新・保存する
+        const displayOrder = remainingOrder;
+        for (const s of sources) {
+          try {
+            const detail = await invoke<SourceDetail>("get_source_detail", { id: s.id });
+            const cfg = { ...detail.config } as Record<string, unknown>;
+            const aliases = (cfg.column_aliases as Record<string, string> | undefined) ?? {};
+            // このソースのフィールドを集める（rows の fields キーから逆引き）
+            const sourceFieldsSet = new Set<string>();
+            for (const r of rows) {
+              if (r.source_id !== s.id) continue;
+              for (const k of Object.keys(r.fields)) {
+                // 表示名 → 実フィールド名の逆引き
+                const rawName = Object.entries(aliases).find(([, v]) => v === k)?.[0] ?? k;
+                sourceFieldsSet.add(rawName);
+              }
+            }
+            if (sourceFieldsSet.size === 0) continue; // 検索結果にこのソースが無い
+            const sourceFields = [...sourceFieldsSet];
+
+            // 表示名順でソートして column_order を決定する
+            const newOrder = sourceFields.sort((a, b) => {
+              const dispA = aliases[a] ?? a;
+              const dispB = aliases[b] ?? b;
+              const idxA = displayOrder.indexOf(dispA);
+              const idxB = displayOrder.indexOf(dispB);
+              return (idxA === -1 ? 999999 : idxA) - (idxB === -1 ? 999999 : idxB);
+            });
+
+            const oldOrder = (cfg.column_order as string[] | undefined) ?? [];
+            if (JSON.stringify(oldOrder) !== JSON.stringify(newOrder)) {
+              cfg.column_order = newOrder;
+              await invoke("update_source", { id: s.id, name: detail.name, configJson: JSON.stringify(cfg) });
+            }
+          } catch (err) {
+            console.error(`列並び順更新失敗 (source ${s.id}):`, err);
+          }
+        }
       });
     }
     const handle = document.createElement("div");
@@ -1166,16 +1207,28 @@ async function openColumnContextMenu(_ev: MouseEvent, columnName: string) {
   $<HTMLInputElement>("cm-display-name").value = columnName;
   $<HTMLInputElement>("cm-visible").checked = true;
   $<HTMLTableSectionElement>("column-map-rows").innerHTML = "";
-  hint.textContent = "読み込み中…";
+  hint.textContent = "";
   dlg.showModal();
 
+  // 検索結果にあるソースIDを全て収集する
   const sourceIds = Array.from(new Set(rows.map((r) => r.source_id)));
   columnMapRows = [];
   for (const sid of sourceIds) {
     try {
       const detail = await invoke<SourceDetail>("get_source_detail", { id: sid });
-      const fields = await invoke<string[]>("preview_source_fields_by_id", { id: sid });
       const aliases = (detail.config.column_aliases as Record<string, string> | undefined) ?? {};
+      // rows のフィールドキー（表示名）からこのソースの実フィールド名を収集する
+      const fieldSet = new Set<string>();
+      for (const r of rows) {
+        if (r.source_id !== sid) continue;
+        for (const displayName of Object.keys(r.fields)) {
+          // 表示名 → 実フィールド名への逆引き
+          const rawName = Object.entries(aliases).find(([, v]) => v === displayName)?.[0] ?? displayName;
+          fieldSet.add(rawName);
+        }
+      }
+      const fields = [...fieldSet];
+      // columnName に対応する実フィールドを特定する
       let currentField: string | null = null;
       for (const f of fields) {
         if ((aliases[f] ?? f) === columnName) { currentField = f; break; }
