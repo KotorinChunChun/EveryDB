@@ -2541,6 +2541,12 @@ const JSON_FILTERS = [{ name: "JSON ファイル", extensions: ["json"] }];
 const ENTRA_APPS_URL = "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade";
 const NOTION_INTEGRATIONS_URL = "https://www.notion.so/my-integrations";
 
+/** ブラウザ選択の共通選択肢（要件: 対応ブラウザに Vivaldi を追加。Chromium系なので既存の chrome 等と同じ扱い）。 */
+const BROWSER_OPTIONS = [
+  { value: "chrome", label: "Google Chrome" }, { value: "edge", label: "Microsoft Edge" },
+  { value: "brave", label: "Brave" }, { value: "vivaldi", label: "Vivaldi" }, { value: "firefox", label: "Firefox" },
+];
+
 const GRAPH_AUTH_FIELDS: FieldDef[] = [
   { key: "tenant_id", label: "テナントID", kind: "text", placeholder: "ディレクトリ(テナント) ID", helpUrl: ENTRA_APPS_URL },
   { key: "client_id", label: "クライアントID", kind: "text", placeholder: "アプリケーション(クライアント) ID", helpUrl: ENTRA_APPS_URL },
@@ -2574,18 +2580,16 @@ const TYPE_DEFS: TypeDef[] = [
   { value: "graph_onedrive", label: "OneDrive", fields: [...GRAPH_AUTH_FIELDS, { key: "user", label: "対象ユーザー(UPN/メール)", kind: "text", placeholder: "user@example.com" }] },
   { value: "graph_planner", label: "Teams タスク & Planner", fields: [...GRAPH_AUTH_FIELDS, { key: "group_id", label: "対象チーム(グループ)のID", kind: "text", placeholder: "Entra管理センター等で確認したグループID" }] },
   { value: "browser_history", label: "ブラウザ: 閲覧履歴", fields: [
-    { key: "browser", label: "ブラウザ", kind: "select", options: [
-      { value: "chrome", label: "Google Chrome" }, { value: "edge", label: "Microsoft Edge" },
-      { value: "brave", label: "Brave" }, { value: "firefox", label: "Firefox" },
-    ] },
+    { key: "browser", label: "ブラウザ", kind: "select", options: BROWSER_OPTIONS },
     { key: "path", label: "History / places.sqlite のパス", kind: "text", placeholder: "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\History", browse: "file" },
   ] },
   { value: "browser_bookmarks", label: "ブラウザ: ブックマーク", fields: [
-    { key: "browser", label: "ブラウザ", kind: "select", options: [
-      { value: "chrome", label: "Google Chrome" }, { value: "edge", label: "Microsoft Edge" },
-      { value: "brave", label: "Brave" }, { value: "firefox", label: "Firefox" },
-    ] },
+    { key: "browser", label: "ブラウザ", kind: "select", options: BROWSER_OPTIONS },
     { key: "path", label: "Bookmarks / places.sqlite のパス", kind: "text", placeholder: "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Bookmarks", browse: "file" },
+  ] },
+  { value: "browser_downloads", label: "ブラウザ: ダウンロード履歴", fields: [
+    { key: "browser", label: "ブラウザ", kind: "select", options: BROWSER_OPTIONS },
+    { key: "path", label: "History / places.sqlite のパス", kind: "text", placeholder: "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\History（Chromium系は履歴と同じファイル）", browse: "file" },
   ] },
   { value: "google_sheets", label: "Google スプレッドシート", fields: [
     { key: "key_path", label: "サービスアカウント鍵(JSON)のパス", kind: "text", placeholder: "C:\\path\\to\\service-account.json", browse: "file", dialogFilters: JSON_FILTERS, helpUrl: "https://console.cloud.google.com/apis/credentials" },
@@ -2642,7 +2646,7 @@ const TYPE_DEFS: TypeDef[] = [
 type ParentKind = "path" | "sharepoint" | "notion" | "graph365" | "postgres" | "mysql" | "box" | "none";
 const PATH_GROUPED_TYPES = new Set([
   "csv", "folder", "ime_msime", "ime_google", "excel_table", "excel_range", "excel_sheets",
-  "sqlite", "accdb", "browser_history", "browser_bookmarks",
+  "sqlite", "accdb", "browser_history", "browser_bookmarks", "browser_downloads",
 ]);
 
 function parentKindOf(type_: string): ParentKind {

@@ -64,6 +64,7 @@ pub fn build_connector(type_: &str, config_json: &str) -> Result<Box<dyn Connect
         "graph_sharepoint_library" => Ok(Box::new(from_str::<GraphSharePointLibraryConnector>(config_json)?)),
         "browser_history" => Ok(Box::new(from_str::<BrowserHistoryConnector>(config_json)?)),
         "browser_bookmarks" => Ok(Box::new(from_str::<BrowserBookmarksConnector>(config_json)?)),
+        "browser_downloads" => Ok(Box::new(from_str::<BrowserDownloadsConnector>(config_json)?)),
         "graph_entra_devices" => Ok(Box::new(from_str::<GraphDevicesConnector>(config_json)?)),
         "graph_intune_devices" => Ok(Box::new(from_str::<GraphIntuneDevicesConnector>(config_json)?)),
         "graph_licenses" => Ok(Box::new(from_str::<GraphLicensesConnector>(config_json)?)),
@@ -798,6 +799,30 @@ mod tests {
         }));
         println!("edge bookmarks = {}", bm.len());
         assert!(!bm.is_empty());
+    }
+
+    // 実行: cargo test -- --ignored browser_live
+    #[test]
+    #[ignore = "requires a real Chrome/Edge profile on this machine with download history"]
+    fn browser_live_downloads() {
+        let local = std::env::var("LOCALAPPDATA").expect("LOCALAPPDATA");
+        let dl = fetch("browser_downloads", serde_json::json!({
+            "browser": "chrome", "path": format!("{local}\\Google\\Chrome\\User Data\\Default\\History")
+        }));
+        println!("chrome downloads = {}", dl.len());
+        assert!(!dl.is_empty());
+    }
+
+    #[test]
+    fn basename_of_handles_windows_and_unix_separators() {
+        assert_eq!(basename_of(r"C:\Users\a\Downloads\file.pdf"), "file.pdf");
+        assert_eq!(basename_of("/home/a/file.pdf"), "file.pdf");
+        assert_eq!(basename_of("file.pdf"), "file.pdf");
+    }
+
+    #[test]
+    fn file_uri_to_path_decodes_percent_and_strips_scheme() {
+        assert_eq!(file_uri_to_path("file:///C:/Users/a/My%20File.pdf"), r"C:\Users\a\My File.pdf");
     }
 
     #[test]
@@ -1924,7 +1949,7 @@ const HISTORY_ROW_CAP: usize = 10_000;
 
 #[derive(Deserialize)]
 struct BrowserHistoryConnector {
-    /// "chrome" | "edge" | "brave" | "firefox"
+    /// "chrome" | "edge" | "brave" | "vivaldi" | "firefox"
     browser: String,
     path: String,
     #[serde(flatten)]
@@ -2000,7 +2025,7 @@ impl BrowserHistoryConnector {
 
 #[derive(Deserialize)]
 struct BrowserBookmarksConnector {
-    /// "chrome" | "edge" | "brave" | "firefox"
+    /// "chrome" | "edge" | "brave" | "vivaldi" | "firefox"
     browser: String,
     path: String,
     #[serde(flatten)]
@@ -2092,6 +2117,139 @@ impl BrowserBookmarksConnector {
         })();
         let _ = std::fs::remove_file(&tmp);
         result
+    }
+}
+
+/// パス文字列（Windows/Unix いずれの区切りも）からファイル名部分だけを取り出す。
+fn basename_of(path: &str) -> String {
+    path.rsplit(['\\', '/']).next().unwrap_or(path).to_string()
+}
+
+/// `file://` URI の簡易パーセントデコード（英数字と一般的な記号のみ対象の最小実装）。
+/// 対象は Firefox のダウンロード履歴の `destinationFileURI` で、スペース等が %XX 形式になる。
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(hex) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(hex);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// `file:///C:/Users/...` のような URI をローカルパスへ変換する（Windows 向けの簡易実装）。
+fn file_uri_to_path(uri: &str) -> String {
+    let decoded = percent_decode(uri);
+    let stripped = decoded.strip_prefix("file:///").or_else(|| decoded.strip_prefix("file://")).unwrap_or(&decoded);
+    stripped.replace('/', "\\")
+}
+
+#[derive(Deserialize)]
+struct BrowserDownloadsConnector {
+    /// "chrome" | "edge" | "brave" | "vivaldi" | "firefox"（要件: Vivaldi 対応）
+    browser: String,
+    path: String,
+    #[serde(flatten)]
+    common: CommonCfg,
+}
+
+impl Connector for BrowserDownloadsConnector {
+    fn fetch(&self) -> Result<Vec<Record>> {
+        let tmp = copy_locked_sqlite(&self.path)?;
+        let result = (|| -> Result<Vec<Record>> {
+            let conn = Connection::open_with_flags(&tmp, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+            if self.browser == "firefox" {
+                self.fetch_firefox(&conn)
+            } else {
+                self.fetch_chromium(&conn)
+            }
+        })();
+        let _ = std::fs::remove_file(&tmp);
+        result
+    }
+}
+
+impl BrowserDownloadsConnector {
+    /// Chromium 系（Chrome/Edge/Brave/Vivaldi）は履歴と同じ `History` ファイル内の
+    /// `downloads` + `downloads_url_chains` テーブルを使う（別ファイルではない）。
+    /// `state` の意味は Chromium の `download_item.h`（IN_PROGRESS=0, COMPLETE=1,
+    /// CANCELLED=2, INTERRUPTED=4）に基づく best-effort のラベル付けで、バージョンにより
+    /// ずれる可能性があるため未知の値は番号のまま表示する。
+    fn fetch_chromium(&self, conn: &Connection) -> Result<Vec<Record>> {
+        let mut stmt = conn.prepare(
+            "SELECT d.id, d.target_path, d.start_time, d.end_time, d.received_bytes, d.total_bytes, d.state,
+                    (SELECT url FROM downloads_url_chains WHERE id = d.id ORDER BY chain_index DESC LIMIT 1) AS url
+             FROM downloads d ORDER BY d.start_time DESC LIMIT ?1",
+        )?;
+        let mut out = Vec::new();
+        let mut rows = stmt.query([HISTORY_ROW_CAP as i64])?;
+        while let Some(r) = rows.next()? {
+            let target_path: String = r.get(1)?;
+            let start_us: i64 = r.get(2)?;
+            let end_us: i64 = r.get(3)?;
+            let received: i64 = r.get(4)?;
+            let total: i64 = r.get(5)?;
+            let state: i64 = r.get(6)?;
+            let url: String = r.get::<_, Option<String>>(7)?.unwrap_or_default();
+            let state_label = match state {
+                0 => "ダウンロード中".to_string(),
+                1 => "完了".to_string(),
+                2 => "キャンセル".to_string(),
+                4 => "中断".to_string(),
+                other => format!("不明({other})"),
+            };
+            let size = if total > 0 { total } else { received };
+            let pairs = vec![
+                ("ファイル名".to_string(), basename_of(&target_path)),
+                ("保存先パス".to_string(), target_path.clone()),
+                ("URL".to_string(), url.clone()),
+                ("状態".to_string(), state_label),
+                ("サイズ(バイト)".to_string(), size.to_string()),
+                ("開始日時".to_string(), fmt_epoch(webkit_micros_to_unix_secs(start_us))),
+                ("完了日時".to_string(), if end_us > 0 { fmt_epoch(webkit_micros_to_unix_secs(end_us)) } else { String::new() }),
+            ];
+            out.push(make_record(pairs, &target_path, &self.common));
+        }
+        Ok(out)
+    }
+
+    /// Firefox は `places.sqlite` の `moz_annos`(`downloads/destinationFileURI`) を
+    /// `moz_places` と結合して復元する（ブックマークと同じ「簡易版」の考え方）。
+    fn fetch_firefox(&self, conn: &Connection) -> Result<Vec<Record>> {
+        let mut stmt = conn.prepare(
+            "SELECT p.url, p.title, a.content, a.dateAdded
+             FROM moz_annos a
+             JOIN moz_anno_attributes attr ON a.anno_attribute_id = attr.id
+             JOIN moz_places p ON a.place_id = p.id
+             WHERE attr.name = 'downloads/destinationFileURI'
+             ORDER BY a.dateAdded DESC",
+        )?;
+        let mut out = Vec::new();
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            let url: String = r.get(0)?;
+            let title: String = r.get::<_, Option<String>>(1)?.unwrap_or_default();
+            let dest_uri: String = r.get(2)?;
+            let added_us: i64 = r.get::<_, Option<i64>>(3)?.unwrap_or(0);
+            let dest_path = file_uri_to_path(&dest_uri);
+            let pairs = vec![
+                ("ファイル名".to_string(), basename_of(&dest_path)),
+                ("保存先パス".to_string(), dest_path.clone()),
+                ("URL".to_string(), url.clone()),
+                ("タイトル".to_string(), title),
+                ("追加日時".to_string(), fmt_epoch(added_us / 1_000_000)),
+            ];
+            out.push(make_record(pairs, &dest_path, &self.common));
+        }
+        Ok(out)
     }
 }
 
