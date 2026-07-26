@@ -119,7 +119,7 @@ body {
   background: var(--panel);
   border-right: 1px solid var(--border);
   padding: 10px;
-  overflow-y: auto;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   flex: none;
@@ -172,7 +172,7 @@ kbd {
 .source-filter-clear:hover { background: var(--panel); color: var(--text); }
 .source-filter-clear[hidden] { display: none; }
 
-.sources { display: flex; flex-direction: column; gap: 1px; }
+.sources { display: flex; flex-direction: column; gap: 1px; flex: 1; min-height: 0; overflow-y: auto; padding-right: 2px; }
 
 /* ---- 管理モード（サイドバー上で更新間隔・削除等まで操作する）----
    名前欄だけが可変幅、右側の管理列は固定幅にすることで、ツリーのインデントに
