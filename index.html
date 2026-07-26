@@ -100,7 +100,7 @@
         <h3 id="add-dialog-title">テーブル追加</h3>
         <div id="f-last-loaded" class="last-loaded-hint" hidden></div>
         <div class="name-open-row">
-          <label class="name-label">表示名 <input id="f-name" type="text" required /></label>
+          <label class="name-label">表示名 <input id="f-name" type="text" /></label>
           <button type="button" id="f-open-table" class="btn" title="ブラウザ等でこのテーブルを直接開く" hidden>↗ テーブルを開く</button>
         </div>
 
@@ -139,8 +139,8 @@
 
         <div class="dialog-actions">
           <span id="add-save-status" class="reload-status" hidden><span class="spinner"></span>保存中…（初回取得のため数秒かかる場合があります）</span>
-          <button value="cancel" class="btn" formnovalidate>キャンセル</button>
-          <button value="ok" class="btn primary">保存してリロード</button>
+          <button id="add-cancel" type="button" value="cancel" class="btn" formnovalidate>キャンセル</button>
+          <button type="submit" value="ok" class="btn primary">保存してリロード</button>
         </div>
       </form>
     </dialog>
@@ -261,8 +261,8 @@
         <label>パスワード <input id="mp-verify-pw" type="password" autocomplete="current-password" required /></label>
         <div id="mp-verify-error" class="form-error"></div>
         <div class="dialog-actions">
-          <button value="cancel" class="btn" formnovalidate>キャンセル</button>
-          <button value="ok" class="btn primary">解錠</button>
+          <button id="mp-verify-cancel" type="button" value="cancel" class="btn" formnovalidate>キャンセル</button>
+          <button type="submit" value="ok" class="btn primary">解錠</button>
         </div>
       </form>
     </dialog>

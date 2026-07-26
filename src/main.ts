@@ -137,7 +137,7 @@ async function ensureUnlocked(): Promise<boolean> {
     $<HTMLFormElement>("mp-verify-form").onsubmit = async (e) => {
       e.preventDefault();
       const submitter = (e as SubmitEvent).submitter as HTMLButtonElement | null;
-      if (submitter?.value === "cancel") { dlg.close(); resolve(false); return; }
+      if (submitter?.value === "cancel") { dlg.close("cancel"); resolve(false); return; }
       try {
         const ok = await invoke<boolean>("mp_verify", { password: pw.value });
         if (ok) {
@@ -151,9 +151,9 @@ async function ensureUnlocked(): Promise<boolean> {
         err.textContent = String(e2);
       }
     };
-    $<HTMLDialogElement>("mp-verify-dialog").querySelector('[value="cancel"]')!.addEventListener(
+    $<HTMLButtonElement>("mp-verify-cancel").addEventListener(
       "click",
-      () => resolve(false),
+      () => { dlg.close("cancel"); resolve(false); },
       { once: true },
     );
   });
@@ -162,9 +162,23 @@ async function ensureUnlocked(): Promise<boolean> {
 // ============================================================
 // データソース一覧（サイドバー）
 // ============================================================
+let initialLoadDone = false;
+
 async function loadSources() {
+  const oldIds = new Set(sources.map((s) => s.id));
   sources = await invoke<SourceInfo[]>("list_sources");
-  if (selectedSourceIds.size === 0) sources.forEach((s) => selectedSourceIds.add(s.id));
+  if (!initialLoadDone) {
+    initialLoadDone = true;
+    if (selectedSourceIds.size === 0) {
+      sources.forEach((s) => selectedSourceIds.add(s.id));
+    }
+  } else {
+    for (const s of sources) {
+      if (!oldIds.has(s.id)) {
+        selectedSourceIds.add(s.id);
+      }
+    }
+  }
   renderSources();
   runSearch();
 }
@@ -2921,16 +2935,134 @@ function getFieldValue(f: FieldDef): unknown {
 let nameManuallyEdited = false;
 
 function basenameOf(path: string): string {
-  const parts = path.split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] || path;
+  const norm = normalizePath(path);
+  const parts = norm.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || norm;
 }
 
-/** 追加ダイアログでファイルパスを入力/選択した際、表示名が未編集ならファイル名を自動入力する。 */
-function maybeAutoFillName(path: string) {
-  if (dialogMode !== "add" || nameManuallyEdited) return;
-  const trimmed = normalizePath(path);
-  if (!trimmed) return;
-  $<HTMLInputElement>("f-name").value = basenameOf(trimmed);
+/** データソース種別と接続設定値から、推奨される表示名を導出する。 */
+function deriveDefaultName(type_: string, config: Record<string, unknown>): string {
+  const str = (key: string): string => String(config[key] ?? "").trim();
+  const base = (val: string): string => basenameOf(val);
+
+  switch (type_) {
+    case "csv":
+    case "sqlite":
+    case "accdb":
+    case "folder":
+    case "ime_msime":
+    case "ime_google":
+    case "browser_history":
+    case "browser_bookmarks":
+    case "browser_downloads": {
+      const p = str("path");
+      if (p) return base(p);
+      break;
+    }
+    case "excel_table": {
+      const p = str("path");
+      const t = str("table");
+      if (p && t) return `${base(p)}: ${t}`;
+      if (p) return base(p);
+      break;
+    }
+    case "excel_range": {
+      const p = str("path");
+      const s = str("sheet");
+      const r = str("range");
+      if (p && s && r) return `${base(p)}: ${s}!${r}`;
+      if (p && s) return `${base(p)}: ${s}`;
+      if (p) return base(p);
+      break;
+    }
+    case "excel_sheets": {
+      const p = str("path");
+      if (p) return `${base(p)} (シート一覧)`;
+      break;
+    }
+    case "web_page":
+    case "ical_calendar": {
+      const u = str("url");
+      if (u) {
+        try {
+          const parsed = new URL(u);
+          const p = parsed.pathname.split("/").filter(Boolean);
+          const last = p[p.length - 1];
+          return last ? `${parsed.hostname}/${last}` : parsed.hostname;
+        } catch {
+          return base(u);
+        }
+      }
+      break;
+    }
+    case "graph_sharepoint_list": {
+      const l = str("list_name");
+      if (l) return l;
+      break;
+    }
+    case "graph_sharepoint_library": {
+      const l = str("library_name");
+      if (l) return l;
+      return "ドキュメントライブラリ";
+    }
+    case "postgres":
+    case "mysql": {
+      const db = str("database");
+      const tbl = str("table");
+      if (db && tbl) return `${db}.${tbl}`;
+      if (tbl) return tbl;
+      if (db) return db;
+      break;
+    }
+    case "airtable": {
+      const tbl = str("table");
+      if (tbl) return tbl;
+      break;
+    }
+    case "google_sheets": {
+      const sid = str("spreadsheet_id");
+      const r = str("range");
+      if (sid && r) return `Sheet (${r})`;
+      if (sid) return `Sheet (${sid.slice(0, 8)}...)`;
+      break;
+    }
+    case "notion": {
+      const did = str("database_id");
+      if (did) return `Notion DB (${did.slice(0, 8)}...)`;
+      break;
+    }
+  }
+
+  // 接続設定からの導出に該当しない場合やクラウドAPI系は、種別ラベルをデフォルト値として返す
+  const def = TYPE_DEFS.find((t) => t.value === type_);
+  return def?.label ?? type_;
+}
+
+/** 追加ダイアログ等でデータソース設定・種別の変更時や未入力時に表示名を自動入力・補完する。 */
+function autoFillDefaultName(force: boolean = false) {
+  if (dialogMode !== "add") return;
+  if (!force && nameManuallyEdited) return;
+  const { config } = buildConfigFromFields();
+  const name = deriveDefaultName(typeSel.value, config);
+  if (name) {
+    $<HTMLInputElement>("f-name").value = name;
+  }
+}
+
+/** 追加ダイアログでファイルパスを入力/選択した際、表示名が未編集ならファイル名を自動入力する（互換関数）。 */
+function maybeAutoFillName(_path?: string) {
+  autoFillDefaultName();
+}
+
+/** 接続設定（ファイルパスやテーブル名など必須項目）がすべて入力・選択され確定した際に、自動で後半の列一覧表を再読込する。 */
+function maybeFetchAndRenderFields() {
+  if (dialogMode !== "add" && dialogMode !== "edit") return;
+  const { missingText } = buildConfigFromFields();
+  if (!missingText) {
+    void fetchAndRenderFields();
+  } else {
+    resetRolesEditor();
+  }
 }
 
 function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] = []) {
@@ -2945,6 +3077,10 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
       cb.type = "checkbox";
       cb.id = `fd-${f.key}`;
       cb.checked = prefill ? Boolean(prefill[f.key]) : (f.default ?? false);
+      cb.addEventListener("change", () => {
+        autoFillDefaultName();
+        maybeFetchAndRenderFields();
+      });
       label.append(cb, document.createTextNode(" " + f.label));
     } else if (f.kind === "select") {
       label.textContent = f.label;
@@ -2957,6 +3093,10 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
         sel.appendChild(o);
       }
       if (prefill && typeof prefill[f.key] === "string") sel.value = prefill[f.key] as string;
+      sel.addEventListener("change", () => {
+        autoFillDefaultName();
+        maybeFetchAndRenderFields();
+      });
       label.appendChild(sel);
     } else if (f.kind === "textarea") {
       label.textContent = f.label;
@@ -2966,6 +3106,8 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
       ta.className = "web-page-columns";
       if (f.placeholder) ta.placeholder = f.placeholder;
       if (prefill && typeof prefill[f.key] === "string") ta.value = prefill[f.key] as string;
+      ta.addEventListener("input", () => autoFillDefaultName());
+      ta.addEventListener("change", () => maybeFetchAndRenderFields());
       label.appendChild(ta);
     } else {
       label.textContent = f.label;
@@ -2980,9 +3122,11 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
         if (Array.isArray(v)) input.value = v.join(", ");
         else if (v !== undefined && v !== null) input.value = String(v);
       }
-      if (f.key === "path") {
-        input.addEventListener("input", () => maybeAutoFillName(input.value));
-      }
+      input.addEventListener("input", () => autoFillDefaultName());
+      input.addEventListener("change", () => {
+        autoFillDefaultName();
+        maybeFetchAndRenderFields();
+      });
       if (f.browse || f.helpUrl || f.browserProfile) {
         // 参照ボタン（ファイル/フォルダ選択）、API キー取得ページを開くボタン、
         // ブラウザプロファイル候補を自動検出するボタン。
@@ -3003,7 +3147,8 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
               });
               if (typeof picked === "string") {
                 input.value = picked;
-                if (f.key === "path") maybeAutoFillName(picked);
+                autoFillDefaultName();
+                maybeFetchAndRenderFields();
               }
             } catch (e) {
               console.error("ファイル選択に失敗:", e);
@@ -3038,8 +3183,15 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
   resetRolesEditor();
   updateConfigSummaryBadge();
   updateOpenTableButton();
+  if (dialogMode === "add") {
+    autoFillDefaultName();
+  }
 }
-typeSel.onchange = () => renderTypeFields();
+typeSel.onchange = () => {
+  renderTypeFields();
+  autoFillDefaultName();
+  maybeFetchAndRenderFields();
+};
 
 function buildConfigFromFields(): { config: Record<string, unknown>; missingText: boolean } {
   const def = currentTypeDef();
@@ -3311,20 +3463,29 @@ async function openEditDialog(id: number) {
 }
 
 $<HTMLButtonElement>("add").onclick = () => openAddDialog();
+$<HTMLButtonElement>("add-cancel").onclick = () => dialog.close("cancel");
 
 $<HTMLFormElement>("add-form").addEventListener("submit", async (e) => {
   const submitter = (e as SubmitEvent).submitter as HTMLButtonElement | null;
-  if (submitter && submitter.value === "cancel") return;
+  if (submitter && submitter.value === "cancel") {
+    dialog.close("cancel");
+    return;
+  }
   // method="dialog" のフォームは、既定動作としてこの submit ハンドラの同期部分が終わった時点で
   // ダイアログを閉じてしまう。初回取得（reload_one）が終わるまではダイアログを開いたままにして
   // 読み込み中であることを示すため、既定動作を止める（要件: 保存時のフリーズ感の解消）。
   e.preventDefault();
-  const name = $<HTMLInputElement>("f-name").value.trim();
+  const nameEl = $<HTMLInputElement>("f-name");
+  let name = nameEl.value.trim();
   const { config, missingText } = buildConfigFromFields();
+  if (!name) {
+    name = deriveDefaultName(typeSel.value, config);
+    if (name) nameEl.value = name;
+  }
   if (!name || missingText) return;
   Object.assign(config, collectRoleConfig());
   const okBtn = submitter ?? $<HTMLButtonElement>("add-form").querySelector<HTMLButtonElement>('button[value="ok"]')!;
-  const cancelBtn = $<HTMLButtonElement>("add-form").querySelector<HTMLButtonElement>('button[value="cancel"]')!;
+  const cancelBtn = $<HTMLButtonElement>("add-cancel");
   const statusEl = $<HTMLSpanElement>("add-save-status");
   okBtn.disabled = true;
   cancelBtn.disabled = true;
@@ -3425,6 +3586,8 @@ async function openNotionPicker() {
       item.textContent = db.title || "(無題)";
       item.onclick = () => {
         (document.getElementById("fd-database_id") as HTMLInputElement).value = db.id;
+        autoFillDefaultName();
+        maybeFetchAndRenderFields();
         dlg.close();
       };
       listEl.appendChild(item);
@@ -3457,6 +3620,7 @@ async function openBrowserProfilePicker(target: "history" | "bookmarks", pathInp
       item.onclick = () => {
         pathInput.value = entry.path;
         maybeAutoFillName(entry.path);
+        maybeFetchAndRenderFields();
         dlg.close();
       };
       listEl.appendChild(item);

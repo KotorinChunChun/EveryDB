@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { writeFile } from "@tauri-apps/plugin-fs";
 // ==== 状態 ====
 let sources = [];
 let selectedSourceIds = new Set();
@@ -103,7 +103,7 @@ async function ensureUnlocked() {
             e.preventDefault();
             const submitter = e.submitter;
             if (submitter?.value === "cancel") {
-                dlg.close();
+                dlg.close("cancel");
                 resolve(false);
                 return;
             }
@@ -122,16 +122,29 @@ async function ensureUnlocked() {
                 err.textContent = String(e2);
             }
         };
-        $("mp-verify-dialog").querySelector('[value="cancel"]').addEventListener("click", () => resolve(false), { once: true });
+        $("mp-verify-cancel").addEventListener("click", () => { dlg.close("cancel"); resolve(false); }, { once: true });
     });
 }
 // ============================================================
 // データソース一覧（サイドバー）
 // ============================================================
+let initialLoadDone = false;
 async function loadSources() {
+    const oldIds = new Set(sources.map((s) => s.id));
     sources = await invoke("list_sources");
-    if (selectedSourceIds.size === 0)
-        sources.forEach((s) => selectedSourceIds.add(s.id));
+    if (!initialLoadDone) {
+        initialLoadDone = true;
+        if (selectedSourceIds.size === 0) {
+            sources.forEach((s) => selectedSourceIds.add(s.id));
+        }
+    }
+    else {
+        for (const s of sources) {
+            if (!oldIds.has(s.id)) {
+                selectedSourceIds.add(s.id);
+            }
+        }
+    }
     renderSources();
     runSearch();
 }
@@ -1447,6 +1460,11 @@ function renderRows() {
     }
 }
 function selectCell(row, col) {
+    // セルクリックは mousedown で処理しており、renderRows() が同期的にセル DOM を
+    // 作り直すため、クリックされた要素は click イベント発火前に DOM から切り離される。
+    // その結果 document 側の click リスナー（closeAllContextMenus）まで伝播せず、
+    // 右クリックメニューを出した後に別セルをクリックしても閉じないバグになる。ここで明示的に閉じる。
+    closeAllContextMenus();
     selectedCell = { row, col };
     renderRows();
     $("grid").focus();
@@ -1624,6 +1642,10 @@ function guideNameFor(type_) {
         return "postgresql";
     if (type_ === "mysql")
         return "mysql";
+    if (type_ === "postal_code" || type_ === "corporate_number")
+        return "gov-data";
+    if (type_ === "web_page")
+        return "web-page";
     if (PATH_GROUPED_TYPES.has(type_))
         return "local-files";
     return null;
@@ -1986,7 +2008,13 @@ $("parent-save").onclick = async () => {
             return;
     }
     const saveBtn = $("parent-save");
+    const cancelBtn = $("parent-cancel");
+    const closeXBtn = $("parent-close-x");
+    const statusEl = $("parent-save-status");
     saveBtn.disabled = true;
+    cancelBtn.disabled = true;
+    closeXBtn.disabled = true;
+    statusEl.hidden = false;
     try {
         await invoke("set_parent_label", { parentKey, label: newLabel });
         if (newLabel)
@@ -2047,6 +2075,9 @@ $("parent-save").onclick = async () => {
     }
     finally {
         saveBtn.disabled = false;
+        cancelBtn.disabled = false;
+        closeXBtn.disabled = false;
+        statusEl.hidden = true;
     }
 };
 let parentTableMatched = new Map(); // item.key -> 既存の子ソースID
@@ -2335,31 +2366,108 @@ async function reloadAllSources() {
 $("s-reload").onclick = () => void reloadAllSources();
 // ---- 行数上限の変更で再検索 ----
 $("row-limit").addEventListener("change", () => runSearch());
-// ---- TSV エクスポート（現在の検索結果を保存）----
 function tsvEscape(v) {
     // タブ・改行を空白に置換して 1 セル 1 値を保つ。
     return v.replace(/[\t\r\n]+/g, " ");
 }
-$("export").onclick = async () => {
+/** RFC4180 ふう CSV エスケープ: カンマ・ダブルクオート・改行を含む値だけ引用符で囲む。 */
+function csvEscape(v) {
+    if (/[,"\r\n]/.test(v)) {
+        return `"${v.replace(/"/g, '""')}"`;
+    }
+    return v;
+}
+function buildExportText(format) {
+    if (format === "json") {
+        const data = rows.map((r) => Object.fromEntries(columns.map((c, i) => [c, cellText(r, i)])));
+        return JSON.stringify(data, null, 2);
+    }
+    const escape = format === "csv" ? csvEscape : tsvEscape;
+    const sep = format === "csv" ? "," : "\t";
+    const header = columns.map(escape).join(sep);
+    const lines = rows.map((r) => columns.map((_, c) => escape(cellText(r, c))).join(sep));
+    return [header, ...lines].join("\r\n");
+}
+const EXPORT_FORMAT_INFO = {
+    tsv: { ext: "tsv", filterName: "TSV", extra: ["txt"] },
+    csv: { ext: "csv", filterName: "CSV", extra: [] },
+    json: { ext: "json", filterName: "JSON", extra: [] },
+};
+/** テキストを指定の文字コードのバイト列にする。Shift_JIS はブラウザ標準では変換できないため Rust 側に委ねる。 */
+async function encodeForExport(text, encoding) {
+    if (encoding === "sjis") {
+        return new Uint8Array(await invoke("encode_shift_jis", { text }));
+    }
+    const body = new TextEncoder().encode(text);
+    if (encoding === "utf8bom") {
+        const withBom = new Uint8Array(body.length + 3);
+        withBom.set([0xef, 0xbb, 0xbf], 0);
+        withBom.set(body, 3);
+        return withBom;
+    }
+    return body;
+}
+function currentExportFormat() {
+    return document.querySelector('input[name="export-format"]:checked')?.value ?? "tsv";
+}
+const exportEncodingSel = $("export-encoding");
+const exportEncodingHint = $("export-encoding-hint");
+function updateExportEncodingState() {
+    const isJson = currentExportFormat() === "json";
+    exportEncodingSel.disabled = isJson;
+    exportEncodingHint.textContent = isJson ? "JSON は UTF-8（BOMなし）固定です" : "";
+    if (isJson)
+        exportEncodingSel.value = "utf8";
+}
+for (const el of document.querySelectorAll('input[name="export-format"]')) {
+    el.addEventListener("change", updateExportEncodingState);
+}
+$("export").onclick = () => {
     if (rows.length === 0) {
         resultInfo.textContent = "エクスポートする結果がありません";
         return;
     }
-    const header = columns.map(tsvEscape).join("\t");
-    const lines = rows.map((r) => columns.map((_, c) => tsvEscape(cellText(r, c))).join("\t"));
-    const tsv = [header, ...lines].join("\r\n");
+    $("export-error").textContent = "";
+    $("export-count").textContent = `${rows.length} 件 / ${columns.length} 列を出力します`;
+    $("export-format-tsv").checked = true;
+    exportEncodingSel.value = "utf8bom";
+    updateExportEncodingState();
+    $("export-dialog").showModal();
+};
+$("export-cancel").onclick = () => $("export-dialog").close();
+$("export-close-x").onclick = () => $("export-dialog").close();
+$("export-ok").onclick = async () => {
+    const format = currentExportFormat();
+    const encoding = exportEncodingSel.value;
+    const info = EXPORT_FORMAT_INFO[format];
+    const errEl = $("export-error");
+    const statusEl = $("export-status");
+    const okBtn = $("export-ok");
+    const cancelBtn = $("export-cancel");
+    errEl.textContent = "";
     try {
         const path = await saveDialog({
-            defaultPath: "everydb_export.tsv",
-            filters: [{ name: "TSV", extensions: ["tsv", "txt"] }],
+            defaultPath: `everydb_export.${info.ext}`,
+            filters: [{ name: info.filterName, extensions: [info.ext, ...info.extra] }],
         });
         if (!path)
             return;
-        await writeTextFile(path, tsv);
+        okBtn.disabled = true;
+        cancelBtn.disabled = true;
+        statusEl.hidden = false;
+        const text = buildExportText(format);
+        const bytes = await encodeForExport(text, format === "json" ? "utf8" : encoding);
+        await writeFile(path, bytes);
+        $("export-dialog").close();
         resultInfo.textContent = `エクスポート完了: ${path}（${rows.length} 件）`;
     }
     catch (e) {
-        resultInfo.textContent = "エクスポート失敗: " + String(e);
+        errEl.textContent = "エクスポート失敗: " + String(e);
+    }
+    finally {
+        okBtn.disabled = false;
+        cancelBtn.disabled = false;
+        statusEl.hidden = true;
     }
 };
 /** ファイルパス入力欄。browse時、種別に応じた拡張子でファイル選択ダイアログを絞り込む。 */
@@ -2375,6 +2483,33 @@ const JSON_FILTERS = [{ name: "JSON ファイル", extensions: ["json"] }];
 /** API キー・トークンの取得ページ（入力欄の「🔑 取得…」ボタンから開く）。 */
 const ENTRA_APPS_URL = "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade";
 const NOTION_INTEGRATIONS_URL = "https://www.notion.so/my-integrations";
+/** ブラウザ選択の共通選択肢（要件: 対応ブラウザに Vivaldi を追加。Chromium系なので既存の chrome 等と同じ扱い）。 */
+const BROWSER_OPTIONS = [
+    { value: "chrome", label: "Google Chrome" }, { value: "edge", label: "Microsoft Edge" },
+    { value: "brave", label: "Brave" }, { value: "vivaldi", label: "Vivaldi" }, { value: "firefox", label: "Firefox" },
+];
+/** 法人番号 全件データの都道府県選択肢。ラベルは国税庁サイトの表示文字列と完全一致させる必要がある
+ * （Rust 側が HTML から `<dt class="mb05">県名</dt>` を文字列一致で探すため）。 */
+const PREFECTURE_OPTIONS = [
+    "北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県", "茨城県", "栃木県", "群馬県",
+    "埼玉県", "千葉県", "東京都", "神奈川県", "新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県",
+    "岐阜県", "静岡県", "愛知県", "三重県", "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県",
+    "鳥取県", "島根県", "岡山県", "広島県", "山口県", "徳島県", "香川県", "愛媛県", "高知県", "福岡県",
+    "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県", "全国",
+].map((name) => ({ value: name, label: name }));
+/** 政府公開データ（郵便番号・法人番号）に共通の「取得元」フィールド。既定は自動ダウンロード、
+ * サイト構造の変更などに備えて手動でダウンロード済みの zip/csv を指定する経路も用意する。 */
+const GOV_DATA_SOURCE_FIELDS = [
+    { key: "source", label: "取得元", kind: "select", options: [
+            { value: "auto", label: "自動ダウンロード(既定)" },
+            { value: "file", label: "ファイル指定(手動でダウンロード済みの zip/csv)" },
+        ] },
+    {
+        key: "path", label: "ファイル指定時のパス(zip または csv)", kind: "text", optional: true, browse: "file",
+        placeholder: "取得元が『ファイル指定』のときのみ使用します",
+        dialogFilters: [{ name: "zip / csv", extensions: ["zip", "csv"] }],
+    },
+];
 const GRAPH_AUTH_FIELDS = [
     { key: "tenant_id", label: "テナントID", kind: "text", placeholder: "ディレクトリ(テナント) ID", helpUrl: ENTRA_APPS_URL },
     { key: "client_id", label: "クライアントID", kind: "text", placeholder: "アプリケーション(クライアント) ID", helpUrl: ENTRA_APPS_URL },
@@ -2408,18 +2543,16 @@ const TYPE_DEFS = [
     { value: "graph_onedrive", label: "OneDrive", fields: [...GRAPH_AUTH_FIELDS, { key: "user", label: "対象ユーザー(UPN/メール)", kind: "text", placeholder: "user@example.com" }] },
     { value: "graph_planner", label: "Teams タスク & Planner", fields: [...GRAPH_AUTH_FIELDS, { key: "group_id", label: "対象チーム(グループ)のID", kind: "text", placeholder: "Entra管理センター等で確認したグループID" }] },
     { value: "browser_history", label: "ブラウザ: 閲覧履歴", fields: [
-            { key: "browser", label: "ブラウザ", kind: "select", options: [
-                    { value: "chrome", label: "Google Chrome" }, { value: "edge", label: "Microsoft Edge" },
-                    { value: "brave", label: "Brave" }, { value: "firefox", label: "Firefox" },
-                ] },
-            { key: "path", label: "History / places.sqlite のパス", kind: "text", placeholder: "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\History", browse: "file" },
+            { key: "browser", label: "ブラウザ", kind: "select", options: BROWSER_OPTIONS },
+            { key: "path", label: "History / places.sqlite のパス", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "history" },
         ] },
     { value: "browser_bookmarks", label: "ブラウザ: ブックマーク", fields: [
-            { key: "browser", label: "ブラウザ", kind: "select", options: [
-                    { value: "chrome", label: "Google Chrome" }, { value: "edge", label: "Microsoft Edge" },
-                    { value: "brave", label: "Brave" }, { value: "firefox", label: "Firefox" },
-                ] },
-            { key: "path", label: "Bookmarks / places.sqlite のパス", kind: "text", placeholder: "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Bookmarks", browse: "file" },
+            { key: "browser", label: "ブラウザ", kind: "select", options: BROWSER_OPTIONS },
+            { key: "path", label: "Bookmarks / places.sqlite のパス", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "bookmarks" },
+        ] },
+    { value: "browser_downloads", label: "ブラウザ: ダウンロード履歴", fields: [
+            { key: "browser", label: "ブラウザ", kind: "select", options: BROWSER_OPTIONS },
+            { key: "path", label: "History / places.sqlite のパス（Chromium系は履歴と同じファイル）", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "history" },
         ] },
     { value: "google_sheets", label: "Google スプレッドシート", fields: [
             { key: "key_path", label: "サービスアカウント鍵(JSON)のパス", kind: "text", placeholder: "C:\\path\\to\\service-account.json", browse: "file", dialogFilters: JSON_FILTERS, helpUrl: "https://console.cloud.google.com/apis/credentials" },
@@ -2468,10 +2601,31 @@ const TYPE_DEFS = [
             { key: "enterprise_id", label: "Enterprise ID", kind: "text" },
             { key: "folder_id", label: "開始フォルダID(任意)", kind: "text", placeholder: "0 (ルート)", optional: true },
         ] },
+    { value: "postal_code", label: "郵便番号データベース(日本郵便)", fields: [...GOV_DATA_SOURCE_FIELDS] },
+    { value: "corporate_number", label: "法人番号 全件データ(国税庁)", fields: [
+            { key: "prefecture", label: "都道府県", kind: "select", options: PREFECTURE_OPTIONS },
+            ...GOV_DATA_SOURCE_FIELDS,
+        ] },
+    { value: "web_page", label: "WEBサイト(HTML表 / CSSセレクタ / JSON API)", fields: [
+            { key: "url", label: "URL", kind: "text", placeholder: "https://example.com/search?q=... （GETクエリ込みで指定）" },
+            { key: "mode", label: "取り込み方式", kind: "select", options: [
+                    { value: "html_table", label: "HTML表(table)を自動取込" },
+                    { value: "css_selector", label: "CSSセレクタで行/列を指定" },
+                    { value: "json_api", label: "JSON APIを取込" },
+                ] },
+            { key: "table_index", label: "何番目の<table>か（html_table用、既定0）", kind: "number", min: 0, optional: true, placeholder: "0" },
+            { key: "has_header", label: "先頭行を見出しにする（html_table用）", kind: "checkbox", default: true },
+            { key: "row_selector", label: "行のCSSセレクタ（css_selector用）", kind: "text", optional: true, placeholder: "例: article.post" },
+            {
+                key: "columns", label: "列定義（css_selector・json_api用。1行に1列）", kind: "textarea", optional: true,
+                placeholder: "css_selector例:\nタイトル=h2 a\nURL=h2 a@href\n\njson_api例:\nタイトル=title\nいいね=liked_count",
+            },
+            { key: "json_root", label: "配列を取り出すJSONパス（json_api用、空欄=レスポンス自体が配列）", kind: "text", optional: true, placeholder: "例: articles" },
+        ] },
 ];
 const PATH_GROUPED_TYPES = new Set([
     "csv", "folder", "ime_msime", "ime_google", "excel_table", "excel_range", "excel_sheets",
-    "sqlite", "accdb", "browser_history", "browser_bookmarks",
+    "sqlite", "accdb", "browser_history", "browser_bookmarks", "browser_downloads",
 ]);
 function parentKindOf(type_) {
     if (type_ === "notion")
@@ -2699,17 +2853,149 @@ function getFieldValue(f) {
 /** 追加時、表示名をユーザーが手動で編集したら以後はファイルパスからの自動入力で上書きしない。 */
 let nameManuallyEdited = false;
 function basenameOf(path) {
-    const parts = path.split(/[\\/]/).filter(Boolean);
-    return parts[parts.length - 1] || path;
+    const norm = normalizePath(path);
+    const parts = norm.split(/[\\/]/).filter(Boolean);
+    return parts[parts.length - 1] || norm;
 }
-/** 追加ダイアログでファイルパスを入力/選択した際、表示名が未編集ならファイル名を自動入力する。 */
-function maybeAutoFillName(path) {
-    if (dialogMode !== "add" || nameManuallyEdited)
+/** データソース種別と接続設定値から、推奨される表示名を導出する。 */
+function deriveDefaultName(type_, config) {
+    const str = (key) => String(config[key] ?? "").trim();
+    const base = (val) => basenameOf(val);
+    switch (type_) {
+        case "csv":
+        case "sqlite":
+        case "accdb":
+        case "folder":
+        case "ime_msime":
+        case "ime_google":
+        case "browser_history":
+        case "browser_bookmarks":
+        case "browser_downloads": {
+            const p = str("path");
+            if (p)
+                return base(p);
+            break;
+        }
+        case "excel_table": {
+            const p = str("path");
+            const t = str("table");
+            if (p && t)
+                return `${base(p)}: ${t}`;
+            if (p)
+                return base(p);
+            break;
+        }
+        case "excel_range": {
+            const p = str("path");
+            const s = str("sheet");
+            const r = str("range");
+            if (p && s && r)
+                return `${base(p)}: ${s}!${r}`;
+            if (p && s)
+                return `${base(p)}: ${s}`;
+            if (p)
+                return base(p);
+            break;
+        }
+        case "excel_sheets": {
+            const p = str("path");
+            if (p)
+                return `${base(p)} (シート一覧)`;
+            break;
+        }
+        case "web_page":
+        case "ical_calendar": {
+            const u = str("url");
+            if (u) {
+                try {
+                    const parsed = new URL(u);
+                    const p = parsed.pathname.split("/").filter(Boolean);
+                    const last = p[p.length - 1];
+                    return last ? `${parsed.hostname}/${last}` : parsed.hostname;
+                }
+                catch {
+                    return base(u);
+                }
+            }
+            break;
+        }
+        case "graph_sharepoint_list": {
+            const l = str("list_name");
+            if (l)
+                return l;
+            break;
+        }
+        case "graph_sharepoint_library": {
+            const l = str("library_name");
+            if (l)
+                return l;
+            return "ドキュメントライブラリ";
+        }
+        case "postgres":
+        case "mysql": {
+            const db = str("database");
+            const tbl = str("table");
+            if (db && tbl)
+                return `${db}.${tbl}`;
+            if (tbl)
+                return tbl;
+            if (db)
+                return db;
+            break;
+        }
+        case "airtable": {
+            const tbl = str("table");
+            if (tbl)
+                return tbl;
+            break;
+        }
+        case "google_sheets": {
+            const sid = str("spreadsheet_id");
+            const r = str("range");
+            if (sid && r)
+                return `Sheet (${r})`;
+            if (sid)
+                return `Sheet (${sid.slice(0, 8)}...)`;
+            break;
+        }
+        case "notion": {
+            const did = str("database_id");
+            if (did)
+                return `Notion DB (${did.slice(0, 8)}...)`;
+            break;
+        }
+    }
+    // 接続設定からの導出に該当しない場合やクラウドAPI系は、種別ラベルをデフォルト値として返す
+    const def = TYPE_DEFS.find((t) => t.value === type_);
+    return def?.label ?? type_;
+}
+/** 追加ダイアログ等でデータソース設定・種別の変更時や未入力時に表示名を自動入力・補完する。 */
+function autoFillDefaultName(force = false) {
+    if (dialogMode !== "add")
         return;
-    const trimmed = normalizePath(path);
-    if (!trimmed)
+    if (!force && nameManuallyEdited)
         return;
-    $("f-name").value = basenameOf(trimmed);
+    const { config } = buildConfigFromFields();
+    const name = deriveDefaultName(typeSel.value, config);
+    if (name) {
+        $("f-name").value = name;
+    }
+}
+/** 追加ダイアログでファイルパスを入力/選択した際、表示名が未編集ならファイル名を自動入力する（互換関数）。 */
+function maybeAutoFillName(_path) {
+    autoFillDefaultName();
+}
+/** 接続設定（ファイルパスやテーブル名など必須項目）がすべて入力・選択され確定した際に、自動で後半の列一覧表を再読込する。 */
+function maybeFetchAndRenderFields() {
+    if (dialogMode !== "add" && dialogMode !== "edit")
+        return;
+    const { missingText } = buildConfigFromFields();
+    if (!missingText) {
+        void fetchAndRenderFields();
+    }
+    else {
+        resetRolesEditor();
+    }
 }
 function renderTypeFields(prefill, hideKeys = []) {
     const def = currentTypeDef();
@@ -2724,6 +3010,10 @@ function renderTypeFields(prefill, hideKeys = []) {
             cb.type = "checkbox";
             cb.id = `fd-${f.key}`;
             cb.checked = prefill ? Boolean(prefill[f.key]) : (f.default ?? false);
+            cb.addEventListener("change", () => {
+                autoFillDefaultName();
+                maybeFetchAndRenderFields();
+            });
             label.append(cb, document.createTextNode(" " + f.label));
         }
         else if (f.kind === "select") {
@@ -2738,7 +3028,25 @@ function renderTypeFields(prefill, hideKeys = []) {
             }
             if (prefill && typeof prefill[f.key] === "string")
                 sel.value = prefill[f.key];
+            sel.addEventListener("change", () => {
+                autoFillDefaultName();
+                maybeFetchAndRenderFields();
+            });
             label.appendChild(sel);
+        }
+        else if (f.kind === "textarea") {
+            label.textContent = f.label;
+            const ta = document.createElement("textarea");
+            ta.id = `fd-${f.key}`;
+            ta.rows = 4;
+            ta.className = "web-page-columns";
+            if (f.placeholder)
+                ta.placeholder = f.placeholder;
+            if (prefill && typeof prefill[f.key] === "string")
+                ta.value = prefill[f.key];
+            ta.addEventListener("input", () => autoFillDefaultName());
+            ta.addEventListener("change", () => maybeFetchAndRenderFields());
+            label.appendChild(ta);
         }
         else {
             label.textContent = f.label;
@@ -2757,11 +3065,14 @@ function renderTypeFields(prefill, hideKeys = []) {
                 else if (v !== undefined && v !== null)
                     input.value = String(v);
             }
-            if (f.key === "path") {
-                input.addEventListener("input", () => maybeAutoFillName(input.value));
-            }
-            if (f.browse || f.helpUrl) {
-                // 参照ボタン（ファイル/フォルダ選択）と、API キー取得ページを開くボタン。
+            input.addEventListener("input", () => autoFillDefaultName());
+            input.addEventListener("change", () => {
+                autoFillDefaultName();
+                maybeFetchAndRenderFields();
+            });
+            if (f.browse || f.helpUrl || f.browserProfile) {
+                // 参照ボタン（ファイル/フォルダ選択）、API キー取得ページを開くボタン、
+                // ブラウザプロファイル候補を自動検出するボタン。
                 const row = document.createElement("div");
                 row.className = "path-row";
                 row.appendChild(input);
@@ -2779,8 +3090,8 @@ function renderTypeFields(prefill, hideKeys = []) {
                             });
                             if (typeof picked === "string") {
                                 input.value = picked;
-                                if (f.key === "path")
-                                    maybeAutoFillName(picked);
+                                autoFillDefaultName();
+                                maybeFetchAndRenderFields();
                             }
                         }
                         catch (e) {
@@ -2788,6 +3099,15 @@ function renderTypeFields(prefill, hideKeys = []) {
                         }
                     };
                     row.appendChild(browseBtn);
+                }
+                if (f.browserProfile) {
+                    const pickBtn = document.createElement("button");
+                    pickBtn.type = "button";
+                    pickBtn.className = "btn browse-btn";
+                    pickBtn.textContent = "候補から選択…";
+                    pickBtn.title = "インストール済みのブラウザからプロファイル（History/Bookmarks）を自動検出します";
+                    pickBtn.onclick = () => openBrowserProfilePicker(f.browserProfile, input);
+                    row.appendChild(pickBtn);
                 }
                 if (f.helpUrl)
                     row.appendChild(makeApiKeyButton(f.helpUrl));
@@ -2810,8 +3130,15 @@ function renderTypeFields(prefill, hideKeys = []) {
     resetRolesEditor();
     updateConfigSummaryBadge();
     updateOpenTableButton();
+    if (dialogMode === "add") {
+        autoFillDefaultName();
+    }
 }
-typeSel.onchange = () => renderTypeFields();
+typeSel.onchange = () => {
+    renderTypeFields();
+    autoFillDefaultName();
+    maybeFetchAndRenderFields();
+};
 function buildConfigFromFields() {
     const def = currentTypeDef();
     // 接続先側で管理している共有(接続)フィールドは、このダイアログでは表示していないので元の値をそのまま引き継ぐ。
@@ -3079,15 +3406,34 @@ async function openEditDialog(id) {
     }
 }
 $("add").onclick = () => openAddDialog();
+$("add-cancel").onclick = () => dialog.close("cancel");
 $("add-form").addEventListener("submit", async (e) => {
     const submitter = e.submitter;
-    if (submitter && submitter.value === "cancel")
+    if (submitter && submitter.value === "cancel") {
+        dialog.close("cancel");
         return;
-    const name = $("f-name").value.trim();
+    }
+    // method="dialog" のフォームは、既定動作としてこの submit ハンドラの同期部分が終わった時点で
+    // ダイアログを閉じてしまう。初回取得（reload_one）が終わるまではダイアログを開いたままにして
+    // 読み込み中であることを示すため、既定動作を止める（要件: 保存時のフリーズ感の解消）。
+    e.preventDefault();
+    const nameEl = $("f-name");
+    let name = nameEl.value.trim();
     const { config, missingText } = buildConfigFromFields();
+    if (!name) {
+        name = deriveDefaultName(typeSel.value, config);
+        if (name)
+            nameEl.value = name;
+    }
     if (!name || missingText)
         return;
     Object.assign(config, collectRoleConfig());
+    const okBtn = submitter ?? $("add-form").querySelector('button[value="ok"]');
+    const cancelBtn = $("add-cancel");
+    const statusEl = $("add-save-status");
+    okBtn.disabled = true;
+    cancelBtn.disabled = true;
+    statusEl.hidden = false;
     try {
         if (dialogMode === "edit" && editingId !== null) {
             await invoke("update_source", { id: editingId, name, configJson: JSON.stringify(config) });
@@ -3101,9 +3447,15 @@ $("add-form").addEventListener("submit", async (e) => {
         }
         typeSel.disabled = false;
         await loadSources();
+        dialog.close();
     }
     catch (err) {
         alert("保存に失敗: " + String(err));
+    }
+    finally {
+        okBtn.disabled = false;
+        cancelBtn.disabled = false;
+        statusEl.hidden = true;
     }
 });
 function needsMasterPassword(type_) {
@@ -3183,6 +3535,8 @@ async function openNotionPicker() {
             item.textContent = db.title || "(無題)";
             item.onclick = () => {
                 document.getElementById("fd-database_id").value = db.id;
+                autoFillDefaultName();
+                maybeFetchAndRenderFields();
                 dlg.close();
             };
             listEl.appendChild(item);
@@ -3193,6 +3547,39 @@ async function openNotionPicker() {
     }
 }
 $("notion-picker-close").onclick = () => $("notion-picker").close();
+// ---- ブラウザのプロファイル候補ピッカー（要件: パス指定を候補から選ぶだけにしたい）----
+async function openBrowserProfilePicker(target, pathInput) {
+    const browserSel = document.getElementById("fd-browser");
+    const browser = browserSel?.value ?? "chrome";
+    const listEl = $("browser-profile-picker-list");
+    listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
+    const dlg = $("browser-profile-picker");
+    dlg.showModal();
+    try {
+        const entries = await invoke("browse_browser_profiles", { browser, target });
+        listEl.innerHTML = "";
+        if (entries.length === 0) {
+            listEl.innerHTML = "<div class='picker-empty'>候補が見つかりませんでした</div>";
+        }
+        for (const entry of entries) {
+            const item = document.createElement("div");
+            item.className = "picker-item";
+            item.textContent = entry.label;
+            item.title = entry.path;
+            item.onclick = () => {
+                pathInput.value = entry.path;
+                maybeAutoFillName(entry.path);
+                maybeFetchAndRenderFields();
+                dlg.close();
+            };
+            listEl.appendChild(item);
+        }
+    }
+    catch (e) {
+        setPickerMessage(listEl, `取得失敗: ${String(e)}`);
+    }
+}
+$("browser-profile-picker-close").onclick = () => $("browser-profile-picker").close();
 // ---- Excel/SQLite/Access テーブル一括ピッカー ----
 const tablePickerDlg = $("table-picker");
 const tablePickerList = $("table-picker-list");
