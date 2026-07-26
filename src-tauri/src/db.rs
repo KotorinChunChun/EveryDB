@@ -270,6 +270,9 @@ fn source_parent(type_: &str, config_json: &str) -> String {
         // （Microsoft 365 と同じ扱い。個々の DB は子のテーブル相当）。
         return "Notion".to_string();
     }
+    if type_ == "pokeapi" {
+        return "PokéAPI".to_string();
+    }
     if type_.starts_with("graph") {
         return "Microsoft 365".to_string();
     }

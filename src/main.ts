@@ -1699,6 +1699,7 @@ function guideNameFor(type_: string): string | null {
   if (type_ === "mysql") return "mysql";
   if (type_ === "postal_code" || type_ === "corporate_number") return "gov-data";
   if (type_ === "web_page") return "web-page";
+  if (type_ === "pokeapi") return "pokeapi";
   if (PATH_GROUPED_TYPES.has(type_)) return "local-files";
   return null;
 }
@@ -2703,6 +2704,7 @@ const TYPE_DEFS: TypeDef[] = [
     },
     { key: "json_root", label: "配列を取り出すJSONパス（json_api用、空欄=レスポンス自体が配列）", kind: "text", optional: true, placeholder: "例: articles" },
   ] },
+  { value: "pokeapi", label: "PokéAPI (ポケモン)", fields: [] },
 ];
 
 // ============================================================
