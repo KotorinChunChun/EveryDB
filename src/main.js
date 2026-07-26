@@ -4520,6 +4520,16 @@ document.addEventListener("keydown", (e) => {
         void setZoom(1.0);
     }
 });
+// ---- 操作ガイド・ショートカットキー一覧ダイアログ ----
+$("source-guide-btn")?.addEventListener("click", () => {
+    $("shortcut-guide-dialog")?.showModal();
+});
+$("shortcut-guide-close")?.addEventListener("click", () => {
+    $("shortcut-guide-dialog")?.close();
+});
+$("shortcut-guide-close-x")?.addEventListener("click", () => {
+    $("shortcut-guide-dialog")?.close();
+});
 // ============================================================
 // 自動更新イベント / 起動
 // ============================================================

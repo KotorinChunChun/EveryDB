@@ -26,6 +26,8 @@
                     title="テーブルを追加（新しい接続先の場合は接続情報もあわせて入力）">＋追加</button>
             <button id="manage-toggle" class="title-row-btn manage-toggle" type="button" aria-pressed="false"
                     title="管理モード: 幅を広げて更新間隔・最終更新日時・更新/編集/削除ボタンを表示します">管理</button>
+            <button id="source-guide-btn" class="title-row-btn square-btn" type="button"
+                    title="操作ガイド・ショートカットキー一覧を開く">？</button>
           </div>
           <div class="source-filter-row">
             <div class="sidebar-bulk">
@@ -401,6 +403,29 @@
         <span id="export-status" class="reload-status" hidden><span class="spinner"></span>出力中…</span>
         <button id="export-cancel" class="btn" type="button">キャンセル</button>
         <button id="export-ok" class="btn primary" type="button">エクスポート</button>
+      </div>
+    </dialog>
+
+    <!-- 操作ガイド・ショートカットキーダイアログ -->
+    <dialog id="shortcut-guide-dialog" class="dialog wide">
+      <button id="shortcut-guide-close-x" class="dialog-close-x" type="button" title="閉じる">×</button>
+      <h3>操作ガイド・ショートカットキー一覧</h3>
+      <table class="manage-table shortcut-table">
+        <thead>
+          <tr><th>操作 / ショートカットキー</th><th>機能・動作内容</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><kbd>Alt</kbd> + <kbd>Ctrl</kbd> + <kbd>D</kbd></td><td>アプリの呼び出し・検索入力欄への即時フォーカス（設定で変更可能）</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>絞り込みテキストの消去 / ダイアログ・右クリックメニューを閉じる</td></tr>
+          <tr><td><kbd>Ctrl</kbd> + <kbd>+</kbd> / <kbd>-</kbd> / <kbd>0</kbd></td><td>画面表示倍率（ズーム）の拡大・縮小・100%リセット</td></tr>
+          <tr><td><kbd>Alt</kbd> + クリック</td><td>データソース一覧で指定したテーブルのみを選択（ソロ選択）</td></tr>
+          <tr><td>ダブルクリック</td><td>データソースの接続先グループの展開・折りたたみ切り替え</td></tr>
+          <tr><td>右クリック</td><td>データソース/テーブルの設定編集・再読込・エクスポート等のメニュー表示</td></tr>
+          <tr><td><kbd>Ctrl</kbd> + クリック / ドラッグ</td><td>10x10 セル/列選択画面での複数セル・範囲の選択</td></tr>
+        </tbody>
+      </table>
+      <div class="dialog-actions">
+        <button id="shortcut-guide-close" class="btn primary" type="button">閉じる</button>
       </div>
     </dialog>
 

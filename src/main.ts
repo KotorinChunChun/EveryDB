@@ -4576,6 +4576,17 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// ---- 操作ガイド・ショートカットキー一覧ダイアログ ----
+$<HTMLButtonElement>("source-guide-btn")?.addEventListener("click", () => {
+  $<HTMLDialogElement>("shortcut-guide-dialog")?.showModal();
+});
+$<HTMLButtonElement>("shortcut-guide-close")?.addEventListener("click", () => {
+  $<HTMLDialogElement>("shortcut-guide-dialog")?.close();
+});
+$<HTMLButtonElement>("shortcut-guide-close-x")?.addEventListener("click", () => {
+  $<HTMLDialogElement>("shortcut-guide-dialog")?.close();
+});
+
 // ============================================================
 // 自動更新イベント / 起動
 // ============================================================
