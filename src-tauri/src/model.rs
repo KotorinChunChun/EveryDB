@@ -6,6 +6,7 @@ use serde_json::Map;
 pub struct Record {
     pub label: Option<String>,
     pub open_ref: Option<String>,
+    pub row_number: Option<i64>,
     pub fields: Map<String, serde_json::Value>,
     /// searchable フィールドを連結した検索専用テキスト。
     pub search_text: String,
@@ -34,6 +35,7 @@ pub struct Row {
     pub source_name: String,
     pub label: Option<String>,
     pub open_ref: Option<String>,
+    pub row_number: Option<i64>,
     pub fields: Map<String, serde_json::Value>,
 }
 

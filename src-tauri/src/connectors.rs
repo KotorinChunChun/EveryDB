@@ -123,7 +123,7 @@ struct CommonCfg {
     column_order: Option<Vec<String>>,
 }
 
-fn make_record(pairs: Vec<(String, String)>, default_open_ref: &str, cfg: &CommonCfg) -> Record {
+fn make_record_with_row(pairs: Vec<(String, String)>, default_open_ref: &str, cfg: &CommonCfg, row_number: Option<i64>) -> Record {
     // label / open_ref / 検索テキストは「表示 ON/OFF」の影響を受けない、元の全フィールドから計算する
     // （検索対象列は searchable_columns で別軸に制御するため。要件 §9-3）。
     let find = |col: &str| pairs.iter().find(|(k, _)| k == col).map(|(_, v)| v.clone());
@@ -173,7 +173,11 @@ fn make_record(pairs: Vec<(String, String)>, default_open_ref: &str, cfg: &Commo
         let key = cfg.column_aliases.as_ref().and_then(|m| m.get(k)).cloned().unwrap_or_else(|| k.clone());
         fields.insert(key, Value::String(v.clone()));
     }
-    Record { label, open_ref, fields, search_text }
+    Record { label, open_ref, row_number, fields, search_text }
+}
+
+fn make_record(pairs: Vec<(String, String)>, default_open_ref: &str, cfg: &CommonCfg) -> Record {
+    make_record_with_row(pairs, default_open_ref, cfg, None)
 }
 
 /// フィールド役割設定(display/searchable/label/open_ref/alias)を取り除いた素の config で
@@ -241,7 +245,9 @@ impl Connector for CsvConnector {
         };
 
         let mut out = Vec::new();
+        let mut row_idx = if self.has_header { 1i64 } else { 0i64 };
         for rec in iter {
+            row_idx += 1;
             let pairs: Vec<(String, String)> = rec
                 .iter()
                 .enumerate()
@@ -250,7 +256,7 @@ impl Connector for CsvConnector {
                     (name, v.to_string())
                 })
                 .collect();
-            out.push(make_record(pairs, &self.path, &self.common));
+            out.push(make_record_with_row(pairs, &self.path, &self.common, Some(row_idx)));
         }
         Ok(out)
     }
@@ -299,11 +305,13 @@ impl Connector for SqliteConnector {
 
         let mut out = Vec::new();
         let mut rows = stmt.query([])?;
+        let mut row_idx = 0i64;
         while let Some(r) = rows.next()? {
+            row_idx += 1;
             let pairs: Vec<(String, String)> = (0..ncol)
                 .map(|i| (col_names[i].clone(), value_ref_to_string(r.get_ref(i))))
                 .collect();
-            out.push(make_record(pairs, &self.path, &self.common));
+            out.push(make_record_with_row(pairs, &self.path, &self.common, Some(row_idx)));
         }
         Ok(out)
     }
@@ -408,8 +416,9 @@ impl Connector for ExcelTableConnector {
             wb.load_tables()?;
             let table = wb.table_by_name(table_name)?;
             let headers = table.columns().to_vec();
+            let base_row = (table.data().start().map(|(r, _)| r).unwrap_or(0) + 2) as i64; // ヘッダーの次(データ1行目)の絶対物理行番号 (1-indexed)
             let mut out = Vec::new();
-            for row in table.data().rows() {
+            for (idx, row) in table.data().rows().enumerate() {
                 let pairs: Vec<(String, String)> = (0..headers.len())
                     .map(|i| {
                         let name = if headers[i].is_empty() { format!("col{}", i + 1) } else { headers[i].clone() };
@@ -420,7 +429,8 @@ impl Connector for ExcelTableConnector {
                 if pairs.iter().all(|(_, v)| v.is_empty()) {
                     continue;
                 }
-                out.push(make_record(pairs, &self.path, &self.common));
+                let row_num = base_row + (idx as i64);
+                out.push(make_record_with_row(pairs, &self.path, &self.common, Some(row_num)));
             }
             return Ok(out);
         }
@@ -967,7 +977,8 @@ impl ExcelRangeConnector {
             if pairs.iter().all(|(_, v)| v.is_empty()) {
                 continue;
             }
-            out.push(make_record(pairs, &self.path, &self.common));
+            let row_num = (r + 1) as i64;
+            out.push(make_record_with_row(pairs, &self.path, &self.common, Some(row_num)));
         }
         Ok(out)
     }

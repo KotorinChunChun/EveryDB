@@ -54,6 +54,7 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             source_id   INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
             label       TEXT,
             open_ref    TEXT,
+            row_number  INTEGER,
             fields_json TEXT NOT NULL,
             search_text TEXT NOT NULL
         );
@@ -81,6 +82,7 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
         "#,
     )?;
     migrate_add_column(conn, "sources", "sort_order", "INTEGER NOT NULL DEFAULT 0")?;
+    migrate_add_column(conn, "records", "row_number", "INTEGER")?;
     Ok(())
 }
 
@@ -332,12 +334,12 @@ pub fn replace_source_records(conn: &mut Connection, source_id: i64, records: &[
     tx.execute("DELETE FROM records WHERE source_id = ?1", [source_id])?;
     {
         let mut stmt = tx.prepare(
-            "INSERT INTO records(source_id, label, open_ref, fields_json, search_text)
-             VALUES(?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO records(source_id, label, open_ref, row_number, fields_json, search_text)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
         )?;
         for r in records {
             let fields_json = serde_json::to_string(&r.fields)?;
-            stmt.execute(params![source_id, r.label, r.open_ref, fields_json, r.search_text])?;
+            stmt.execute(params![source_id, r.label, r.open_ref, r.row_number, fields_json, r.search_text])?;
         }
     }
     tx.commit()?;
@@ -384,7 +386,7 @@ fn multi_term_and_search(conn: &Connection, terms: &[&str], in_clause: &str, id_
         binds.push(SqlValue::Text(format!("%{}%", escape_like(t))));
     }
     let sql = format!(
-        "SELECT r.source_id, s.name, r.label, r.open_ref, r.fields_json
+        "SELECT r.source_id, s.name, r.label, r.open_ref, r.row_number, r.fields_json
          FROM records r JOIN sources s ON s.id = r.source_id
          WHERE {in_clause} AND {} LIMIT {limit}",
         conds.join(" AND ")
@@ -396,7 +398,7 @@ fn multi_term_and_search(conn: &Connection, terms: &[&str], in_clause: &str, id_
 
 fn browse(conn: &Connection, in_clause: &str, id_params: &[SqlValue], limit: i64) -> Result<Vec<Row>> {
     let sql = format!(
-        "SELECT r.source_id, s.name, r.label, r.open_ref, r.fields_json
+        "SELECT r.source_id, s.name, r.label, r.open_ref, r.row_number, r.fields_json
          FROM records r JOIN sources s ON s.id = r.source_id
          WHERE {in_clause} LIMIT {limit}"
     );
@@ -408,7 +410,7 @@ fn browse(conn: &Connection, in_clause: &str, id_params: &[SqlValue], limit: i64
 fn like_search(conn: &Connection, q: &str, in_clause: &str, id_params: &[SqlValue], limit: i64) -> Result<Vec<Row>> {
     let pattern = format!("%{}%", escape_like(q));
     let sql = format!(
-        "SELECT r.source_id, s.name, r.label, r.open_ref, r.fields_json
+        "SELECT r.source_id, s.name, r.label, r.open_ref, r.row_number, r.fields_json
          FROM records r JOIN sources s ON s.id = r.source_id
          WHERE {in_clause} AND r.search_text LIKE ? ESCAPE '\\'
          LIMIT {limit}"
@@ -424,9 +426,9 @@ fn fts_search(conn: &Connection, q: &str, in_clause: &str, id_params: &[SqlValue
     // trigram では部分一致をフレーズとして与える。内部の " は "" にエスケープ。
     let match_str = format!("\"{}\"", q.replace('"', "\"\""));
     let sql = format!(
-        "SELECT sid, sname, label, open_ref, fields_json FROM (
+        "SELECT sid, sname, label, open_ref, row_number, fields_json FROM (
             SELECT r.source_id AS sid, s.name AS sname, r.label AS label,
-                   r.open_ref AS open_ref, r.fields_json AS fields_json,
+                   r.open_ref AS open_ref, r.row_number AS row_number, r.fields_json AS fields_json,
                    ROW_NUMBER() OVER (PARTITION BY r.source_id ORDER BY bm25(records_fts)) AS rn
             FROM records_fts
             JOIN records r ON r.id = records_fts.rowid
@@ -446,7 +448,7 @@ fn fts_search(conn: &Connection, q: &str, in_clause: &str, id_params: &[SqlValue
 fn collect_rows(mut rows: rusqlite::Rows) -> Result<Vec<Row>> {
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {
-        let fields_json: String = r.get(4)?;
+        let fields_json: String = r.get(5)?;
         let fields: Map<String, serde_json::Value> =
             serde_json::from_str(&fields_json).unwrap_or_default();
         out.push(Row {
@@ -454,6 +456,7 @@ fn collect_rows(mut rows: rusqlite::Rows) -> Result<Vec<Row>> {
             source_name: r.get(1)?,
             label: r.get(2)?,
             open_ref: r.get(3)?,
+            row_number: r.get(4)?,
             fields,
         });
     }
@@ -541,6 +544,7 @@ mod tests {
         Record {
             label: Some(name.into()),
             open_ref: Some(format!("C:\\data\\{name}.txt")),
+            row_number: None,
             fields,
             search_text: format!("{name} {value}"),
         }

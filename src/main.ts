@@ -20,6 +20,7 @@ interface Row {
   source_name: string;
   label: string | null;
   open_ref: string | null;
+  row_number?: number | null;
   fields: Record<string, string>;
 }
 interface SearchResponse {
@@ -1113,7 +1114,7 @@ function rebuildColumns() {
   }
   const known = gridColumnOrder.filter((c) => cols.includes(c));
   const extra = cols.filter((c) => !gridColumnOrder.includes(c));
-  columns = ["テーブル", "見出し", ...known, ...extra];
+  columns = ["#", "テーブル", "元行", "見出し", ...known, ...extra];
 }
 
 // ============================================================
@@ -1335,6 +1336,8 @@ document.addEventListener("click", (ev) => {
 const columnWidths: Record<string, number> = {};
 const MIN_COL_W = 40;
 function colWidth(name: string): number {
+  if (name === "#") return columnWidths[name] ?? 50;
+  if (name === "元行") return columnWidths[name] ?? 55;
   return columnWidths[name] ?? COL_W;
 }
 function totalGridWidth(): number {
@@ -1366,7 +1369,7 @@ let gridDragSrcCol: string | null = null;
 /** 列見出しのドラッグ直後に発火する click を無視するためのフラグ（ソートとの誤爆防止）。 */
 let suppressHeadClick = false;
 /** テーブルの元フィールドに対応しない疑似列（常に先頭に固定・並べ替え/列対応編集の対象外）。 */
-const PINNED_COLUMNS = new Set(["テーブル", "見出し"]);
+const PINNED_COLUMNS = new Set(["#", "テーブル", "元行", "見出し"]);
 
 function renderHead() {
   headEl.innerHTML = "";
@@ -1499,10 +1502,13 @@ function renderHead() {
   headEl.appendChild(inner);
 }
 
-function cellText(r: Row, col: number): string {
-  if (col === 0) return r.source_name;
-  if (col === 1) return r.label ?? "";
-  return r.fields[columns[col]] ?? "";
+function cellText(r: Row, col: number, rowIndex?: number): string {
+  const colName = columns[col];
+  if (colName === "#") return rowIndex !== undefined ? String(rowIndex + 1) : "";
+  if (colName === "テーブル") return r.source_name;
+  if (colName === "元行") return r.row_number !== undefined && r.row_number !== null ? String(r.row_number) : "";
+  if (colName === "見出し") return r.label ?? "";
+  return r.fields[colName] ?? "";
 }
 
 function renderRows() {
@@ -1524,8 +1530,10 @@ function renderRows() {
     for (let c = 0; c < columns.length; c++) {
       const cell = document.createElement("div");
       cell.className = "cell" + (selectedCell && selectedCell.row === i && selectedCell.col === c ? " sel" : "");
+      if (columns[c] === "#") cell.classList.add("sys-seq");
+      if (columns[c] === "元行") cell.classList.add("sys-row-num");
       cell.style.width = colWidth(columns[c]) + "px";
-      cell.textContent = cellText(r, c);
+      cell.textContent = cellText(r, c, i);
       cell.onmousedown = () => selectCell(i, c);
       cell.addEventListener("contextmenu", (ev) => {
         ev.preventDefault();
@@ -2460,13 +2468,13 @@ function csvEscape(v: string): string {
 
 function buildExportText(format: ExportFormat): string {
   if (format === "json") {
-    const data = rows.map((r) => Object.fromEntries(columns.map((c, i) => [c, cellText(r, i)])));
+    const data = rows.map((r, rowIdx) => Object.fromEntries(columns.map((c, colIdx) => [c, cellText(r, colIdx, rowIdx)])));
     return JSON.stringify(data, null, 2);
   }
   const escape = format === "csv" ? csvEscape : tsvEscape;
   const sep = format === "csv" ? "," : "\t";
   const header = columns.map(escape).join(sep);
-  const lines = rows.map((r) => columns.map((_, c) => escape(cellText(r, c))).join(sep));
+  const lines = rows.map((r, rowIdx) => columns.map((_, c) => escape(cellText(r, c, rowIdx))).join(sep));
   return [header, ...lines].join("\r\n");
 }
 

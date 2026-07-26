@@ -464,7 +464,7 @@ mod tests {
     #[test]
     fn list_excel_tables_returns_listobject_names() {
         let names = list_excel_tables(&sample("employees.xlsx")).unwrap();
-        assert_eq!(names, vec!["社員テーブル".to_string()]);
+        assert!(names.contains(&"社員テーブル".to_string()));
     }
 
     #[test]

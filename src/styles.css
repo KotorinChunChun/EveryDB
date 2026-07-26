@@ -327,6 +327,8 @@ tr.drop-target-after td::after { bottom: -1px; }
   user-select: none;
   flex: none;
 }
+.cell.sys-seq { text-align: center; color: var(--muted); font-size: 11px; }
+.cell.sys-row-num { text-align: right; color: var(--muted); font-size: 11px; }
 .cell.head { cursor: default; position: relative; display: flex; align-items: center; gap: 4px; }
 .cell.head.sortable { cursor: pointer; }
 .cell.head.draggable-col { cursor: grab; }
