@@ -988,6 +988,12 @@ ctxMenu.addEventListener("click", async (ev) => {
     case "open-table":
       await openTableBySourceId(id);
       break;
+    case "export":
+      selectedSourceIds = new Set([id]);
+      renderSources();
+      await runSearch();
+      openExportDialog();
+      break;
     case "delete":
       if (!await confirmDelete(`「${src?.name ?? ""}」を削除しますか？\n（キャッシュも消えます）`)) break;
       await invoke("delete_source", { id });
@@ -1031,6 +1037,12 @@ parentCtxMenu.addEventListener("click", async (ev) => {
       }
       break;
     }
+    case "export":
+      selectedSourceIds = new Set(children.map((c) => c.id));
+      renderSources();
+      await runSearch();
+      openExportDialog();
+      break;
     case "delete": {
       const names = children.map((c) => c.name).join(", ");
       if (!await confirmDelete(`「${parentLabel(parentKey)}」配下の ${children.length} 個のテーブルをすべて削除しますか？\n（${names}）\nキャッシュも消えます。`)) break;
@@ -2488,7 +2500,7 @@ for (const el of document.querySelectorAll<HTMLInputElement>('input[name="export
   el.addEventListener("change", updateExportEncodingState);
 }
 
-$<HTMLButtonElement>("export").onclick = () => {
+function openExportDialog() {
   if (rows.length === 0) { resultInfo.textContent = "エクスポートする結果がありません"; return; }
   $<HTMLDivElement>("export-error").textContent = "";
   $<HTMLDivElement>("export-count").textContent = `${rows.length} 件 / ${columns.length} 列を出力します`;
@@ -2496,6 +2508,10 @@ $<HTMLButtonElement>("export").onclick = () => {
   exportEncodingSel.value = "utf8bom";
   updateExportEncodingState();
   $<HTMLDialogElement>("export-dialog").showModal();
+}
+
+$<HTMLButtonElement>("export").onclick = () => {
+  openExportDialog();
 };
 $<HTMLButtonElement>("export-cancel").onclick = () => $<HTMLDialogElement>("export-dialog").close();
 $<HTMLButtonElement>("export-close-x").onclick = () => $<HTMLDialogElement>("export-dialog").close();

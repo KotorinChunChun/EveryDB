@@ -14,7 +14,7 @@
         <button id="preset-save" class="btn" title="現在の検索条件をお気に入りに保存">☆保存</button>
         <button id="preset-list-btn" class="btn" title="お気に入りから呼び出し">★一覧</button>
         <div id="preset-panel" class="history-panel" hidden></div>
-        <button id="export" class="btn" title="現在の検索結果を TSV/CSV/JSON でエクスポート">出力</button>
+        <button id="export" class="btn" title="現在の検索結果を TSV/CSV/JSON でエクスポート">エクスポート</button>
         <button id="settings" class="btn" title="アプリ設定">⚙ 設定</button>
       </header>
 
@@ -86,6 +86,7 @@
       <button data-action="duplicate">複製</button>
       <button data-action="reload">再読込</button>
       <button data-action="open-table" hidden>このテーブルを開く</button>
+      <button data-action="export">エクスポート</button>
       <button data-action="delete" class="danger">削除</button>
     </div>
 
@@ -94,6 +95,7 @@
       <button data-action="edit">編集</button>
       <button data-action="reload">再読込（配下の全テーブル）</button>
       <button data-action="open">接続先を開く</button>
+      <button data-action="export">エクスポート（配下の全テーブル）</button>
       <button data-action="delete" class="danger">削除（配下の全テーブル）</button>
     </div>
 
