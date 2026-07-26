@@ -724,6 +724,18 @@ $("select-none").onclick = () => {
     renderSources();
     runSearch();
 };
+// 全展開 / 全折畳（データソースの接続先グループを一括開閉）
+$("expand-all").onclick = () => {
+    collapsedParents.clear();
+    renderSources();
+};
+$("collapse-all").onclick = () => {
+    for (const s of sources) {
+        if (s.parent)
+            collapsedParents.add(s.parent);
+    }
+    renderSources();
+};
 // ============================================================
 // 右クリックコンテキストメニュー（要件 §9-1）
 // ============================================================

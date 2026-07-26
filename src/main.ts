@@ -790,6 +790,18 @@ $<HTMLButtonElement>("select-none").onclick = () => {
   runSearch();
 };
 
+// 全展開 / 全折畳（データソースの接続先グループを一括開閉）
+$<HTMLButtonElement>("expand-all").onclick = () => {
+  collapsedParents.clear();
+  renderSources();
+};
+$<HTMLButtonElement>("collapse-all").onclick = () => {
+  for (const s of sources) {
+    if (s.parent) collapsedParents.add(s.parent);
+  }
+  renderSources();
+};
+
 // ============================================================
 // 右クリックコンテキストメニュー（要件 §9-1）
 // ============================================================

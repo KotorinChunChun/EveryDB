@@ -133,7 +133,8 @@ body {
 .sidebar-resizer:hover, .sidebar-resizer.dragging { background: var(--accent-2); }
 .sidebar-title-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .sidebar-title { font-weight: 600; color: var(--muted); font-size: 12px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sidebar-bulk { display: flex; gap: 6px; flex: none; }
+.sidebar-bulk { display: flex; align-items: center; gap: 4px; flex: none; }
+.bulk-divider { color: var(--border); font-size: 10px; margin: 0 1px; user-select: none; }
 
 /* 見出し行に並べる小型ボタン（＋追加 / 管理）。狭いサイドバー幅でも収まるサイズ。 */
 .title-row-btn {
