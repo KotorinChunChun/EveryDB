@@ -2542,6 +2542,8 @@ interface FieldDef {
   browserProfile?: "history" | "bookmarks";
   /** Excelファイル内のシート名一覧を取得して選ばせるボタンを出す。 */
   browseSheet?: boolean;
+  /** Excelファイル内のテーブル(ListObject)名一覧を取得して選ばせるボタンを出す。 */
+  browseTable?: boolean;
   /** Excelシートの左上/右下の10x10セルを表形式で表示して選択するボタンを出す。 */
   browseCell?: boolean | "top" | "bottom" | "bottom_left" | "bottom_right";
   /** Excelシートの左上/右下の10x10セルを表形式で表示して基準列を選択するボタンを出す。 */
@@ -2612,7 +2614,7 @@ const TYPE_DEFS: TypeDef[] = [
   ] },
   { value: "sqlite", label: "SQLite データベース", fields: [pathField(SQLITE_FILTERS), { key: "table", label: "テーブル名", kind: "text", placeholder: "customers" }], browse: "sqlite" },
   { value: "accdb", label: "Access (accdb / mdb)", fields: [pathField(ACCDB_FILTERS), { key: "table", label: "テーブル名", kind: "text", placeholder: "取引先" }], browse: "accdb" },
-  { value: "excel_table", label: "Excel: テーブル(ListObject)", fields: [pathField(EXCEL_FILTERS), { key: "table", label: "テーブル名(ListObject)", kind: "text", placeholder: "テーブル1" }], browse: "excel_table" },
+  { value: "excel_table", label: "Excel: テーブル(ListObject)", fields: [pathField(EXCEL_FILTERS), { key: "table", label: "テーブル名(ListObject)", kind: "text", placeholder: "テーブル1", browseTable: true }], browse: "excel_table" },
   { value: "excel_range", label: "Excel: シート(セル範囲)", fields: [
     pathField(EXCEL_FILTERS),
     { key: "sheet", label: "シート名", kind: "text", browseSheet: true },
@@ -3171,9 +3173,9 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
         autoFillDefaultName();
         maybeFetchAndRenderFields();
       });
-      if (f.browse || f.helpUrl || f.browserProfile || f.browseSheet || f.browseCell || f.browseColumn) {
+      if (f.browse || f.helpUrl || f.browserProfile || f.browseSheet || f.browseTable || f.browseCell || f.browseColumn) {
         // 参照ボタン（ファイル/フォルダ選択）、API キー取得ページを開くボタン、
-        // ブラウザプロファイル候補を自動検出するボタン、Excelシート名選択ボタン、Excelセル/列選択ボタン。
+        // ブラウザプロファイル候補を自動検出するボタン、Excelシート名選択ボタン、Excelテーブル(ListObject)名選択ボタン、Excelセル/列選択ボタン。
         const row = document.createElement("div");
         row.className = "path-row";
         row.appendChild(input);
@@ -3216,6 +3218,15 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
           pickBtn.textContent = "一覧から選択…";
           pickBtn.title = "指定されたExcelファイルからシート名の一覧を取得して選べます";
           pickBtn.onclick = () => openSheetPicker(input);
+          row.appendChild(pickBtn);
+        }
+        if (f.browseTable) {
+          const pickBtn = document.createElement("button");
+          pickBtn.type = "button";
+          pickBtn.className = "btn browse-btn";
+          pickBtn.textContent = "一覧から選択…";
+          pickBtn.title = "指定されたExcelファイルからテーブル(ListObject)名の一覧を取得して選べます";
+          pickBtn.onclick = () => openExcelTablePicker(input);
           row.appendChild(pickBtn);
         }
         if (f.browseCell) {
@@ -3820,6 +3831,8 @@ async function openSheetPicker(sheetInput: HTMLInputElement) {
     alert("先にファイルパスを入力・選択してください");
     return;
   }
+  const titleEl = $<HTMLHeadingElement>("sheet-picker-title");
+  if (titleEl) titleEl.textContent = "シートを選択";
   const listEl = $<HTMLDivElement>("sheet-picker-list");
   listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
   const dlg = $<HTMLDialogElement>("sheet-picker");
@@ -3836,6 +3849,42 @@ async function openSheetPicker(sheetInput: HTMLInputElement) {
       item.textContent = sheet;
       item.onclick = () => {
         sheetInput.value = sheet;
+        autoFillDefaultName();
+        maybeFetchAndRenderFields();
+        dlg.close();
+      };
+      listEl.appendChild(item);
+    }
+  } catch (e) {
+    setPickerMessage(listEl, `取得失敗: ${String(e)}`);
+  }
+}
+
+// ---- Excel テーブル(ListObject)名ピッカー ----
+async function openExcelTablePicker(tableInput: HTMLInputElement) {
+  const path = getTargetExcelPath();
+  if (!path) {
+    alert("先にファイルパスを入力・選択してください");
+    return;
+  }
+  const titleEl = $<HTMLHeadingElement>("sheet-picker-title");
+  if (titleEl) titleEl.textContent = "テーブル(ListObject)を選択";
+  const listEl = $<HTMLDivElement>("sheet-picker-list");
+  listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
+  const dlg = $<HTMLDialogElement>("sheet-picker");
+  dlg.showModal();
+  try {
+    const tables = await invoke<string[]>("browse_excel_tables", { path });
+    listEl.innerHTML = "";
+    if (tables.length === 0) {
+      listEl.innerHTML = "<div class='picker-empty'>テーブルが見つかりませんでした</div>";
+    }
+    for (const tbl of tables) {
+      const item = document.createElement("div");
+      item.className = "picker-item";
+      item.textContent = tbl;
+      item.onclick = () => {
+        tableInput.value = tbl;
         autoFillDefaultName();
         maybeFetchAndRenderFields();
         dlg.close();
