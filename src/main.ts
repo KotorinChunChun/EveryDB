@@ -600,17 +600,23 @@ function renderSources() {
     pcb.type = "checkbox";
     pcb.checked = selCount === children.length;
     pcb.indeterminate = selCount > 0 && selCount < children.length;
-    const toggleCheck = (ev?: Event) => {
+    const toggleCheck = (ev?: MouseEvent | Event) => {
       if (ev) ev.stopPropagation();
-      const turnOn = !(selCount === children.length);
-      for (const c of children) {
-        if (turnOn) selectedSourceIds.add(c.id);
-        else selectedSourceIds.delete(c.id);
+      const isAlt = ev && "altKey" in ev && (ev as MouseEvent).altKey;
+      if (isAlt) {
+        // Alt+クリック: この接続先配下のテーブルのみ ON、他は全解除（ソロ選択）。
+        selectedSourceIds = new Set(children.map((c) => c.id));
+      } else {
+        const turnOn = !(selCount === children.length);
+        for (const c of children) {
+          if (turnOn) selectedSourceIds.add(c.id);
+          else selectedSourceIds.delete(c.id);
+        }
       }
       renderSources();
       runSearch();
     };
-    pcb.onclick = toggleCheck;
+    pcb.onclick = (ev) => toggleCheck(ev);
 
     const plabel = document.createElement("span");
     plabel.className = "p-label";
@@ -689,9 +695,10 @@ function renderSources() {
     parentRow.onclick = (ev) => {
       if (ev.target === twisty || ev.target === pcb) return;
       if (clickTimer) clearTimeout(clickTimer);
+      const mouseEv = ev;
       clickTimer = setTimeout(() => {
         clickTimer = null;
-        toggleCheck();
+        toggleCheck(mouseEv);
       }, 180);
     };
     parentRow.ondblclick = (ev) => {
@@ -2662,12 +2669,26 @@ const TYPE_DEFS: TypeDef[] = [
   { value: "folder", label: "フォルダのファイル一覧", fields: [{ key: "path", label: "フォルダパス", kind: "text", placeholder: "C:\\path\\to\\folder", browse: "folder" }, { key: "recursive", label: "サブフォルダも含める", kind: "checkbox", default: true }, { key: "extensions", label: "拡張子フィルタ (カンマ区切り・任意)", kind: "list", placeholder: "csv, xlsx" }] },
   { value: "ime_msime", label: "IME辞書: Microsoft IME", fields: [pathField(TEXT_FILTERS)] },
   { value: "ime_google", label: "IME辞書: Google 日本語入力", fields: [pathField(TEXT_FILTERS)] },
-  { value: "notion", label: "Notion データベース", fields: [{ key: "token", label: "インテグレーショントークン", kind: "password", placeholder: "ntn_...", helpUrl: NOTION_INTEGRATIONS_URL }, { key: "database_id", label: "データベースID", kind: "text", placeholder: "URL 内の 32 桁 ID" }], browse: "notion" },
+  { value: "notion", label: "Notion データベース", fields: [
+    { key: "token", label: "インテグレーショントークン", kind: "password", placeholder: "ntn_...", helpUrl: NOTION_INTEGRATIONS_URL },
+    { key: "url_helper", label: "Notion データベース URL (ペーストで自動設定)", kind: "text", placeholder: "https://www.notion.so/.../a86724d5...", optional: true },
+    { key: "database_id", label: "データベースID", kind: "text", placeholder: "URL 内の 32 桁 ID" },
+  ], browse: "notion" },
   { value: "graph_entra_users", label: "EntraID ユーザー一覧", fields: [...GRAPH_AUTH_FIELDS] },
   { value: "graph_entra_groups", label: "EntraID グループ一覧", fields: [...GRAPH_AUTH_FIELDS] },
   { value: "graph_teams", label: "Teams チーム一覧", fields: [...GRAPH_AUTH_FIELDS] },
-  { value: "graph_sharepoint_list", label: "SharePoint リスト", fields: [...GRAPH_AUTH_FIELDS, { key: "site_url", label: "サイトURL", kind: "text", placeholder: "https://～/sites/サイト名" }, { key: "list_name", label: "リスト名", kind: "text", placeholder: "SampleList" }], browse: "sharepoint" },
-  { value: "graph_sharepoint_library", label: "SharePoint ドキュメントライブラリ", fields: [...GRAPH_AUTH_FIELDS, { key: "site_url", label: "サイトURL", kind: "text", placeholder: "https://～/sites/サイト名" }, { key: "library_name", label: "ライブラリ名(空欄=既定)", kind: "text", placeholder: "空欄で既定ライブラリ", optional: true }], browse: "sharepoint" },
+  { value: "graph_sharepoint_list", label: "SharePoint リスト", fields: [
+    ...GRAPH_AUTH_FIELDS,
+    { key: "url_helper", label: "SharePoint リスト URL (ペーストで自動設定)", kind: "text", placeholder: "https://～/sites/サイト名/Lists/リスト名/...", optional: true },
+    { key: "site_url", label: "サイトURL", kind: "text", placeholder: "https://～/sites/サイト名" },
+    { key: "list_name", label: "リスト名", kind: "text", placeholder: "SampleList" },
+  ], browse: "sharepoint" },
+  { value: "graph_sharepoint_library", label: "SharePoint ドキュメントライブラリ", fields: [
+    ...GRAPH_AUTH_FIELDS,
+    { key: "url_helper", label: "SharePoint ライブラリ URL (ペーストで自動設定)", kind: "text", placeholder: "https://～/sites/サイト名/...", optional: true },
+    { key: "site_url", label: "サイトURL", kind: "text", placeholder: "https://～/sites/サイト名" },
+    { key: "library_name", label: "ライブラリ名(空欄=既定)", kind: "text", placeholder: "空欄で既定ライブラリ", optional: true },
+  ], browse: "sharepoint" },
   { value: "graph_entra_devices", label: "EntraID デバイス一覧", fields: [...GRAPH_AUTH_FIELDS] },
   { value: "graph_intune_devices", label: "Intune デバイス一覧", fields: [...GRAPH_AUTH_FIELDS] },
   { value: "graph_licenses", label: "Microsoft 365 ライセンス一覧", fields: [...GRAPH_AUTH_FIELDS] },
@@ -2688,6 +2709,7 @@ const TYPE_DEFS: TypeDef[] = [
   ] },
   { value: "google_sheets", label: "Google スプレッドシート", fields: [
     { key: "key_path", label: "サービスアカウント鍵(JSON)のパス", kind: "text", placeholder: "C:\\path\\to\\service-account.json", browse: "file", dialogFilters: JSON_FILTERS, helpUrl: "https://console.cloud.google.com/apis/credentials" },
+    { key: "url_helper", label: "Google スプレッドシート URL (ペーストで自動設定)", kind: "text", placeholder: "https://docs.google.com/spreadsheets/d/.../edit", optional: true },
     { key: "spreadsheet_id", label: "スプレッドシートID", kind: "text", placeholder: "URL の /d/ と /edit の間の文字列" },
     { key: "range", label: "範囲(任意)", kind: "text", placeholder: "Sheet1!A1:D50 / 空欄=先頭シート全域", optional: true },
     { key: "has_header", label: "先頭行はヘッダー", kind: "checkbox", default: true },
@@ -2697,6 +2719,7 @@ const TYPE_DEFS: TypeDef[] = [
   ] },
   { value: "airtable", label: "Airtable", fields: [
     { key: "token", label: "Personal Access Token", kind: "password", placeholder: "pat...", helpUrl: "https://airtable.com/create/tokens" },
+    { key: "url_helper", label: "Airtable URL (ペーストで自動設定)", kind: "text", placeholder: "https://airtable.com/app.../tbl.../viw...", optional: true },
     { key: "base_id", label: "Base ID", kind: "text", placeholder: "app..." },
     { key: "table", label: "テーブル ID または名前", kind: "text", placeholder: "tbl... または テーブル名" },
     { key: "view", label: "ビュー(任意)", kind: "text", placeholder: "viw... または ビュー名", optional: true },
@@ -2881,6 +2904,36 @@ const belongsToEl = $<HTMLDivElement>("f-belongs-to");
 const rolesRowsEl = $<HTMLTableSectionElement>("roles-rows");
 const rolesTableWrap = $<HTMLDivElement>("roles-table-wrap");
 const rolesHint = $<HTMLDivElement>("roles-hint");
+dialog.addEventListener("dragover", (ev) => {
+  ev.preventDefault();
+  ev.stopPropagation();
+});
+dialog.addEventListener("drop", (ev) => {
+  ev.preventDefault();
+  ev.stopPropagation();
+  const files = ev.dataTransfer?.files;
+  if (files && files.length > 0) {
+    const file = files[0];
+    const rawPath = (file as any).path || file.name;
+    const path = normalizePath(rawPath);
+    const pathEl = document.getElementById("fd-path") as HTMLInputElement | null;
+    const keyPathEl = document.getElementById("fd-key_path") as HTMLInputElement | null;
+    const urlHelperEl = document.getElementById("fd-url_helper") as HTMLInputElement | null;
+    if (pathEl) {
+      pathEl.value = path;
+      autoFillDefaultName();
+      maybeFetchAndRenderFields();
+    } else if (keyPathEl) {
+      keyPathEl.value = path;
+      autoFillDefaultName();
+      maybeFetchAndRenderFields();
+    } else if (urlHelperEl) {
+      urlHelperEl.value = path;
+      tryApplyUrlOrFileDropHelper(path);
+    }
+  }
+});
+
 rolesRowsEl.addEventListener("dragleave", (ev) => {
   if (!rolesRowsEl.contains(ev.relatedTarget as Node)) {
     clearDropTargets();
@@ -2990,6 +3043,130 @@ function basenameOf(path: string): string {
   const norm = normalizePath(path);
   const parts = norm.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] || norm;
+}
+
+interface AirtableUrlInfo {
+  baseId?: string;
+  tableId?: string;
+  viewId?: string;
+}
+
+/** Airtable の URL から Base ID (app...), Table ID (tbl...), View ID (viw...) を解析抽出する。 */
+function parseAirtableUrl(urlText: string): AirtableUrlInfo | null {
+  if (!urlText || !urlText.includes("airtable.com")) return null;
+  const baseMatch = urlText.match(/\b(app[a-zA-Z0-9]{11,17})\b/);
+  const tableMatch = urlText.match(/\b(tbl[a-zA-Z0-9]{11,17})\b/);
+  const viewMatch = urlText.match(/\b(viw[a-zA-Z0-9]{11,17})\b/);
+  if (!baseMatch && !tableMatch && !viewMatch) return null;
+  return {
+    baseId: baseMatch ? baseMatch[1] : undefined,
+    tableId: tableMatch ? tableMatch[1] : undefined,
+    viewId: viewMatch ? viewMatch[1] : undefined,
+  };
+}
+
+/** Google スプレッドシート URL からスプレッドシート ID を抽出する。 */
+function parseGoogleSheetsUrl(urlText: string): { spreadsheetId?: string } | null {
+  if (!urlText || !urlText.includes("docs.google.com/spreadsheets")) return null;
+  const m = urlText.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (!m) return null;
+  return { spreadsheetId: m[1] };
+}
+
+/** Notion データベース URL から 32桁の database_id を抽出・正規化する。 */
+function parseNotionUrl(urlText: string): { databaseId?: string } | null {
+  if (!urlText || (!urlText.includes("notion.so") && !urlText.includes("notion.site"))) return null;
+  const m = urlText.match(/([0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/);
+  if (!m) return null;
+  const clean = m[1].replace(/-/g, "").toLowerCase();
+  return { databaseId: clean };
+}
+
+/** SharePoint URL から site_url, list_name, library_name を解析分解する。 */
+function parseSharePointUrl(urlText: string): { siteUrl?: string; listName?: string; libraryName?: string } | null {
+  if (!urlText || !urlText.includes("sharepoint.com")) return null;
+  const siteMatch = urlText.match(/(https:\/\/[a-zA-Z0-9.-]+\.sharepoint\.com\/(?:sites|teams)\/[^/?#]+)/i);
+  const siteUrl = siteMatch ? siteMatch[1] : undefined;
+
+  let listName: string | undefined;
+  const listMatch = urlText.match(/\/Lists\/([^/?#]+)/i);
+  if (listMatch) {
+    try { listName = decodeURIComponent(listMatch[1]); } catch { listName = listMatch[1]; }
+  }
+
+  let libraryName: string | undefined;
+  const libMatch = urlText.match(/\/sites\/[^/]+\/([^/?#]+)\/(?:Forms|AllItems)/i);
+  if (libMatch && libMatch[1] !== "Lists") {
+    try { libraryName = decodeURIComponent(libMatch[1]); } catch { libraryName = libMatch[1]; }
+  }
+
+  if (!siteUrl && !listName && !libraryName) return null;
+  return { siteUrl, listName, libraryName };
+}
+
+/** 各種データソース URL が入力・ペーストされた際、設定 ID フィールドを自動入力・展開する。 */
+function tryApplyUrlOrFileDropHelper(inputValue: string) {
+  const type = typeSel.value;
+  if (type === "airtable") {
+    const info = parseAirtableUrl(inputValue);
+    if (info) {
+      if (info.baseId) {
+        const baseEl = document.getElementById("fd-base_id") as HTMLInputElement | null;
+        if (baseEl) baseEl.value = info.baseId;
+      }
+      if (info.tableId) {
+        const tblEl = document.getElementById("fd-table") as HTMLInputElement | null;
+        if (tblEl) tblEl.value = info.tableId;
+      }
+      if (info.viewId) {
+        const viwEl = document.getElementById("fd-view") as HTMLInputElement | null;
+        if (viwEl) viwEl.value = info.viewId;
+      }
+      autoFillDefaultName();
+      maybeFetchAndRenderFields();
+      return;
+    }
+  }
+  if (type === "google_sheets") {
+    const info = parseGoogleSheetsUrl(inputValue);
+    if (info?.spreadsheetId) {
+      const el = document.getElementById("fd-spreadsheet_id") as HTMLInputElement | null;
+      if (el) el.value = info.spreadsheetId;
+      autoFillDefaultName();
+      maybeFetchAndRenderFields();
+      return;
+    }
+  }
+  if (type === "notion") {
+    const info = parseNotionUrl(inputValue);
+    if (info?.databaseId) {
+      const el = document.getElementById("fd-database_id") as HTMLInputElement | null;
+      if (el) el.value = info.databaseId;
+      autoFillDefaultName();
+      maybeFetchAndRenderFields();
+      return;
+    }
+  }
+  if (type === "graph_sharepoint_list" || type === "graph_sharepoint_library") {
+    const info = parseSharePointUrl(inputValue);
+    if (info) {
+      if (info.siteUrl) {
+        const siteEl = document.getElementById("fd-site_url") as HTMLInputElement | null;
+        if (siteEl) siteEl.value = info.siteUrl;
+      }
+      if (info.listName && type === "graph_sharepoint_list") {
+        const listEl = document.getElementById("fd-list_name") as HTMLInputElement | null;
+        if (listEl) listEl.value = info.listName;
+      }
+      if (info.libraryName && type === "graph_sharepoint_library") {
+        const libEl = document.getElementById("fd-library_name") as HTMLInputElement | null;
+        if (libEl) libEl.value = info.libraryName;
+      }
+      autoFillDefaultName();
+      maybeFetchAndRenderFields();
+      return;
+    }
+  }
 }
 
 /** データソース種別と接続設定値から、推奨される表示名を導出する。 */
@@ -3196,8 +3373,16 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
         if (Array.isArray(v)) input.value = v.join(", ");
         else if (v !== undefined && v !== null) input.value = String(v);
       }
-      input.addEventListener("input", () => autoFillDefaultName());
+      input.addEventListener("input", () => {
+        tryApplyUrlOrFileDropHelper(input.value);
+        autoFillDefaultName();
+      });
+      input.addEventListener("paste", (e) => {
+        const text = e.clipboardData?.getData("text") || "";
+        if (text) tryApplyUrlOrFileDropHelper(text);
+      });
       input.addEventListener("change", () => {
+        tryApplyUrlOrFileDropHelper(input.value);
         autoFillDefaultName();
         maybeFetchAndRenderFields();
       });
