@@ -163,6 +163,29 @@
       </div>
     </dialog>
 
+    <!-- Excel シート名ピッカー -->
+    <dialog id="sheet-picker" class="dialog">
+      <h3>シートを選択</h3>
+      <div id="sheet-picker-list" class="picker-list"></div>
+      <div class="dialog-actions">
+        <button id="sheet-picker-close" class="btn">閉じる</button>
+      </div>
+    </dialog>
+
+    <!-- Excel セル範囲ピッカー (10x10グリッド) -->
+    <dialog id="cell-picker" class="dialog wide">
+      <h3 id="cell-picker-title">セルを選択</h3>
+      <div id="cell-picker-hint" class="roles-hint" style="margin-bottom: 8px;">💡 Ctrlキーで複数選択、ドラッグで範囲選択ができます</div>
+      <div id="cell-picker-grid-wrap" class="cell-picker-grid-wrap"></div>
+      <div class="dialog-actions" style="justify-content: space-between; align-items: center;">
+        <span id="cell-picker-status" class="roles-hint" style="text-align: left;"></span>
+        <div>
+          <button id="cell-picker-confirm" class="btn primary" style="display: none;">決定</button>
+          <button id="cell-picker-close" class="btn">閉じる</button>
+        </div>
+      </div>
+    </dialog>
+
     <!-- Excel/SQLite/Access テーブル一括選択ダイアログ -->
     <dialog id="table-picker" class="dialog wide">
       <h3 id="table-picker-title">テーブル一覧</h3>

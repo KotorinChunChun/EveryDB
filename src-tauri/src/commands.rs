@@ -381,6 +381,14 @@ pub fn browse_excel_tables(path: String) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
+pub fn browse_excel_grid(path: String, sheet: String, rows: usize, cols: usize, mode: Option<String>) -> Result<crate::browse::ExcelGridPreview, String> {
+    let mode_str = mode.as_deref().unwrap_or("top");
+    crate::browse::preview_excel_grid(&crate::connectors::strip_path_quotes(&path), &sheet, rows, cols, mode_str).map_err(err_to_string)
+}
+
+
+
+#[tauri::command]
 pub fn browse_sqlite_tables(path: String) -> Result<Vec<String>, String> {
     crate::browse::list_sqlite_tables(&crate::connectors::strip_path_quotes(&path)).map_err(err_to_string)
 }

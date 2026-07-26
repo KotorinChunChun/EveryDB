@@ -1646,6 +1646,8 @@ function guideNameFor(type_) {
         return "gov-data";
     if (type_ === "web_page")
         return "web-page";
+    if (type_ === "pokeapi")
+        return "pokeapi";
     if (PATH_GROUPED_TYPES.has(type_))
         return "local-files";
     return null;
@@ -2525,7 +2527,21 @@ const TYPE_DEFS = [
     { value: "sqlite", label: "SQLite データベース", fields: [pathField(SQLITE_FILTERS), { key: "table", label: "テーブル名", kind: "text", placeholder: "customers" }], browse: "sqlite" },
     { value: "accdb", label: "Access (accdb / mdb)", fields: [pathField(ACCDB_FILTERS), { key: "table", label: "テーブル名", kind: "text", placeholder: "取引先" }], browse: "accdb" },
     { value: "excel_table", label: "Excel: テーブル(ListObject)", fields: [pathField(EXCEL_FILTERS), { key: "table", label: "テーブル名(ListObject)", kind: "text", placeholder: "テーブル1" }], browse: "excel_table" },
-    { value: "excel_range", label: "Excel: シート(セル範囲)", fields: [pathField(EXCEL_FILTERS), { key: "sheet", label: "シート名", kind: "text" }, { key: "range", label: "セル範囲 (A1形式)", kind: "text", placeholder: "A1:C10" }, { key: "has_header", label: "範囲の先頭行はヘッダー", kind: "checkbox", default: true }] },
+    { value: "excel_range", label: "Excel: シート(セル範囲)", fields: [
+            pathField(EXCEL_FILTERS),
+            { key: "sheet", label: "シート名", kind: "text", browseSheet: true },
+            { key: "start_mode", label: "先頭セル", kind: "select", options: [
+                    { value: "auto", label: "自動取得" }, { value: "manual", label: "手動指定" },
+                ] },
+            { key: "start_cell", label: "先頭セル (A1形式)", kind: "text", placeholder: "A1", optional: true, browseCell: "top" },
+            { key: "start_ref_column", label: "基準列 (複数可: コロン/カンマ区切り)", kind: "text", placeholder: "A:C, E", optional: true, browseColumn: "top" },
+            { key: "end_mode", label: "末尾セル", kind: "select", options: [
+                    { value: "auto", label: "自動取得" }, { value: "manual", label: "手動指定" },
+                ] },
+            { key: "end_cell", label: "末尾セル (A1形式)", kind: "text", placeholder: "Z100", optional: true, browseCell: "bottom_right" },
+            { key: "end_ref_column", label: "基準列 (複数可: コロン/カンマ区切り)", kind: "text", placeholder: "A:C, E", optional: true, browseColumn: "bottom_left" },
+            { key: "has_header", label: "範囲の先頭行はヘッダー", kind: "checkbox", default: true },
+        ] },
     { value: "excel_sheets", label: "Excel: シート名一覧", fields: [pathField(EXCEL_FILTERS)] },
     { value: "folder", label: "フォルダのファイル一覧", fields: [{ key: "path", label: "フォルダパス", kind: "text", placeholder: "C:\\path\\to\\folder", browse: "folder" }, { key: "recursive", label: "サブフォルダも含める", kind: "checkbox", default: true }, { key: "extensions", label: "拡張子フィルタ (カンマ区切り・任意)", kind: "list", placeholder: "csv, xlsx" }] },
     { value: "ime_msime", label: "IME辞書: Microsoft IME", fields: [pathField(TEXT_FILTERS)] },
@@ -2622,6 +2638,7 @@ const TYPE_DEFS = [
             },
             { key: "json_root", label: "配列を取り出すJSONパス（json_api用、空欄=レスポンス自体が配列）", kind: "text", optional: true, placeholder: "例: articles" },
         ] },
+    { value: "pokeapi", label: "PokéAPI (ポケモン)", fields: [] },
 ];
 const PATH_GROUPED_TYPES = new Set([
     "csv", "folder", "ime_msime", "ime_google", "excel_table", "excel_range", "excel_sheets",
@@ -2888,9 +2905,12 @@ function deriveDefaultName(type_, config) {
         case "excel_range": {
             const p = str("path");
             const s = str("sheet");
-            const r = str("range");
-            if (p && s && r)
-                return `${base(p)}: ${s}!${r}`;
+            const r = str("range"); // 旧フォーマット互換
+            const sc = str("start_cell");
+            const ec = str("end_cell");
+            const rangeStr = r || (sc && ec ? `${sc}:${ec}` : sc || "");
+            if (p && s && rangeStr)
+                return `${base(p)}: ${s}!${rangeStr}`;
             if (p && s)
                 return `${base(p)}: ${s}`;
             if (p)
@@ -2997,9 +3017,29 @@ function maybeFetchAndRenderFields() {
         resetRolesEditor();
     }
 }
+/** excel_range の start_mode/end_mode の選択に連動して start_cell/start_ref_column 及び end_cell/end_ref_column の表示/非表示を切り替える。 */
+function syncExcelRangeModeVisibility() {
+    if (typeSel.value !== "excel_range")
+        return;
+    const toggleField = (modeKey, cellKey, refColKey) => {
+        const modeSel = document.getElementById(`fd-${modeKey}`);
+        const cellLabel = document.getElementById(`fd-${cellKey}`)?.closest("label");
+        const refColLabel = document.getElementById(`fd-${refColKey}`)?.closest("label");
+        if (!modeSel)
+            return;
+        const manual = modeSel.value === "manual";
+        if (cellLabel)
+            cellLabel.style.display = manual ? "" : "none";
+        if (refColLabel)
+            refColLabel.style.display = manual ? "none" : "";
+    };
+    toggleField("start_mode", "start_cell", "start_ref_column");
+    toggleField("end_mode", "end_cell", "end_ref_column");
+}
 function renderTypeFields(prefill, hideKeys = []) {
     const def = currentTypeDef();
     dynamicEl.innerHTML = "";
+    let currentInlineRow = null;
     for (const f of def.fields) {
         if (hideKeys.includes(f.key))
             continue;
@@ -3031,6 +3071,8 @@ function renderTypeFields(prefill, hideKeys = []) {
             sel.addEventListener("change", () => {
                 autoFillDefaultName();
                 maybeFetchAndRenderFields();
+                // excel_range の start_mode/end_mode 連動表示
+                syncExcelRangeModeVisibility();
             });
             label.appendChild(sel);
         }
@@ -3070,9 +3112,9 @@ function renderTypeFields(prefill, hideKeys = []) {
                 autoFillDefaultName();
                 maybeFetchAndRenderFields();
             });
-            if (f.browse || f.helpUrl || f.browserProfile) {
+            if (f.browse || f.helpUrl || f.browserProfile || f.browseSheet || f.browseCell || f.browseColumn) {
                 // 参照ボタン（ファイル/フォルダ選択）、API キー取得ページを開くボタン、
-                // ブラウザプロファイル候補を自動検出するボタン。
+                // ブラウザプロファイル候補を自動検出するボタン、Excelシート名選択ボタン、Excelセル/列選択ボタン。
                 const row = document.createElement("div");
                 row.className = "path-row";
                 row.appendChild(input);
@@ -3109,12 +3151,55 @@ function renderTypeFields(prefill, hideKeys = []) {
                     pickBtn.onclick = () => openBrowserProfilePicker(f.browserProfile, input);
                     row.appendChild(pickBtn);
                 }
+                if (f.browseSheet) {
+                    const pickBtn = document.createElement("button");
+                    pickBtn.type = "button";
+                    pickBtn.className = "btn browse-btn";
+                    pickBtn.textContent = "一覧から選択…";
+                    pickBtn.title = "指定されたExcelファイルからシート名の一覧を取得して選べます";
+                    pickBtn.onclick = () => openSheetPicker(input);
+                    row.appendChild(pickBtn);
+                }
+                if (f.browseCell) {
+                    const pickBtn = document.createElement("button");
+                    pickBtn.type = "button";
+                    pickBtn.className = "btn browse-btn";
+                    pickBtn.textContent = "表から選択…";
+                    pickBtn.title = "Excelシートの10x10セルを表形式で表示して選択します";
+                    pickBtn.onclick = () => openCellPicker(input, f.browseCell, "cell");
+                    row.appendChild(pickBtn);
+                }
+                if (f.browseColumn) {
+                    const pickBtn = document.createElement("button");
+                    pickBtn.type = "button";
+                    pickBtn.className = "btn browse-btn";
+                    pickBtn.textContent = "表から選択…";
+                    pickBtn.title = "Excelシートの10x10セルを表形式で表示して基準列を選択します";
+                    pickBtn.onclick = () => openCellPicker(input, f.browseColumn, "column");
+                    row.appendChild(pickBtn);
+                }
                 if (f.helpUrl)
                     row.appendChild(makeApiKeyButton(f.helpUrl));
                 label.appendChild(row);
             }
             else {
                 label.appendChild(input);
+            }
+        }
+        if (typeSel.value === "excel_range") {
+            if (f.key === "start_mode" || f.key === "end_mode") {
+                currentInlineRow = document.createElement("div");
+                currentInlineRow.className = "range-inline-row";
+                dynamicEl.appendChild(currentInlineRow);
+            }
+            if (currentInlineRow && (f.key === "start_mode" || f.key === "start_cell" || f.key === "start_ref_column" || f.key === "end_mode" || f.key === "end_cell" || f.key === "end_ref_column")) {
+                label.style.margin = "0";
+                label.style.flex = "1 1 auto";
+                currentInlineRow.appendChild(label);
+                continue;
+            }
+            else {
+                currentInlineRow = null;
             }
         }
         dynamicEl.appendChild(label);
@@ -3133,6 +3218,8 @@ function renderTypeFields(prefill, hideKeys = []) {
     if (dialogMode === "add") {
         autoFillDefaultName();
     }
+    // excel_range の start_mode/end_mode 連動表示（初期状態）
+    syncExcelRangeModeVisibility();
 }
 typeSel.onchange = () => {
     renderTypeFields();
@@ -3155,6 +3242,22 @@ function buildConfigFromFields() {
         config[f.key] = v;
     }
     const missingText = def.fields.some((f) => (f.kind === "text" || f.kind === "password") && !f.optional && !String(config[f.key] ?? "").trim());
+    // excel_range: 手動指定時のセル参照バリデーション
+    if (typeSel.value === "excel_range" || typeSel.value === "excel_cell") {
+        const cellPattern = /^[A-Za-z]{1,3}[1-9][0-9]*$/;
+        if (config["start_mode"] === "manual") {
+            const sc = String(config["start_cell"] ?? "").trim();
+            if (!sc || !cellPattern.test(sc)) {
+                return { config, missingText: true }; // 不正なセル参照として必須未入力扱い
+            }
+        }
+        if (config["end_mode"] === "manual") {
+            const ec = String(config["end_cell"] ?? "").trim();
+            if (!ec || !cellPattern.test(ec)) {
+                return { config, missingText: true };
+            }
+        }
+    }
     return { config, missingText };
 }
 // ---- フィールド役割エディタ（要件 §9-3）----
@@ -3313,10 +3416,12 @@ async function fetchAndRenderFields() {
         renderRolesTable(names);
         if (fromCache) {
             rolesHint.textContent += "（⚠ 接続できないためキャッシュ済みデータから復元。表示名ベースの列名です）";
+            setConfigAccordionOpen(true);
         }
     }
     catch (e) {
         rolesHint.textContent = "取得失敗: " + String(e);
+        setConfigAccordionOpen(true);
     }
 }
 $("fetch-fields").onclick = () => void fetchAndRenderFields();
@@ -3386,8 +3491,9 @@ async function openEditDialog(id) {
     const parentKey = info?.parent ?? "";
     hiddenSharedKeys = parentKey ? sharedKeysFor(parentKindOf(detail.type_)) : [];
     hiddenSharedValues = {};
-    for (const k of hiddenSharedKeys)
-        hiddenSharedValues[k] = cfg[k];
+    for (const k of hiddenSharedKeys) {
+        hiddenSharedValues[k] = cfg[k] ?? (k === "path" ? parentKey : undefined);
+    }
     if (parentKey && hiddenSharedKeys.length > 0) {
         belongsToEl.hidden = false;
         belongsToEl.textContent = `所属: ${parentLabel(parentKey)}（接続情報は接続先を右クリック→接続設定から変更できます）`;
@@ -3395,12 +3501,16 @@ async function openEditDialog(id) {
     else {
         belongsToEl.hidden = true;
     }
-    setConfigAccordionOpen(false);
+    const hasError = info?.status === "error" || !info?.last_success_at;
+    setConfigAccordionOpen(hasError);
     renderTypeFields(cfg, hiddenSharedKeys);
     dialog.showModal();
     // 編集ダイアログでは開いた直後にフィールド一覧を自動取得して表示する。
     // 既存の「再読込」ボタンは、接続情報を変更した後などに手動で取り直す用途になる。
     await fetchAndRenderFields();
+    if (info?.status === "error" || !info?.last_success_at) {
+        setConfigAccordionOpen(true);
+    }
     if (detail.has_secret && !detail.unlocked) {
         rolesHint.textContent += "（シークレットはロック中: 保存すると変更なし扱いになります）";
     }
@@ -3580,6 +3690,305 @@ async function openBrowserProfilePicker(target, pathInput) {
     }
 }
 $("browser-profile-picker-close").onclick = () => $("browser-profile-picker").close();
+function getTargetExcelPath() {
+    const pathEl = (document.getElementById("fd-path") || document.getElementById("pf-path"));
+    const raw = pathEl?.value || String(hiddenSharedValues["path"] ?? "") || (editingId !== null ? sources.find((s) => s.id === editingId)?.parent : "") || "";
+    return normalizePath(raw);
+}
+function colLetterOf(colIdx) {
+    let s = "";
+    let n = colIdx + 1;
+    while (n > 0) {
+        const rem = (n - 1) % 26;
+        s = String.fromCharCode(65 + rem) + s;
+        n = Math.floor((n - 1) / 26);
+    }
+    return s;
+}
+function colLetterToIdx(colStr) {
+    const s = colStr.trim().toUpperCase();
+    if (!/^[A-Z]+$/.test(s))
+        return -1;
+    let acc = 0;
+    for (let i = 0; i < s.length; i++) {
+        acc = acc * 26 + (s.charCodeAt(i) - 64);
+    }
+    return acc - 1;
+}
+function parseColumnSelection(text) {
+    const selected = new Set();
+    if (!text)
+        return selected;
+    const parts = text.split(/[,;\s]+/);
+    for (const part of parts) {
+        const trimmed = part.trim().toUpperCase();
+        if (!trimmed)
+            continue;
+        if (trimmed.includes(":")) {
+            const [startStr, endStr] = trimmed.split(":");
+            const startIdx = colLetterToIdx(startStr);
+            const endIdx = colLetterToIdx(endStr);
+            if (startIdx !== -1 && endIdx !== -1) {
+                const min = Math.min(startIdx, endIdx);
+                const max = Math.max(startIdx, endIdx);
+                for (let i = min; i <= max; i++)
+                    selected.add(i);
+            }
+        }
+        else {
+            const idx = colLetterToIdx(trimmed);
+            if (idx !== -1)
+                selected.add(idx);
+        }
+    }
+    return selected;
+}
+function formatSelectedColumns(selectedCols) {
+    const cols = Array.from(selectedCols).sort((a, b) => a - b);
+    if (cols.length === 0)
+        return "";
+    const ranges = [];
+    let start = cols[0];
+    let end = cols[0];
+    for (let i = 1; i < cols.length; i++) {
+        if (cols[i] === end + 1) {
+            end = cols[i];
+        }
+        else {
+            ranges.push(start === end ? colLetterOf(start) : `${colLetterOf(start)}:${colLetterOf(end)}`);
+            start = cols[i];
+            end = cols[i];
+        }
+    }
+    ranges.push(start === end ? colLetterOf(start) : `${colLetterOf(start)}:${colLetterOf(end)}`);
+    return ranges.join(", ");
+}
+// ---- Excel シート名ピッカー ----
+async function openSheetPicker(sheetInput) {
+    const path = getTargetExcelPath();
+    if (!path) {
+        alert("先にファイルパスを入力・選択してください");
+        return;
+    }
+    const listEl = $("sheet-picker-list");
+    listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
+    const dlg = $("sheet-picker");
+    dlg.showModal();
+    try {
+        const sheets = await invoke("browse_excel_sheets", { path });
+        listEl.innerHTML = "";
+        if (sheets.length === 0) {
+            listEl.innerHTML = "<div class='picker-empty'>シートが見つかりませんでした</div>";
+        }
+        for (const sheet of sheets) {
+            const item = document.createElement("div");
+            item.className = "picker-item";
+            item.textContent = sheet;
+            item.onclick = () => {
+                sheetInput.value = sheet;
+                autoFillDefaultName();
+                maybeFetchAndRenderFields();
+                dlg.close();
+            };
+            listEl.appendChild(item);
+        }
+    }
+    catch (e) {
+        setPickerMessage(listEl, `取得失敗: ${String(e)}`);
+    }
+}
+$("sheet-picker-close").onclick = () => $("sheet-picker").close();
+// ---- Excel セル/列範囲ピッカー (10x10グリッド) ----
+async function openCellPicker(cellInput, gridMode = "top", pickMode = "cell") {
+    const path = getTargetExcelPath();
+    if (!path) {
+        alert("先にファイルパスを入力・選択してください");
+        return;
+    }
+    const sheetEl = document.getElementById("fd-sheet");
+    const sheet = (sheetEl?.value.trim() || String(hiddenSharedValues["sheet"] ?? "") || "").trim();
+    if (!sheet) {
+        alert("先にシート名を入力・選択してください");
+        return;
+    }
+    const wrapEl = $("cell-picker-grid-wrap");
+    wrapEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
+    const titlePrefix = pickMode === "column" ? "基準列を選択" : "セルを選択";
+    $("cell-picker-title").textContent = `${titlePrefix} (シート: ${sheet})`;
+    const dlg = $("cell-picker");
+    const confirmBtn = $("cell-picker-confirm");
+    const statusEl = $("cell-picker-status");
+    if (pickMode === "column") {
+        confirmBtn.style.display = "inline-block";
+    }
+    else {
+        confirmBtn.style.display = "none";
+    }
+    dlg.showModal();
+    const hintEl = document.getElementById("cell-picker-hint");
+    if (hintEl) {
+        hintEl.style.display = pickMode === "column" ? "block" : "none";
+    }
+    let isDragging = false;
+    let dragStartCol = -1;
+    const initialValue = cellInput.value.trim();
+    const selectedCols = pickMode === "column" ? parseColumnSelection(initialValue) : new Set();
+    const initialCell = pickMode === "cell" ? initialValue.toUpperCase() : "";
+    let dragBaseSelected = new Set();
+    const updateSelectionDisplay = (table) => {
+        if (pickMode !== "column")
+            return;
+        table.querySelectorAll("th[data-col], td[data-col]").forEach((el) => {
+            const colIdx = Number(el.dataset.col);
+            if (selectedCols.has(colIdx))
+                el.classList.add("col-selected");
+            else
+                el.classList.remove("col-selected");
+        });
+        if (selectedCols.size > 0) {
+            statusEl.textContent = "選択中の列: " + formatSelectedColumns(selectedCols);
+        }
+        else {
+            statusEl.textContent = "列をクリックまたはドラッグで選択してください (Ctrlキーで複数選択)";
+        }
+    };
+    try {
+        const res = await invoke("browse_excel_grid", { path, sheet, rows: 10, cols: 10, mode: typeof gridMode === "string" ? gridMode : "top" });
+        wrapEl.innerHTML = "";
+        const table = document.createElement("table");
+        table.className = "cell-grid";
+        // ヘッダー行
+        const thead = document.createElement("thead");
+        const headerRow = document.createElement("tr");
+        const cornerTh = document.createElement("th");
+        cornerTh.className = "corner-header";
+        headerRow.appendChild(cornerTh);
+        for (let c = 0; c < 10; c++) {
+            const th = document.createElement("th");
+            const absCol = (res.start_col || 0) + c;
+            th.textContent = colLetterOf(absCol);
+            th.dataset.col = String(absCol);
+            headerRow.appendChild(th);
+        }
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+        // データ行
+        const tbody = document.createElement("tbody");
+        const rowValsList = res.rows || [];
+        for (let r = 0; r < 10; r++) {
+            const tr = document.createElement("tr");
+            const absRow = (res.start_row || 0) + r + 1;
+            const rowTh = document.createElement("th");
+            rowTh.className = "row-header";
+            rowTh.textContent = String(absRow);
+            tr.appendChild(rowTh);
+            const rowVals = rowValsList[r] || [];
+            for (let c = 0; c < 10; c++) {
+                const td = document.createElement("td");
+                const absCol = (res.start_col || 0) + c;
+                const colLetter = colLetterOf(absCol);
+                const addr = `${colLetter}${absRow}`;
+                const val = rowVals[c] ?? "";
+                td.dataset.col = String(absCol);
+                if (pickMode === "cell" && initialCell && addr === initialCell) {
+                    td.classList.add("cell-selected");
+                }
+                const addrSpan = document.createElement("span");
+                addrSpan.className = "cell-addr";
+                addrSpan.textContent = addr;
+                td.appendChild(addrSpan);
+                const valSpan = document.createElement("span");
+                valSpan.textContent = val !== "" ? val : "(空)";
+                if (val === "")
+                    valSpan.style.color = "var(--muted)";
+                td.appendChild(valSpan);
+                td.title = `${addr}: ${val || "(空)"}`;
+                if (pickMode === "cell") {
+                    td.onclick = () => {
+                        table.querySelectorAll("td.cell-selected").forEach((el) => el.classList.remove("cell-selected"));
+                        td.classList.add("cell-selected");
+                        cellInput.value = addr;
+                        autoFillDefaultName();
+                        maybeFetchAndRenderFields();
+                        dlg.close();
+                    };
+                }
+                tr.appendChild(td);
+            }
+            tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+        wrapEl.appendChild(table);
+        if (pickMode === "column") {
+            updateSelectionDisplay(table);
+            const onMouseDown = (ev) => {
+                const target = ev.target.closest("th[data-col], td[data-col]");
+                if (!target || ev.button !== 0)
+                    return;
+                ev.preventDefault();
+                const c = Number(target.dataset.col);
+                isDragging = true;
+                dragStartCol = c;
+                if (ev.ctrlKey || ev.metaKey) {
+                    dragBaseSelected = new Set(selectedCols);
+                    if (dragBaseSelected.has(c)) {
+                        selectedCols.delete(c);
+                    }
+                    else {
+                        selectedCols.add(c);
+                    }
+                }
+                else {
+                    dragBaseSelected = new Set();
+                    selectedCols.clear();
+                    selectedCols.add(c);
+                }
+                updateSelectionDisplay(table);
+            };
+            const onMouseOver = (ev) => {
+                if (!isDragging)
+                    return;
+                const target = ev.target.closest("th[data-col], td[data-col]");
+                if (!target)
+                    return;
+                const c = Number(target.dataset.col);
+                selectedCols.clear();
+                for (const x of dragBaseSelected)
+                    selectedCols.add(x);
+                const minC = Math.min(dragStartCol, c);
+                const maxC = Math.max(dragStartCol, c);
+                for (let x = minC; x <= maxC; x++)
+                    selectedCols.add(x);
+                updateSelectionDisplay(table);
+            };
+            const onMouseUp = () => {
+                isDragging = false;
+            };
+            table.addEventListener("mousedown", onMouseDown);
+            table.addEventListener("mouseover", onMouseOver);
+            document.addEventListener("mouseup", onMouseUp);
+            const cleanup = () => {
+                document.removeEventListener("mouseup", onMouseUp);
+                confirmBtn.onclick = null;
+                dlg.removeEventListener("close", cleanup);
+            };
+            dlg.addEventListener("close", cleanup);
+            confirmBtn.onclick = () => {
+                cellInput.value = formatSelectedColumns(selectedCols);
+                autoFillDefaultName();
+                maybeFetchAndRenderFields();
+                dlg.close();
+            };
+        }
+        else {
+            statusEl.textContent = "クリックでセルを選択してください";
+        }
+    }
+    catch (e) {
+        wrapEl.innerHTML = `<div class='picker-empty'>取得失敗: ${String(e)}</div>`;
+    }
+}
+$("cell-picker-close").onclick = () => $("cell-picker").close();
 // ---- Excel/SQLite/Access テーブル一括ピッカー ----
 const tablePickerDlg = $("table-picker");
 const tablePickerList = $("table-picker-list");
@@ -3590,9 +3999,9 @@ function updateTablePickerCount() {
     tablePickerCount.textContent = `${n} 件選択中`;
 }
 async function openTablePicker(browse) {
-    const path = normalizePath(document.getElementById("fd-path")?.value);
+    const path = getTargetExcelPath();
     if (!path) {
-        alert("先にファイルパスを入力してください");
+        alert("先にファイルパスを入力・選択してください");
         return;
     }
     $("table-picker-title").textContent = browse === "excel_table" ? "テーブル(ListObject)一覧" : "テーブル一覧";

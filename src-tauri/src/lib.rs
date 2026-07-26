@@ -132,6 +132,7 @@ pub fn run() {
             commands::browse_graph_site_resources,
             commands::browse_excel_sheets,
             commands::browse_excel_tables,
+            commands::browse_excel_grid,
             commands::browse_sqlite_tables,
             commands::browse_accdb_tables,
             commands::browse_browser_profiles,

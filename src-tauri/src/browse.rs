@@ -178,6 +178,53 @@ pub fn list_excel_tables(path: &str) -> Result<Vec<String>> {
     Ok(wb.table_names().into_iter().cloned().collect())
 }
 
+#[derive(Serialize, Debug, PartialEq, Eq)]
+pub struct ExcelGridPreview {
+    pub start_row: u32,
+    pub start_col: u32,
+    pub rows: Vec<Vec<String>>,
+}
+
+/// Excelシートの max_rows x max_cols セルを表形式グリッドでプレビュー取得する。
+/// - "top": 先頭行・先頭列からの 10x10
+/// - "bottom_left" / "bottom": 最終行の先頭列からの 10x10
+/// - "bottom_right": 最終行の最終列からの 10x10
+pub fn preview_excel_grid(path: &str, sheet: &str, max_rows: usize, max_cols: usize, mode: &str) -> Result<ExcelGridPreview> {
+    use calamine::Reader;
+    let mut wb = calamine::open_workbook_auto(path)?;
+    let range = wb.worksheet_range(sheet)?;
+    let end_pos = range.end().unwrap_or((0, 0));
+    
+    let start_row = if mode == "bottom" || mode == "bottom_left" || mode == "bottom_right" {
+        end_pos.0.saturating_sub((max_rows as u32).saturating_sub(1))
+    } else {
+        0
+    };
+    let end_row = start_row + (max_rows as u32).saturating_sub(1);
+
+    let start_col = if mode == "bottom_right" {
+        end_pos.1.saturating_sub((max_cols as u32).saturating_sub(1))
+    } else {
+        0
+    };
+
+    let mut out = Vec::new();
+    for r in start_row..=end_row {
+        let mut row_vals = Vec::new();
+        for c in 0..max_cols as u32 {
+            let col_idx = start_col + c;
+            let val = range.get_value((r, col_idx)).map(crate::connectors::cell_to_string).unwrap_or_default();
+            row_vals.push(val);
+        }
+        out.push(row_vals);
+    }
+    Ok(ExcelGridPreview {
+        start_row,
+        start_col,
+        rows: out,
+    })
+}
+
 pub fn list_sqlite_tables(path: &str) -> Result<Vec<String>> {
     let conn = rusqlite::Connection::open_with_flags(
         path,
@@ -419,6 +466,19 @@ mod tests {
         let names = list_excel_tables(&sample("employees.xlsx")).unwrap();
         assert_eq!(names, vec!["社員テーブル".to_string()]);
     }
+
+    #[test]
+    fn preview_excel_grid_returns_grid() {
+        let grid_top = preview_excel_grid(&sample("employees.xlsx"), "社員", 5, 5, "top").unwrap();
+        assert_eq!(grid_top.start_row, 0);
+        assert_eq!(grid_top.start_col, 0);
+        assert_eq!(grid_top.rows.len(), 5);
+        assert_eq!(grid_top.rows[0].len(), 5);
+
+        let grid_bottom = preview_excel_grid(&sample("employees.xlsx"), "社員", 5, 5, "bottom").unwrap();
+        assert_eq!(grid_bottom.rows.len(), 5);
+    }
+
 
     #[test]
     fn list_sqlite_tables_excludes_sqlite_internal() {

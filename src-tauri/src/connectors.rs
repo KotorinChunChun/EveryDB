@@ -11,6 +11,20 @@ use crate::model::Record;
 /// データソース取得の共通拡張点（要件 §5-3）。
 pub trait Connector {
     fn fetch(&self) -> Result<Vec<Record>>;
+    /// レコード全件を取得せず、フィールド（列）名の一覧のみを高速に取得する。
+    fn field_names(&self) -> Result<Vec<String>> {
+        let records = self.fetch()?;
+        let mut seen = std::collections::HashSet::new();
+        let mut names = Vec::new();
+        for r in &records {
+            for k in r.fields.keys() {
+                if seen.insert(k.clone()) {
+                    names.push(k.clone());
+                }
+            }
+        }
+        Ok(names)
+    }
 }
 
 /// パス文字列の両端のダブルクォートを除去する（エクスプローラの「パスのコピー」対策）。
@@ -176,17 +190,7 @@ pub fn raw_field_names(type_: &str, config_json: &str) -> Result<Vec<String>> {
     }
     let stripped = serde_json::to_string(&v)?;
     let connector = build_connector(type_, &stripped)?;
-    let records = connector.fetch()?;
-    let mut seen = std::collections::HashSet::new();
-    let mut names = Vec::new();
-    for r in &records {
-        for k in r.fields.keys() {
-            if seen.insert(k.clone()) {
-                names.push(k.clone());
-            }
-        }
-    }
-    Ok(names)
+    connector.field_names()
 }
 
 // ---- CSV ----
@@ -250,6 +254,24 @@ impl Connector for CsvConnector {
         }
         Ok(out)
     }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        let mut builder = csv::ReaderBuilder::new();
+        builder.has_headers(self.has_header);
+        let mut rdr = builder.from_path(&self.path)?;
+        if self.has_header {
+            let hdrs = rdr.headers()?;
+            Ok(hdrs.iter().map(String::from).collect())
+        } else {
+            let mut iter = rdr.records();
+            if let Some(r) = iter.next() {
+                let rec = r?;
+                Ok((0..rec.len()).map(|i| format!("col{}", i + 1)).collect())
+            } else {
+                Ok(Vec::new())
+            }
+        }
+    }
 }
 
 // ---- SQLite ----
@@ -285,6 +307,19 @@ impl Connector for SqliteConnector {
         }
         Ok(out)
     }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        if !self.table.chars().all(|c| c.is_alphanumeric() || c == '_') || self.table.is_empty() {
+            return Err(anyhow!("不正なテーブル名: {}", self.table));
+        }
+        let conn = Connection::open_with_flags(
+            &self.path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+        )?;
+        let sql = format!("SELECT * FROM \"{}\" LIMIT 0", self.table);
+        let stmt = conn.prepare(&sql)?;
+        Ok(stmt.column_names().iter().map(|s| s.to_string()).collect())
+    }
 }
 
 fn value_ref_to_string(v: rusqlite::Result<rusqlite::types::ValueRef>) -> String {
@@ -300,7 +335,7 @@ fn value_ref_to_string(v: rusqlite::Result<rusqlite::types::ValueRef>) -> String
 }
 
 // ---- Excel 共通 ----
-fn cell_to_string(d: &calamine::Data) -> String {
+pub(crate) fn cell_to_string(d: &calamine::Data) -> String {
     use calamine::Data as D;
     match d {
         D::Empty => String::new(),
@@ -422,6 +457,30 @@ impl Connector for ExcelTableConnector {
         }
         Ok(out)
     }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        use calamine::Reader;
+        if let Some(table_name) = self.table.as_deref().filter(|s| !s.is_empty()) {
+            let mut wb: calamine::Xlsx<_> = calamine::open_workbook(&self.path).map_err(|e| {
+                anyhow!("Excel テーブル(ListObject)の読み込みには xlsx/xlsm 形式が必要です: {e}")
+            })?;
+            wb.load_tables()?;
+            let table = wb.table_by_name(table_name)?;
+            return Ok(table.columns().to_vec());
+        }
+        let sheet = self
+            .sheet
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow!("テーブル(ListObject)名が指定されていません"))?;
+        let mut wb = calamine::open_workbook_auto(&self.path)?;
+        let range = wb.worksheet_range(sheet)?;
+        if let Some(first) = range.rows().next() {
+            Ok(first.iter().map(cell_to_string).collect())
+        } else {
+            Ok(Vec::new())
+        }
+    }
 }
 
 /// 0 始まり列番号(0=A, 1=B, ...)を Excel の列文字に変換する。
@@ -451,15 +510,243 @@ fn parse_a1_range(range: &str) -> Result<((u32, u32), (u32, u32))> {
 }
 
 // ---- Excel: セル範囲 ----
+
+/// xlsx ファイルからオートフィルタの範囲（`<autoFilter ref="A1:D100"/>` の ref 属性）を読み取る。
+/// calamine では取得できないため、zip でシートの XML を直接パースする。
+fn read_autofilter_ref(path: &str, sheet_name: &str) -> Option<((u32, u32), (u32, u32))> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).ok()?;
+    let mut zip = zip::ZipArchive::new(file).ok()?;
+
+    // workbook.xml からシート名→sheetN.xml のマッピングを取得する。
+    // まず xl/workbook.xml を読んでシート名と rId の対応を取得し、
+    // xl/_rels/workbook.xml.rels から rId→ファイルパスの対応を取得する。
+    let mut sheet_file = None;
+
+    // workbook.xml から sheetId/rId を取得
+    let mut rid: Option<String> = None;
+    if let Ok(mut wbf) = zip.by_name("xl/workbook.xml") {
+        let mut xml = String::new();
+        wbf.read_to_string(&mut xml).ok()?;
+        // 簡易パース: <sheet name="Sheet1" sheetId="1" r:id="rId1"/>
+        for line in xml.split('<') {
+            let line = line.trim();
+            if !line.starts_with("sheet ") && !line.starts_with("sheet\t") {
+                continue;
+            }
+            // name="..." を探す
+            let name_val = extract_xml_attr(line, "name")?;
+            if name_val == sheet_name {
+                rid = extract_xml_attr(line, "r:id");
+                break;
+            }
+        }
+    }
+    let rid = rid?;
+
+    // workbook.xml.rels から rId → Target のマッピング
+    if let Ok(mut relf) = zip.by_name("xl/_rels/workbook.xml.rels") {
+        let mut xml = String::new();
+        relf.read_to_string(&mut xml).ok()?;
+        for line in xml.split('<') {
+            let line = line.trim();
+            if !line.starts_with("Relationship ") {
+                continue;
+            }
+            if let Some(id) = extract_xml_attr(line, "Id") {
+                if id == rid {
+                    if let Some(target) = extract_xml_attr(line, "Target") {
+                        // Target は "worksheets/sheet1.xml" のような相対パス
+                        let full = if target.starts_with('/') {
+                            target[1..].to_string()
+                        } else {
+                            format!("xl/{target}")
+                        };
+                        sheet_file = Some(full);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    let sheet_file = sheet_file?;
+
+    // シートの XML から <autoFilter ref="A1:D100"/> を探す
+    if let Ok(mut sf) = zip.by_name(&sheet_file) {
+        let mut xml = String::new();
+        sf.read_to_string(&mut xml).ok()?;
+        for line in xml.split('<') {
+            let line = line.trim();
+            if line.starts_with("autoFilter ") || line.starts_with("autoFilter\t") {
+                if let Some(ref_val) = extract_xml_attr(line, "ref") {
+                    return parse_a1_range(&ref_val).ok();
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// XML 要素の属性値を簡易的に取り出すヘルパー（例: `name="Sheet1"` → `Some("Sheet1")`）。
+fn extract_xml_attr(element: &str, attr: &str) -> Option<String> {
+    let needle = format!("{attr}=\"");
+    let start = element.find(&needle)? + needle.len();
+    let rest = &element[start..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+fn is_cell_non_empty(v: &calamine::Data) -> bool {
+    match v {
+        calamine::Data::Empty => false,
+        calamine::Data::String(s) => !s.trim().is_empty(),
+        _ => true,
+    }
+}
+
+/// calamine::Range からデータが存在する先頭行（行, 列）を特定する。
+/// `ref_cols` が指定されている場合はそのいずれかの列のみを調べ、なければ全列を走査する。
+fn detect_start_cell(range: &calamine::Range<calamine::Data>, ref_cols: &[u32]) -> Option<(u32, u32)> {
+    let (start, end) = (range.start().unwrap_or((0, 0)), range.end().unwrap_or((0, 0)));
+
+    if !ref_cols.is_empty() {
+        for r in start.0..=end.0 {
+            let has_val = ref_cols.iter().any(|&col| {
+                range.get_value((r, col)).map(is_cell_non_empty).unwrap_or(false)
+            });
+            if has_val {
+                let min_col = (start.1..=end.1).find(|&c| {
+                    range.get_value((r, c)).map(is_cell_non_empty).unwrap_or(false)
+                }).unwrap_or(start.1);
+                return Some((r, min_col));
+            }
+        }
+        None
+    } else {
+        for r in start.0..=end.0 {
+            for c in start.1..=end.1 {
+                if let Some(v) = range.get_value((r, c)) {
+                    if is_cell_non_empty(v) {
+                        return Some((r, c));
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+/// calamine::Range からデータが存在する末尾行（行, 列）を特定する。
+/// `ref_cols` が指定されている場合はそのいずれかの列のみを調べ、なければ全列を走査する。
+fn detect_end_cell(range: &calamine::Range<calamine::Data>, ref_cols: &[u32]) -> Option<(u32, u32)> {
+    let (start, end) = (range.start().unwrap_or((0, 0)), range.end().unwrap_or((0, 0)));
+
+    if !ref_cols.is_empty() {
+        // ref_cols 指定時: 下から上に走査し、いずれかの指定列に非空セルがある最初の行を探す
+        for r in (start.0..=end.0).rev() {
+            let has_val = ref_cols.iter().any(|&col| {
+                range.get_value((r, col)).map(is_cell_non_empty).unwrap_or(false)
+            });
+            if has_val {
+                return Some((r, end.1));
+            }
+        }
+        None
+    } else {
+        // 全列走査: 下から上に走査し、非空セルが存在する最終行とその行/それまでの最右列を探す
+        let mut max_c = start.1;
+        let mut last_r = None;
+        for r in (start.0..=end.0).rev() {
+            let mut found_in_row = false;
+            for c in start.1..=end.1 {
+                if let Some(v) = range.get_value((r, c)) {
+                    if is_cell_non_empty(v) {
+                        found_in_row = true;
+                        if c > max_c { max_c = c; }
+                    }
+                }
+            }
+            if found_in_row && last_r.is_none() {
+                last_r = Some(r);
+            }
+        }
+        last_r.map(|r| (r, max_c))
+    }
+}
+
+/// "A, B" や "A:C" や "A, C:E" のような文字列を解析して列インデックス(0-indexed)の昇順ソート済みリスト(重複なし)を返す。
+fn parse_ref_columns(s: &str) -> Result<Vec<u32>> {
+    let mut cols = Vec::new();
+    for part in s.split(',') {
+        let part = part.trim();
+        if part.is_empty() { continue; }
+        if let Some((start_str, end_str)) = part.split_once(':') {
+            let c1 = parse_col_letter(start_str.trim())?;
+            let c2 = parse_col_letter(end_str.trim())?;
+            let (min_c, max_c) = (c1.min(c2), c1.max(c2));
+            for c in min_c..=max_c {
+                cols.push(c);
+            }
+        } else {
+            cols.push(parse_col_letter(part)?);
+        }
+    }
+    cols.sort_unstable();
+    cols.dedup();
+    Ok(cols)
+}
+
+/// 列文字（"A", "AB" 等）を 0 始まりの列番号に変換する。
+fn parse_col_letter(s: &str) -> Result<u32> {
+    let s = s.trim().to_ascii_uppercase();
+    if s.is_empty() || !s.chars().all(|c| c.is_ascii_alphabetic()) {
+        return Err(anyhow!("不正な列指定: {s}"));
+    }
+    let mut col: u32 = 0;
+    for ch in s.chars() {
+        col = col * 26 + (ch as u32 - 'A' as u32 + 1);
+    }
+    Ok(col - 1)
+}
+
 #[derive(Deserialize)]
 struct ExcelRangeConnector {
     path: String,
     sheet: String,
-    /// "A1:C10" 形式。旧 "cell" フィールドも受け付ける。
+
+    // ---- 新しいフィールド ----
+    /// 先頭セルの取得方法: "auto" (既定) or "manual"
+    #[serde(default = "default_auto")]
+    start_mode: String,
+    /// 手動指定時の先頭セル (A1 形式の単一セル)
+    #[serde(default)]
+    start_cell: Option<String>,
+    /// 自動取得時の先頭セル用基準列 (任意。"A, B" や "A:C" 等)
+    #[serde(default)]
+    start_ref_column: Option<String>,
+    /// 末尾セルの取得方法: "auto" (既定) or "manual"
+    #[serde(default = "default_auto")]
+    end_mode: String,
+    /// 手動指定時の末尾セル (A1 形式の単一セル)
+    #[serde(default)]
+    end_cell: Option<String>,
+    /// 自動取得時の末尾セル用基準列 (任意。"A, B" や "A:C" 等)
+    #[serde(default)]
+    end_ref_column: Option<String>,
+    /// 旧・自動取得時の基準列 (任意。"A" のような列文字)
+    #[serde(default)]
+    ref_column: Option<String>,
+
+    // ---- 旧フィールド（後方互換）----
+    /// 旧 "A1:C10" 形式
     #[serde(default)]
     range: Option<String>,
+    /// さらに旧い "cell" フィールド
     #[serde(default)]
     cell: Option<String>,
+
     /// 範囲の先頭行をヘッダーとして扱うか（既定 true）。false なら列文字を見出しにする。
     #[serde(default = "default_true")]
     has_header: bool,
@@ -467,18 +754,194 @@ struct ExcelRangeConnector {
     common: CommonCfg,
 }
 
+fn default_auto() -> String { "auto".to_string() }
+
 impl Connector for ExcelRangeConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
         use calamine::Reader;
-        let spec = self
-            .range
-            .as_deref()
-            .or(self.cell.as_deref())
-            .ok_or_else(|| anyhow!("セル範囲(range)が指定されていません"))?;
-        let ((r1, c1), (r2, c2)) = parse_a1_range(spec)?;
+
+        // --- 後方互換: 旧 range/cell フィールドが設定されている場合はそちらを優先 ---
+        if let Some(spec) = self.range.as_deref().or(self.cell.as_deref()).filter(|s| !s.is_empty()) {
+            // 旧フォーマットのまま動作させる（start_mode/end_mode が既定 "auto" のまま来る場合もある）
+            if self.start_cell.is_none() && self.end_cell.is_none() {
+                let ((r1, c1), (r2, c2)) = parse_a1_range(spec)?;
+                let mut wb = calamine::open_workbook_auto(&self.path)?;
+                let range = wb.worksheet_range(&self.sheet)?;
+                return self.read_range(&range, r1, c1, r2, c2);
+            }
+        }
+
+        // --- 新しいフォーマット: start_mode / end_mode で先頭・末尾セルを決定 ---
         let mut wb = calamine::open_workbook_auto(&self.path)?;
         let range = wb.worksheet_range(&self.sheet)?;
 
+        // ref_column を列番号リストへ変換
+        let start_ref_str = self.start_ref_column.as_deref().or(self.ref_column.as_deref());
+        let start_ref_cols = match start_ref_str {
+            Some(s) if !s.is_empty() => parse_ref_columns(s)?,
+            _ => Vec::new(),
+        };
+        let end_ref_str = self.end_ref_column.as_deref().or(self.ref_column.as_deref());
+        let end_ref_cols = match end_ref_str {
+            Some(s) if !s.is_empty() => parse_ref_columns(s)?,
+            _ => Vec::new(),
+        };
+
+        // オートフィルタ情報を取得（xlsx のみ）
+        let autofilter = read_autofilter_ref(&self.path, &self.sheet);
+
+        // 先頭セルの決定
+        let (r1, c1) = match self.start_mode.as_str() {
+            "manual" => {
+                let cell_str = self.start_cell.as_deref()
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| anyhow!("先頭セルが手動指定ですが、値が入力されていません"))?;
+                parse_a1(cell_str)?
+            }
+            _ => {
+                // 自動取得: 優先順位
+                // 1. オートフィルタの設定行（左上セル）
+                // 2. ref_column で指定された列のデータ先頭行
+                // 3. いずれかの列の先頭行
+                if let Some(((ar, ac), _)) = autofilter {
+                    (ar, ac)
+                } else if !start_ref_cols.is_empty() {
+                    detect_start_cell(&range, &start_ref_cols)
+                        .or_else(|| detect_start_cell(&range, &[]))
+                        .unwrap_or_else(|| range.start().unwrap_or((0, 0)))
+                } else {
+                    detect_start_cell(&range, &[])
+                        .unwrap_or_else(|| range.start().unwrap_or((0, 0)))
+                }
+            }
+        };
+
+        // 末尾セルの決定
+        let (r2, c2) = match self.end_mode.as_str() {
+            "manual" => {
+                let cell_str = self.end_cell.as_deref()
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| anyhow!("末尾セルが手動指定ですが、値が入力されていません"))?;
+                parse_a1(cell_str)?
+            }
+            _ => {
+                // 自動取得: 優先順位
+                // 1. ref_column (end_ref_column) で指定された列のいずれかが空欄ではない最終行
+                // 2. いずれかの列のデータ最終行
+                // 3. オートフィルタ対象範囲（右下セル）
+                // 4. UsedRange (range.end())
+                if !end_ref_cols.is_empty() {
+                    detect_end_cell(&range, &end_ref_cols)
+                        .or_else(|| detect_end_cell(&range, &[]))
+                        .or_else(|| autofilter.map(|(_, end)| end))
+                        .unwrap_or_else(|| range.end().unwrap_or((0, 0)))
+                } else {
+                    detect_end_cell(&range, &[])
+                        .or_else(|| autofilter.map(|(_, end)| end))
+                        .unwrap_or_else(|| range.end().unwrap_or((0, 0)))
+                }
+            }
+        };
+
+        // 安全なクランプ: 先頭 ≤ 末尾
+        let (r1, c1, r2, c2) = (r1.min(r2), c1.min(c2), r1.max(r2), c1.max(c2));
+
+        self.read_range(&range, r1, c1, r2, c2)
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        use calamine::Reader;
+
+        // 後方互換: 旧 range/cell フィールド
+        if let Some(spec) = self.range.as_deref().or(self.cell.as_deref()).filter(|s| !s.is_empty()) {
+            if self.start_cell.is_none() && self.end_cell.is_none() {
+                let ((r1, c1), (_r2, c2)) = parse_a1_range(spec)?;
+                let mut wb = calamine::open_workbook_auto(&self.path)?;
+                let range = wb.worksheet_range(&self.sheet)?;
+                let cell_at = |r: u32, c: u32| range.get_value((r, c)).map(cell_to_string).unwrap_or_default();
+                if self.has_header {
+                    return Ok((c1..=c2)
+                        .map(|c| {
+                            let h = cell_at(r1, c);
+                            if h.is_empty() { col_to_letters(c) } else { h }
+                        })
+                        .collect());
+                } else {
+                    return Ok((c1..=c2).map(col_to_letters).collect());
+                }
+            }
+        }
+
+        let mut wb = calamine::open_workbook_auto(&self.path)?;
+        let range = wb.worksheet_range(&self.sheet)?;
+
+        let start_ref_str = self.start_ref_column.as_deref().or(self.ref_column.as_deref());
+        let start_ref_cols = match start_ref_str {
+            Some(s) if !s.is_empty() => parse_ref_columns(s)?,
+            _ => Vec::new(),
+        };
+
+        let autofilter = read_autofilter_ref(&self.path, &self.sheet);
+
+        let (r1, c1) = match self.start_mode.as_str() {
+            "manual" => {
+                let cell_str = self.start_cell.as_deref()
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| anyhow!("先頭セルが手動指定ですが、値が入力されていません"))?;
+                parse_a1(cell_str)?
+            }
+            _ => {
+                if let Some(((ar, ac), _)) = autofilter {
+                    (ar, ac)
+                } else if !start_ref_cols.is_empty() {
+                    detect_start_cell(&range, &start_ref_cols)
+                        .or_else(|| detect_start_cell(&range, &[]))
+                        .unwrap_or_else(|| range.start().unwrap_or((0, 0)))
+                } else {
+                    detect_start_cell(&range, &[])
+                        .unwrap_or_else(|| range.start().unwrap_or((0, 0)))
+                }
+            }
+        };
+
+        let c2 = match self.end_mode.as_str() {
+            "manual" => {
+                if let Some(cell_str) = self.end_cell.as_deref().filter(|s| !s.is_empty()) {
+                    parse_a1(cell_str).map(|(_, c)| c).unwrap_or_else(|_| range.end().map(|x| x.1).unwrap_or(c1))
+                } else {
+                    range.end().map(|x| x.1).unwrap_or(c1)
+                }
+            }
+            _ => range.end().map(|x| x.1).unwrap_or(c1),
+        };
+
+        let c2 = c1.max(c2);
+        let cell_at = |r: u32, c: u32| range.get_value((r, c)).map(cell_to_string).unwrap_or_default();
+
+        if self.has_header {
+            let mut seen = std::collections::HashSet::new();
+            let mut headers = Vec::new();
+            for c in c1..=c2 {
+                let h = cell_at(r1, c);
+                let name = if h.is_empty() { col_to_letters(c) } else { h };
+                let mut final_name = name.clone();
+                let mut counter = 1;
+                while !seen.insert(final_name.clone()) {
+                    counter += 1;
+                    final_name = format!("{name}_{counter}");
+                }
+                headers.push(final_name);
+            }
+            Ok(headers)
+        } else {
+            Ok((c1..=c2).map(col_to_letters).collect())
+        }
+    }
+}
+
+impl ExcelRangeConnector {
+    /// 決定した範囲からレコードを読み取る共通処理。
+    fn read_range(&self, range: &calamine::Range<calamine::Data>, r1: u32, c1: u32, r2: u32, c2: u32) -> Result<Vec<Record>> {
         let cell_at = |r: u32, c: u32| range.get_value((r, c)).map(cell_to_string).unwrap_or_default();
 
         // ヘッダー行の決定。
@@ -982,6 +1445,12 @@ mod tests {
         let recs = fetch("excel_cell", serde_json::json!({ "path": sample("employees.xlsx"), "sheet": "設定", "cell": "B2" }));
         assert_eq!(recs.len(), 1);
         assert_eq!(recs[0].fields.get("B").and_then(|v| v.as_str()), Some("サンプル株式会社"));
+    }
+
+    #[test]
+    fn parse_ref_columns_works() {
+        assert_eq!(parse_ref_columns("A, C:E, B").unwrap(), vec![0, 1, 2, 3, 4]);
+        assert_eq!(parse_ref_columns("B:B, D").unwrap(), vec![1, 3]);
     }
 
     #[test]
