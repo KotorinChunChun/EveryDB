@@ -17,6 +17,54 @@ let mpStatus = { is_set: false, unlocked: false };
 const ROW_H = 26; // px 固定行高（仮想スクロール用）
 const COL_W = 200; // px 既定列幅
 const SECRET_PLACEHOLDER = "••••••••";
+// ==== 状態の永続化 (localStorage) ====
+const STORAGE_KEY_ROW_LIMIT = "everydb_row_limit";
+const STORAGE_KEY_SELECTED_SOURCES = "everydb_selected_source_ids";
+const STORAGE_KEY_COLLAPSED_PARENTS = "everydb_collapsed_parents";
+function saveRowLimitState(val) {
+    try {
+        localStorage.setItem(STORAGE_KEY_ROW_LIMIT, val);
+    }
+    catch { }
+}
+function loadRowLimitState() {
+    try {
+        return localStorage.getItem(STORAGE_KEY_ROW_LIMIT);
+    }
+    catch {
+        return null;
+    }
+}
+function saveSelectedSourcesState() {
+    try {
+        localStorage.setItem(STORAGE_KEY_SELECTED_SOURCES, JSON.stringify(Array.from(selectedSourceIds)));
+    }
+    catch { }
+}
+function loadSelectedSourcesState() {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY_SELECTED_SOURCES);
+        return raw ? JSON.parse(raw) : null;
+    }
+    catch {
+        return null;
+    }
+}
+function saveCollapsedParentsState() {
+    try {
+        localStorage.setItem(STORAGE_KEY_COLLAPSED_PARENTS, JSON.stringify(Array.from(collapsedParents)));
+    }
+    catch { }
+}
+function loadCollapsedParentsState() {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY_COLLAPSED_PARENTS);
+        return raw ? JSON.parse(raw) : null;
+    }
+    catch {
+        return null;
+    }
+}
 /** ファイルパス両端のダブルクォート・空白を除去する（エクスプローラの「パスのコピー」対策）。 */
 function normalizePath(v) {
     let s = (v ?? "").trim();
@@ -134,7 +182,12 @@ async function loadSources() {
     sources = await invoke("list_sources");
     if (!initialLoadDone) {
         initialLoadDone = true;
-        if (selectedSourceIds.size === 0) {
+        const saved = loadSelectedSourcesState();
+        if (saved && Array.isArray(saved)) {
+            const valid = new Set(sources.map((s) => s.id));
+            selectedSourceIds = new Set(saved.filter((id) => valid.has(id)));
+        }
+        else if (selectedSourceIds.size === 0) {
             sources.forEach((s) => selectedSourceIds.add(s.id));
         }
     }
@@ -145,6 +198,7 @@ async function loadSources() {
             }
         }
     }
+    saveSelectedSourcesState();
     renderSources();
     runSearch();
 }
@@ -272,7 +326,7 @@ headEl.addEventListener("dragleave", (ev) => {
         clearDropTargets();
     }
 });
-const collapsedParents = new Set();
+const collapsedParents = new Set(loadCollapsedParentsState() ?? []);
 let sourceFilter = "";
 /** 接続先キーの表示ラベル（パスは basename、URL 等はそのまま）。 */
 /** 接続先（ツリーの親）ノードのユーザー設定表示名（parentKey -> ラベル）。未設定なら自動導出する。 */
@@ -391,6 +445,7 @@ function makeSourceItem(s) {
         if (ev.altKey) {
             // Alt+クリック: これだけ ON、他は全解除（ソロ選択）。
             selectedSourceIds = new Set([s.id]);
+            saveSelectedSourcesState();
             renderSources();
             runSearch();
             return;
@@ -399,6 +454,7 @@ function makeSourceItem(s) {
             selectedSourceIds.add(s.id);
         else
             selectedSourceIds.delete(s.id);
+        saveSelectedSourcesState();
         renderSources();
         runSearch();
     };
@@ -490,6 +546,7 @@ function visibleSources() {
     return sources.filter(sourceMatchesFilter);
 }
 function renderSources() {
+    saveSelectedSourcesState();
     sourcesEl.innerHTML = "";
     const q = sourceFilter.trim().toLowerCase();
     const match = sourceMatchesFilter;
@@ -535,6 +592,7 @@ function renderSources() {
                 collapsedParents.delete(s.parent);
             else
                 collapsedParents.add(s.parent);
+            saveCollapsedParentsState();
             renderSources();
         };
         twisty.onclick = toggleCollapse;
@@ -723,18 +781,21 @@ sourceFilterClearBtn.onclick = () => {
 $("select-all").onclick = () => {
     for (const s of visibleSources())
         selectedSourceIds.add(s.id);
+    saveSelectedSourcesState();
     renderSources();
     runSearch();
 };
 $("select-none").onclick = () => {
     for (const s of visibleSources())
         selectedSourceIds.delete(s.id);
+    saveSelectedSourcesState();
     renderSources();
     runSearch();
 };
 // 全展開 / 全折畳（データソースの接続先グループを一括開閉）
 $("expand-all").onclick = () => {
     collapsedParents.clear();
+    saveCollapsedParentsState();
     renderSources();
 };
 $("collapse-all").onclick = () => {
@@ -742,6 +803,7 @@ $("collapse-all").onclick = () => {
         if (s.parent)
             collapsedParents.add(s.parent);
     }
+    saveCollapsedParentsState();
     renderSources();
 };
 // ============================================================
@@ -2412,7 +2474,14 @@ async function reloadAllSources() {
 }
 $("s-reload").onclick = () => void reloadAllSources();
 // ---- 行数上限の変更で再検索 ----
-$("row-limit").addEventListener("change", () => runSearch());
+const savedRowLimit = loadRowLimitState();
+if (savedRowLimit) {
+    $("row-limit").value = savedRowLimit;
+}
+$("row-limit").addEventListener("change", () => {
+    saveRowLimitState($("row-limit").value);
+    runSearch();
+});
 function tsvEscape(v) {
     // タブ・改行を空白に置換して 1 セル 1 値を保つ。
     return v.replace(/[\t\r\n]+/g, " ");
