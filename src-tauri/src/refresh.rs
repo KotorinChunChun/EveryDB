@@ -36,6 +36,8 @@ pub fn reload_ids(app: &AppHandle, ids: &[i64]) {
         for &id in ids {
             let _ = reload_one(&mut conn, id);
         }
+        // リロード完了時に FTS5 インデックスを最適化（断片化解消による高速化）
+        let _ = conn.execute("INSERT INTO records_fts(records_fts) VALUES('optimize')", []);
     }
     let _ = app.emit("sources-updated", ());
 }

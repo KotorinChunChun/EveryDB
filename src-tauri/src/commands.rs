@@ -111,6 +111,8 @@ pub async fn add_source(
     let id = db::insert_source(&conn, &type_, &name, &config_json).map_err(err_to_string)?;
     // 追加直後に一度取得しておく（失敗してもソース自体は残り、status=error になる）。
     let _ = reload_one(&mut conn, id);
+    // 取得完了後に FTS5 インデックスを最適化（断片化解消による高速化）
+    let _ = conn.execute("INSERT INTO records_fts(records_fts) VALUES('optimize')", []);
     Ok(id)
 }
 
@@ -163,6 +165,8 @@ pub async fn add_source_from_sibling(
     let protected = secret::protect_config(&type_, &merged).map_err(err_to_string)?;
     let id = db::insert_source(&conn, &type_, &name, &protected).map_err(err_to_string)?;
     let _ = reload_one(&mut conn, id);
+    // 取得完了後に FTS5 インデックスを最適化
+    let _ = conn.execute("INSERT INTO records_fts(records_fts) VALUES('optimize')", []);
     Ok(id)
 }
 
@@ -206,6 +210,8 @@ pub async fn update_source(
     let protected = secret::protect_config(&type_, &merged).map_err(err_to_string)?;
     db::update_source(&conn, id, &name, &protected).map_err(err_to_string)?;
     let _ = reload_one(&mut conn, id);
+    // 更新・再取得完了後に FTS5 インデックスを最適化
+    let _ = conn.execute("INSERT INTO records_fts(records_fts) VALUES('optimize')", []);
     Ok(())
 }
 
@@ -426,6 +432,8 @@ pub fn reload_sources(state: State<'_, AppState>, source_ids: Vec<i64>) -> Resul
     for id in ids {
         let _ = reload_one(&mut conn, id); // 個別失敗は status に記録し、続行
     }
+    // 一括リロード完了時に FTS5 インデックスを最適化
+    let _ = conn.execute("INSERT INTO records_fts(records_fts) VALUES('optimize')", []);
     Ok(())
 }
 
