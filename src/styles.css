@@ -209,7 +209,7 @@ input.m-interval:focus { outline: none; border-color: var(--accent-2); }
 /* 管理モードでは行が詰まりすぎないよう高さを揃え、テーブル行と接続先行で
    要素間の gap も揃える（揃えないと固定幅の管理列が行ごとに横ずれする）。 */
 .sidebar.manage .source-item, .sidebar.manage .tree-parent { padding-top: 2px; padding-bottom: 2px; gap: 4px; }
-.sidebar.manage .source-item .mini-btn { display: none; }
+.sidebar.manage .source-item .mini-btn, .sidebar.manage .tree-parent .mini-btn { display: none; }
 
 /* ツリー: グループ・親（ファイル/サーバー）ノード */
 .tree-group { display: flex; flex-direction: column; gap: 1px; position: relative; border-radius: 3px; }
@@ -282,13 +282,16 @@ tr.drop-target-after td::after { bottom: -1px; }
 .source-item label { flex: 1; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source-item .count { color: var(--muted); font-size: 11px; }
 .source-item .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.source-item .mini-btn {
+.source-item .mini-btn,
+.tree-parent .mini-btn {
   flex: none; width: 18px; height: 18px; line-height: 16px; text-align: center; padding: 0;
   background: transparent; border: 1px solid transparent; border-radius: 3px; color: var(--muted); cursor: pointer;
-  font-size: 12px; opacity: 0; transition: opacity 0.1s;
+  font-size: 12px; opacity: 0.7; transition: opacity 0.1s, background 0.1s, border-color 0.1s;
 }
-.source-item:hover .mini-btn { opacity: 1; }
-.source-item .mini-btn:hover { background: var(--panel-2); border-color: var(--border); color: var(--text); }
+.source-item:hover .mini-btn,
+.tree-parent:hover .mini-btn { opacity: 1; }
+.source-item .mini-btn:hover,
+.tree-parent .mini-btn:hover { background: var(--panel-2); border-color: var(--border); color: var(--text); opacity: 1; }
 .dot.ok { background: #3fb950; }
 .dot.err { background: #f85149; }
 .dot.idle { background: #6e7681; }

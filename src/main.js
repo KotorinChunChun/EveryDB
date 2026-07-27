@@ -630,8 +630,27 @@ function renderSources() {
         groupWrap.dataset.parentKey = s.parent;
         // 接続先のテーブル数は表示しない（要件）。件数はツールチップにのみ残す。
         plabel.title = `${s.parent}\n(${children.length} テーブル)`;
-        parentRow.append(twisty, pcb, plabel);
-        if (manageMode) {
+        const parentReloadBtn = document.createElement("button");
+        parentReloadBtn.className = "mini-btn";
+        parentReloadBtn.title = "この接続先のテーブルをすべて再読込";
+        parentReloadBtn.textContent = "⟳";
+        parentReloadBtn.onclick = async (ev) => {
+            ev.stopPropagation();
+            resultInfo.textContent = "リロード中…";
+            try {
+                await invoke("reload_sources", { sourceIds: children.map((c) => c.id) });
+            }
+            catch (e) {
+                resultInfo.textContent = "リロード失敗: " + String(e);
+            }
+            await refreshSidebar();
+            await runSearch();
+        };
+        if (!manageMode) {
+            parentRow.append(twisty, pcb, plabel, parentReloadBtn);
+        }
+        else {
+            parentRow.append(twisty, pcb, plabel);
             const parentKey = s.parent;
             const totalRecords = children.reduce((a, c) => a + c.record_count, 0);
             const lastSuccess = children.map((c) => c.last_success_at).filter(Boolean).sort().pop() ?? null;
