@@ -44,6 +44,8 @@ import {
 import type { SortState } from "./features/grid/data";
 import { scrollTopToRevealRow, visibleRowRange } from "./features/grid/viewport";
 import { normalizeRowLimit, presetSourceIds, shouldApplySearchResponse } from "./features/search/state";
+import { renderHistoryPanel, renderPresetPanel } from "./features/search/panels";
+import type { SearchPreset } from "./features/search/panels";
 
 // ==== 状態 ====
 let sources: SourceInfo[] = [];
@@ -1091,26 +1093,11 @@ async function showHistory() {
   try {
     items = await invoke<string[]>("list_search_history");
   } catch { /* noop */ }
-  historyPanel.innerHTML = "";
-  if (items.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "history-empty";
-    empty.textContent = "検索履歴はありません";
-    historyPanel.appendChild(empty);
-  } else {
-    for (const q of items) {
-      const it = document.createElement("div");
-      it.className = "history-item";
-      it.textContent = q;
-      it.onmousedown = (ev) => {
-        ev.preventDefault();
-        searchInput.value = q;
-        historyPanel.hidden = true;
-        runSearch();
-      };
-      historyPanel.appendChild(it);
-    }
-  }
+  renderHistoryPanel(historyPanel, items, (query) => {
+    searchInput.value = query;
+    historyPanel.hidden = true;
+    void runSearch();
+  });
   historyPanel.hidden = false;
 }
 searchInput.addEventListener("focus", () => { if (!searchInput.value) void showHistory(); });
@@ -1118,13 +1105,6 @@ searchInput.addEventListener("input", () => { historyPanel.hidden = true; schedu
 searchInput.addEventListener("blur", () => { setTimeout(() => (historyPanel.hidden = true), 150); });
 
 // ---- 検索プリセット・お気に入り（要件 REQ-BM-01）----
-interface SearchPreset {
-  id: number;
-  name: string;
-  query: string;
-  source_ids: number[];
-  created_at: string;
-}
 const presetPanel = $<HTMLDivElement>("preset-panel");
 
 $<HTMLButtonElement>("preset-save").onclick = async () => {
@@ -1147,38 +1127,15 @@ async function showPresetPanel() {
   try {
     items = await invoke<SearchPreset[]>("list_search_presets");
   } catch { /* noop */ }
-  presetPanel.innerHTML = "";
-  if (items.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "history-empty";
-    empty.textContent = "お気に入りはまだありません";
-    presetPanel.appendChild(empty);
-  } else {
-    for (const p of items) {
-      const row = document.createElement("div");
-      row.className = "history-item preset-item";
-      const label = document.createElement("span");
-      label.className = "preset-label";
-      label.textContent = p.query ? `${p.name}（${p.query}）` : p.name;
-      label.onmousedown = (ev) => {
-        ev.preventDefault();
-        applyPreset(p);
-        presetPanel.hidden = true;
-      };
-      const delBtn = document.createElement("button");
-      delBtn.className = "preset-del";
-      delBtn.textContent = "×";
-      delBtn.title = "削除";
-      delBtn.onmousedown = async (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        await invoke("delete_search_preset", { id: p.id });
-        await showPresetPanel();
-      };
-      row.append(label, delBtn);
-      presetPanel.appendChild(row);
-    }
-  }
+  renderPresetPanel(presetPanel, items, {
+    onSelect: (preset) => {
+      applyPreset(preset);
+      presetPanel.hidden = true;
+    },
+    onDelete: (preset) => {
+      void invoke("delete_search_preset", { id: preset.id }).then(() => showPresetPanel());
+    },
+  });
   presetPanel.hidden = false;
 }
 
