@@ -2,11 +2,11 @@ pub mod app_state;
 pub mod box_oauth;
 pub mod browse;
 pub mod browse_commands;
-mod commands;
 pub mod connectors;
 pub mod credential_commands;
 pub mod credentials;
 pub mod db;
+pub mod export_commands;
 pub mod graph;
 pub mod model;
 pub mod opener;
@@ -14,6 +14,7 @@ pub mod refresh;
 pub mod search_commands;
 pub mod secret;
 pub mod settings;
+pub mod source_commands;
 pub mod winauth;
 
 use rusqlite::Connection;
@@ -112,11 +113,11 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            commands::list_sources,
-            commands::add_source,
-            commands::delete_source,
-            commands::set_refresh_interval,
-            commands::reload_sources,
+            source_commands::list_sources,
+            source_commands::add_source,
+            source_commands::delete_source,
+            source_commands::set_refresh_interval,
+            source_commands::reload_sources,
             search_commands::search,
             search_commands::add_search_history_entry,
             search_commands::list_search_history,
@@ -124,16 +125,16 @@ pub fn run() {
             search_commands::list_search_presets,
             search_commands::delete_search_preset,
             opener::open_ref,
-            commands::encode_shift_jis,
+            export_commands::encode_shift_jis,
             credential_commands::winauth_status,
             credential_commands::winauth_verify,
-            commands::get_source_detail,
-            commands::update_source,
-            commands::duplicate_source,
-            commands::reorder_sources,
-            commands::preview_source_fields,
-            commands::preview_source_fields_by_id,
-            commands::add_source_from_sibling,
+            source_commands::get_source_detail,
+            source_commands::update_source,
+            source_commands::duplicate_source,
+            source_commands::reorder_sources,
+            source_commands::preview_source_fields,
+            source_commands::preview_source_fields_by_id,
+            source_commands::add_source_from_sibling,
             browse_commands::browse_notion_databases,
             browse_commands::browse_notion_databases_for_source,
             browse_commands::browse_airtable_bases,
