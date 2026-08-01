@@ -694,11 +694,14 @@ fn fts_search(
 fn collect_rows(mut rows: rusqlite::Rows) -> Result<Vec<Row>> {
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {
+        let source_id: i64 = r.get(0)?;
         let fields_json: String = r.get(5)?;
-        let fields: Map<String, serde_json::Value> =
-            serde_json::from_str(&fields_json).unwrap_or_default();
+        let fields: Map<String, serde_json::Value> = serde_json::from_str(&fields_json)
+            .with_context(|| {
+                format!("invalid fields_json in cached record for source {source_id}")
+            })?;
         out.push(Row {
-            source_id: r.get(0)?,
+            source_id,
             source_name: r.get(1)?,
             label: r.get(2)?,
             open_ref: r.get(3)?,
@@ -955,6 +958,26 @@ mod tests {
         assert_eq!(rows[0].label.as_deref(), Some("田中太郎"));
     }
 
+    #[test]
+    fn malformed_cached_fields_json_is_reported_instead_of_hidden() {
+        let (conn, sid) = setup();
+        conn.execute(
+            "INSERT INTO records(source_id, label, fields_json, search_text) VALUES(?1, ?2, ?3, ?4)",
+            params![sid, "破損レコード", "{not-json", "破損レコード"],
+        )
+        .unwrap();
+
+        let error = match search(&conn, "", &[sid], DEFAULT_ROW_LIMIT) {
+            Ok(_) => panic!("malformed fields_json must fail the search"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains(&format!(
+                "invalid fields_json in cached record for source {sid}"
+            )),
+            "unexpected error: {error}"
+        );
+    }
     #[test]
     fn like_fallback_for_short_query() {
         let (conn, sid) = setup();
