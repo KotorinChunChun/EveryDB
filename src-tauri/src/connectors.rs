@@ -1486,6 +1486,23 @@ query {
 }
 
 #[cfg(test)]
+#[derive(Deserialize)]
+struct SourceTypeManifestEntry {
+    id: String,
+}
+
+#[cfg(test)]
+#[test]
+fn source_type_manifest_matches_factory_registry() {
+    let manifest: Vec<SourceTypeManifestEntry> =
+        serde_json::from_str(include_str!("../../shared/source-types.json"))
+            .expect("shared source type manifest must be valid JSON");
+    let manifest_ids: Vec<&str> = manifest.iter().map(|entry| entry.id.as_str()).collect();
+
+    assert_eq!(manifest_ids, SUPPORTED_SOURCE_TYPES);
+}
+
+#[cfg(test)]
 #[test]
 fn every_registered_source_type_has_a_factory_branch() {
     for type_ in SUPPORTED_SOURCE_TYPES {
