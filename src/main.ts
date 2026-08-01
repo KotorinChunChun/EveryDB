@@ -15,6 +15,8 @@ import {
 } from "./shared/storage";
 import { getCellUrl, parseAirtableUrl, parseGoogleSheetsUrl, parseNotionUrl, parseSharePointUrl } from "./shared/urls";
 import type { CredentialScope, CredentialSummary, Row, SearchResponse, SourceDetail, SourceInfo, WinAuthStatus } from "./shared/types";
+import { guideNameForType, parentKindForType } from "./source-types/registry";
+import type { ParentKind } from "./source-types/registry";
 
 // ==== 状態 ====
 let sources: SourceInfo[] = [];
@@ -1730,19 +1732,7 @@ const GUIDE_DOCS = import.meta.glob("/docs/guides/*.md", { query: "?raw", import
 
 /** 種別キー → 手順書のファイル名（拡張子なし）。複数種別で 1 本を共有する。 */
 function guideNameFor(type_: string): string | null {
-  if (type_ === "notion") return "notion";
-  if (type_.startsWith("graph")) return "microsoft365";
-  if (type_ === "google_sheets") return "google-sheets";
-  if (type_ === "ical_calendar") return "ical";
-  if (type_ === "airtable") return "airtable";
-  if (type_ === "box_files") return "box";
-  if (type_ === "postgres") return "postgresql";
-  if (type_ === "mysql") return "mysql";
-  if (type_ === "postal_code" || type_ === "corporate_number") return "gov-data";
-  if (type_ === "web_page") return "web-page";
-  if (type_ === "pokeapi") return "pokeapi";
-  if (PATH_GROUPED_TYPES.has(type_)) return "local-files";
-  return null;
+  return guideNameForType(type_);
 }
 
 function guideTextFor(type_: string): string | null {
@@ -3624,22 +3614,8 @@ const TYPE_DEFS: TypeDef[] = [
 // ============================================================
 // 接続先と、その配下のテーブルで共有される「接続情報」フィールドの判定
 // ============================================================
-type ParentKind = "path" | "sharepoint" | "notion" | "airtable" | "graph365" | "postgres" | "mysql" | "box" | "none";
-const PATH_GROUPED_TYPES = new Set([
-  "csv", "folder", "ime_msime", "ime_google", "excel_table", "excel_range", "excel_sheets",
-  "sqlite", "accdb", "browser_history", "browser_bookmarks", "browser_downloads",
-]);
-
 function parentKindOf(type_: string): ParentKind {
-  if (type_ === "notion") return "notion";
-  if (type_ === "airtable") return "airtable";
-  if (type_.startsWith("graph_sharepoint")) return "sharepoint";
-  if (type_.startsWith("graph")) return "graph365";
-  if (type_ === "postgres") return "postgres";
-  if (type_ === "mysql") return "mysql";
-  if (type_ === "box_files") return "box";
-  if (PATH_GROUPED_TYPES.has(type_)) return "path";
-  return "none";
+  return parentKindForType(type_);
 }
 
 /** 接続先(接続設定)ダイアログに表示する、接続種別の閲覧用ラベル。 */
