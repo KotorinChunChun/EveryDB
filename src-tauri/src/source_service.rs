@@ -156,9 +156,11 @@ pub fn preview_source_fields(
     type_: String,
     config_json: String,
 ) -> Result<Vec<String>, String> {
-    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    let resolved =
-        crate::credentials::resolve_credentials(&conn, &config_json).map_err(err_to_string)?;
+    // credential参照の解決だけをロック内で行い、接続先へのI/O中はDBを解放する。
+    let resolved = {
+        let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+        crate::credentials::resolve_credentials(&conn, &config_json).map_err(err_to_string)?
+    };
     crate::connectors::raw_field_names(&type_, &resolved).map_err(err_to_string)
 }
 
@@ -176,16 +178,21 @@ pub struct FieldPreview {
 /// ライブ接続に失敗した場合（ネットワーク断・ファイル移動・認証切れ等）は、既にキャッシュ
 /// 済みのレコードから列名を復元して返す（オフラインでも表示・検索設定を編集できるように）。
 pub fn preview_source_fields_by_id(state: &AppState, id: i64) -> Result<FieldPreview, String> {
-    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    let (type_, config_json) = db::get_source_config(&conn, id).map_err(err_to_string)?;
-    let config_json =
-        crate::credentials::resolve_credentials(&conn, &config_json).map_err(err_to_string)?;
+    // 保存済み設定とcredential参照をsnapshotし、ライブ接続はロック外で実行する。
+    let (type_, config_json) = {
+        let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+        let (type_, config_json) = db::get_source_config(&conn, id).map_err(err_to_string)?;
+        let resolved =
+            crate::credentials::resolve_credentials(&conn, &config_json).map_err(err_to_string)?;
+        (type_, resolved)
+    };
     match crate::connectors::raw_field_names(&type_, &config_json) {
         Ok(names) => Ok(FieldPreview {
             names,
             from_cache: false,
         }),
         Err(live_err) => {
+            let conn = state.db.lock().map_err(|_| "lock poisoned")?;
             let cached = db::cached_field_names(&conn, id).map_err(err_to_string)?;
             if cached.is_empty() {
                 Err(err_to_string(live_err))
