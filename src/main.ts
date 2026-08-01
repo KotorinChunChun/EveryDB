@@ -1,4 +1,6 @@
 import { invoke } from "./app/ipc";
+import { showToast } from "./app/notifications";
+import { writeClipboardText } from "./shared/clipboard";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
@@ -2192,12 +2194,8 @@ function credentialScopeFieldDefs(scope: CredentialScope): CredentialFieldDef[] 
 /** 非秘密フィールドの値をそのままコピーする（既に平文で画面にあるため本人確認は不要）。 */
 async function copyPlainValueToClipboard(value: string, message: string) {
   if (!value) return;
-  try {
-    await navigator.clipboard.writeText(value);
-    showToast(message);
-  } catch {
-    showToast("コピーに失敗しました");
-  }
+  const result = await writeClipboardText(value);
+  showToast(result.ok ? message : "コピーに失敗しました");
 }
 
 function renderCredentialFormFields(scope: CredentialScope) {
@@ -3098,25 +3096,10 @@ function parentTableDiff(): { toAdd: ParentTableItem[]; toRemove: { id: number; 
 }
 
 async function copyToClipboard(text: string, label: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    resultInfo.textContent = `${label}: ${text.slice(0, 60)}`;
-  } catch {
-    resultInfo.textContent = "クリップボードへのコピーに失敗";
-  }
-}
-
-/** 画面中央に非モーダルのメッセージを1秒表示してフェードアウトする（要件: トークンコピー時の通知）。
- * 値そのものはどこにも表示しない（テキストボックス・resultInfo 等へは一切出さない）。 */
-function showToast(message: string) {
-  const el = document.createElement("div");
-  el.className = "toast";
-  el.textContent = message;
-  document.body.appendChild(el);
-  setTimeout(() => {
-    el.classList.add("toast-fade-out");
-    setTimeout(() => el.remove(), 400);
-  }, 1000);
+  const result = await writeClipboardText(text);
+  resultInfo.textContent = result.ok
+    ? `${label}: ${text.slice(0, 60)}`
+    : "クリップボードへのコピーに失敗";
 }
 
 /** 保存済みトークンの実値をクリップボードへコピーする（要件: 再表示ではなくコピーにする）。
@@ -3126,8 +3109,8 @@ async function copyCredentialSecretToClipboard(id: number) {
   if (!ok) return;
   try {
     const value = await invoke<string>("credential_secret_value", { id });
-    await navigator.clipboard.writeText(value);
-    showToast("トークンをコピーしました");
+    const copied = await writeClipboardText(value);
+    showToast(copied.ok ? "トークンをコピーしました" : "コピーに失敗しました: " + String(copied.error));
   } catch (e) {
     showToast("コピーに失敗しました: " + String(e));
   }
@@ -3147,8 +3130,8 @@ async function copyCredentialBundleAsJson(id: number, secretKey: string, bundleF
       obj[bf] = el?.value ?? "";
     }
     obj[secretKey] = secretValue;
-    await navigator.clipboard.writeText(JSON.stringify(obj, null, 2));
-    showToast("トークンをコピーしました");
+    const copied = await writeClipboardText(JSON.stringify(obj, null, 2));
+    showToast(copied.ok ? "トークンをコピーしました" : "コピーに失敗しました: " + String(copied.error));
   } catch (e) {
     showToast("コピーに失敗しました: " + String(e));
   }

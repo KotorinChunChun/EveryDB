@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { writeClipboardText } from "./clipboard";
 import { colLetterOf, colLetterToIndex, formatSelectedColumns, parseColumnSelection } from "./excel-columns";
 import { loadNumberArray, loadString, loadStringArray, saveJson, saveString } from "./storage";
 import { getCellUrl, parseAirtableUrl, parseGoogleSheetsUrl, parseNotionUrl, parseSharePointUrl } from "./urls";
@@ -45,5 +46,18 @@ describe("storage helpers", () => {
     expect(loadNumberArray("numbers")).toEqual([1, 2]);
     expect(loadNumberArray("mixed")).toBeNull();
     expect(loadStringArray("strings")).toEqual(["a", "b"]);
+  });
+});
+describe("clipboard helpers", () => {
+  it("returns success only after the writer accepts the text", async () => {
+    const writes: string[] = [];
+    await expect(writeClipboardText("secret", async (text) => { writes.push(text); })).resolves.toEqual({ ok: true });
+    expect(writes).toEqual(["secret"]);
+  });
+
+  it("returns the failure without throwing from UI event handlers", async () => {
+    const result = await writeClipboardText("value", async () => { throw new Error("denied"); });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(String(result.error)).toContain("denied");
   });
 });
