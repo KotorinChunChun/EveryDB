@@ -5,8 +5,9 @@ use csv::ReaderBuilder;
 use rusqlite::{Connection, OpenFlags};
 use serde::Deserialize;
 
-use super::common::{make_record_with_row, CommonCfg};
+use super::common::{make_record, make_record_with_row, CommonCfg};
 use super::default_true;
+use super::fmt_epoch;
 use super::Connector;
 use crate::model::Record;
 // ---- CSV ----
@@ -166,5 +167,81 @@ fn value_ref_to_string(v: rusqlite::Result<rusqlite::types::ValueRef>) -> String
         Ok(ValueRef::Text(t)) => String::from_utf8_lossy(t).into_owned(),
         Ok(ValueRef::Blob(_)) => "[blob]".to_string(),
         Err(_) => String::new(),
+    }
+}
+
+// ---- フォルダのファイルリスト ----
+#[derive(Deserialize)]
+pub(crate) struct FolderConnector {
+    path: String,
+    #[serde(default = "default_true")]
+    recursive: bool,
+    /// 拡張子フィルタ（小文字・ドット無し）。未指定なら全ファイル。
+    #[serde(default)]
+    extensions: Option<Vec<String>>,
+}
+
+impl Connector for FolderConnector {
+    fn fetch(&self) -> Result<Vec<Record>> {
+        let max_depth = if self.recursive { usize::MAX } else { 1 };
+        let exts: Option<Vec<String>> = self.extensions.as_ref().map(|v| {
+            v.iter()
+                .map(|e| e.trim_start_matches('.').to_lowercase())
+                .collect()
+        });
+
+        let mut out = Vec::new();
+        for entry in walkdir::WalkDir::new(&self.path)
+            .max_depth(max_depth)
+            .into_iter()
+            .flatten()
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let p = entry.path();
+            let ext = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            if let Some(ref filter) = exts {
+                if !filter.contains(&ext) {
+                    continue;
+                }
+            }
+            let name = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            let full = p.to_string_lossy().into_owned();
+            let (size, modified) = match entry.metadata() {
+                Ok(m) => {
+                    let secs = m
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    (m.len().to_string(), fmt_epoch(secs))
+                }
+                Err(_) => ("0".to_string(), String::new()),
+            };
+            let pairs = vec![
+                ("名前".to_string(), name),
+                ("パス".to_string(), full.clone()),
+                ("拡張子".to_string(), ext),
+                ("サイズ".to_string(), size),
+                ("更新日時".to_string(), modified),
+            ];
+            // open_ref = ファイルの実パス。
+            let cfg = CommonCfg {
+                open_ref_column: Some("パス".to_string()),
+                ..Default::default()
+            };
+            out.push(make_record(pairs, &full, &cfg));
+        }
+        Ok(out)
     }
 }
