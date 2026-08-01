@@ -330,6 +330,60 @@ pub fn browse_notion_databases_for_source(
     crate::browse::notion_list_databases(&token).map_err(err_to_string)
 }
 
+#[tauri::command]
+pub fn browse_airtable_bases(token: String) -> Result<Vec<crate::browse::AirtableBaseEntry>, String> {
+    crate::browse::airtable_list_bases(&token).map_err(err_to_string)
+}
+
+/// 接続設定ダイアログ用の Airtable Base 一覧。保存済みトークンを使うため、
+/// マスターパスワードが未解錠でも一覧を取得できる。
+#[tauri::command]
+pub fn browse_airtable_bases_for_source(
+    state: State<'_, AppState>,
+    id: i64,
+    overrides_json: String,
+) -> Result<Vec<crate::browse::AirtableBaseEntry>, String> {
+    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+    let cfg = effective_config(&conn, id, &overrides_json)?;
+    drop(conn);
+    let token = cfg_str(&cfg, "token");
+    if token.is_empty() {
+        return Err("Personal Access Token が設定されていません".to_string());
+    }
+    crate::browse::airtable_list_bases(&token).map_err(err_to_string)
+}
+
+#[tauri::command]
+pub fn browse_airtable_tables(token: String, base_id: String) -> Result<Vec<crate::browse::AirtableTableEntry>, String> {
+    crate::browse::airtable_list_tables(&token, &base_id).map_err(err_to_string)
+}
+
+/// 接続設定ダイアログ用の Airtable テーブル一覧。保存済みトークンを使うため、
+/// マスターパスワードが未解錠でも一覧を取得できる。
+#[tauri::command]
+pub fn browse_airtable_tables_for_source(
+    state: State<'_, AppState>,
+    id: i64,
+    overrides_json: String,
+    base_id: Option<String>,
+) -> Result<Vec<crate::browse::AirtableTableEntry>, String> {
+    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+    let cfg = effective_config(&conn, id, &overrides_json)?;
+    drop(conn);
+    let token = cfg_str(&cfg, "token");
+    if token.is_empty() {
+        return Err("Personal Access Token が設定されていません".to_string());
+    }
+    let target_base = match base_id {
+        Some(b) if !b.is_empty() => b,
+        _ => cfg_str(&cfg, "base_id"),
+    };
+    if target_base.is_empty() {
+        return Err("Base ID が指定されていません".to_string());
+    }
+    crate::browse::airtable_list_tables(&token, &target_base).map_err(err_to_string)
+}
+
 /// 接続設定ダイアログ用の SharePoint リスト/ライブラリ一覧。保存済みクライアントシークレットを
 /// 使うため、マスターパスワードが未解錠でも一覧を取得できる。
 #[tauri::command]

@@ -272,6 +272,17 @@ fn source_parent(type_: &str, config_json: &str) -> String {
         // （Microsoft 365 と同じ扱い。個々の DB は子のテーブル相当）。
         return "Notion".to_string();
     }
+    if type_ == "airtable" {
+        // Airtable は Base 単位をツリーの親とし、個々の Table / View を子のテーブル相当としてまとめる。
+        let name = v.get("base_name").and_then(|x| x.as_str()).unwrap_or("");
+        let id = v.get("base_id").and_then(|x| x.as_str()).unwrap_or("");
+        if !name.is_empty() {
+            return format!("Airtable: {name}");
+        } else if !id.is_empty() {
+            return format!("Airtable ({id})");
+        }
+        return "Airtable".to_string();
+    }
     if type_ == "pokeapi" {
         return "PokéAPI".to_string();
     }
@@ -655,6 +666,15 @@ mod tests {
         assert_eq!(
             source_parent("box_files", r#"{"client_id":"c","enterprise_id":"12345"}"#),
             "Box (12345)"
+        );
+        // Airtable → Base 単位（名称優先・次点 ID）でまとめる。
+        assert_eq!(
+            source_parent("airtable", r#"{"base_id":"app123","table":"tbl1"}"#),
+            "Airtable (app123)"
+        );
+        assert_eq!(
+            source_parent("airtable", r#"{"base_id":"app123","base_name":"Projects","table":"tbl1"}"#),
+            "Airtable: Projects"
         );
         // 親を持たないソースは空文字（単独ノード扱い）。
         assert_eq!(source_parent("ime_msime", r#"{}"#), "");

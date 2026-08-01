@@ -229,7 +229,7 @@ npm 依存関係の確認 → ローカルサンプル生成([gen_samples.rs](sr
 accdb を無条件で登録。Notion/Graph 系は該当の環境変数が設定されていれば追加登録) →
 `npm run tauri dev` の順に実行する。起動後はソースが最初から入った状態で検索できる。
 
-`sample2/`（リポジトリ直下、gitignore 対象・各自で配置）に置いたファイルも同じスクリプトが
+`samples/`（リポジトリ直下、gitignore 対象・各自で配置）に置いたファイルも同じスクリプトが
 自動検出して登録する: `0804koukinsisyutsu.xlsx` / `0805koukinsisyutsu.xlsx`
 （シート「公金支出情報一覧表」を excel_table として）、`Chinook_Sqlite.sqlite`
 （11 テーブルすべてを個別の sqlite ソースとして）。

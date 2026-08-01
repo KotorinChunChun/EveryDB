@@ -75,6 +75,107 @@ pub fn notion_list_databases(token: &str) -> Result<Vec<NotionDbEntry>> {
     Ok(out)
 }
 
+// ---- Airtable: Base 一覧・Table/View メタデータ一覧 ----
+#[derive(Serialize)]
+pub struct AirtableBaseEntry {
+    pub id: String,
+    pub name: String,
+    pub permission_level: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct AirtableViewEntry {
+    pub id: String,
+    pub name: String,
+    pub type_: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct AirtableTableEntry {
+    pub id: String,
+    pub name: String,
+    pub primary_field_id: String,
+    pub views: Vec<AirtableViewEntry>,
+}
+
+/// Personal Access Token を使用して利用可能な Base 一覧を取得する。
+/// ※ 注意: トークンに `schema.bases:read` スコープが必要。
+pub fn airtable_list_bases(token: &str) -> Result<Vec<AirtableBaseEntry>> {
+    let mut out = Vec::new();
+    let mut offset: Option<String> = None;
+    loop {
+        let mut url = "https://api.airtable.com/v0/meta/bases".to_string();
+        if let Some(off) = &offset {
+            url.push_str(&format!("?offset={off}"));
+        }
+        let resp = ureq::get(&url)
+            .set("Authorization", &format!("Bearer {token}"))
+            .call();
+        let value: Value = match resp {
+            Ok(r) => r.into_json()?,
+            Err(ureq::Error::Status(code, r)) => {
+                return Err(anyhow!("Airtable API エラー {code}: {}", r.into_string().unwrap_or_default()))
+            }
+            Err(e) => return Err(anyhow!("Airtable への接続に失敗: {e}")),
+        };
+        if let Some(bases) = value.get("bases").and_then(|v| v.as_array()) {
+            for b in bases {
+                let id = b.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let name = b.get("name").and_then(|v| v.as_str()).unwrap_or("(無題 Base)").to_string();
+                let permission_level = b.get("permissionLevel").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if !id.is_empty() {
+                    out.push(AirtableBaseEntry { id, name, permission_level });
+                }
+            }
+        }
+        offset = value.get("offset").and_then(|v| v.as_str()).map(String::from);
+        if offset.is_none() {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// 指定 Base 内の全テーブルおよび各テーブルのビュー一覧を取得する。
+/// ※ 注意: トークンに `schema.bases:read` スコープが必要。
+pub fn airtable_list_tables(token: &str, base_id: &str) -> Result<Vec<AirtableTableEntry>> {
+    let url = format!("https://api.airtable.com/v0/meta/bases/{base_id}/tables");
+    let resp = ureq::get(&url)
+        .set("Authorization", &format!("Bearer {token}"))
+        .call();
+    let value: Value = match resp {
+        Ok(r) => r.into_json()?,
+        Err(ureq::Error::Status(code, r)) => {
+            return Err(anyhow!("Airtable API エラー {code}: {}", r.into_string().unwrap_or_default()))
+        }
+        Err(e) => return Err(anyhow!("Airtable への接続に失敗: {e}")),
+    };
+    let mut out = Vec::new();
+    if let Some(tables) = value.get("tables").and_then(|v| v.as_array()) {
+        for t in tables {
+            let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("(無題テーブル)").to_string();
+            let primary_field_id = t.get("primaryFieldId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if id.is_empty() {
+                continue;
+            }
+            let mut views = Vec::new();
+            if let Some(views_arr) = t.get("views").and_then(|v| v.as_array()) {
+                for v in views_arr {
+                    let vid = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let vname = v.get("name").and_then(|x| x.as_str()).unwrap_or("(無題ビュー)").to_string();
+                    let vtype = v.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    if !vid.is_empty() {
+                        views.push(AirtableViewEntry { id: vid, name: vname, type_: vtype });
+                    }
+                }
+            }
+            out.push(AirtableTableEntry { id, name, primary_field_id, views });
+        }
+    }
+    Ok(out)
+}
+
 // ---- SharePoint: サイト一覧 ----
 #[derive(Serialize)]
 pub struct SiteEntry {

@@ -91,8 +91,8 @@ fn main() {
         }));
     }
 
-    // --- sample2/ (ユーザーが独自に配置したサンプルデータ) ---
-    let dir2 = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("sample2");
+    // --- samples/ (ユーザーが独自に配置したサンプルデータ) ---
+    let dir2 = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("samples");
     let p2 = |name: &str| dir2.join(name).to_string_lossy().into_owned();
 
     for (file, sheet) in [
@@ -100,7 +100,7 @@ fn main() {
         ("0805koukinsisyutsu.xlsx", "公金支出情報一覧表"),
     ] {
         if dir2.join(file).exists() {
-            let name = format!("sample2: {}", file.trim_end_matches(".xlsx"));
+            let name = format!("samples: {}", file.trim_end_matches(".xlsx"));
             upsert_source(&mut conn, "excel_table", &name, serde_json::json!({
                 "path": p2(file), "sheet": sheet
             }));
@@ -114,7 +114,7 @@ fn main() {
             "InvoiceLine", "MediaType", "Playlist", "PlaylistTrack", "Track",
         ];
         for table in CHINOOK_TABLES {
-            let name = format!("sample2: Chinook.{table}");
+            let name = format!("samples: Chinook.{table}");
             upsert_source(&mut conn, "sqlite", &name, serde_json::json!({
                 "path": p2(chinook), "table": table
             }));

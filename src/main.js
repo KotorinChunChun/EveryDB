@@ -1955,6 +1955,18 @@ function makeApiKeyButton(url) {
     });
     return btn;
 }
+/** 任意のページを既定のブラウザで開くリンクボタン。 */
+function makeLinkButton(url, text) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn browse-btn";
+    btn.textContent = text;
+    btn.title = `${url} を既定のブラウザで開きます`;
+    btn.onclick = () => void invoke("open_ref", { target: url }).catch((e) => {
+        console.error("ページを開けませんでした:", e);
+    });
+    return btn;
+}
 function renderFieldsInto(container, idPrefix, fields, prefill) {
     container.innerHTML = "";
     for (const f of fields) {
@@ -1971,7 +1983,7 @@ function renderFieldsInto(container, idPrefix, fields, prefill) {
             if (v !== undefined && v !== null)
                 input.value = String(v);
         }
-        if (f.browse || f.helpUrl) {
+        if (f.browse || f.helpUrl || f.linkUrl || f.browseAirtableBase || f.browseAirtableTable || f.browseAirtableView) {
             const row = document.createElement("div");
             row.className = "path-row";
             row.appendChild(input);
@@ -1996,8 +2008,37 @@ function renderFieldsInto(container, idPrefix, fields, prefill) {
                 };
                 row.appendChild(browseBtn);
             }
+            if (f.browseAirtableBase) {
+                const pickBtn = document.createElement("button");
+                pickBtn.type = "button";
+                pickBtn.className = "btn browse-btn";
+                pickBtn.textContent = "一覧から選択…";
+                pickBtn.title = "Personal Access Token を使用して利用可能な Base 一覧を取得します";
+                pickBtn.onclick = () => openAirtableBasePicker(input);
+                row.appendChild(pickBtn);
+            }
+            if (f.browseAirtableTable) {
+                const pickBtn = document.createElement("button");
+                pickBtn.type = "button";
+                pickBtn.className = "btn browse-btn";
+                pickBtn.textContent = "一覧から選択…";
+                pickBtn.title = "指定された Base 内のテーブル一覧を取得します";
+                pickBtn.onclick = () => openAirtableTablePicker(input);
+                row.appendChild(pickBtn);
+            }
+            if (f.browseAirtableView) {
+                const pickBtn = document.createElement("button");
+                pickBtn.type = "button";
+                pickBtn.className = "btn browse-btn";
+                pickBtn.textContent = "一覧から選択…";
+                pickBtn.title = "指定されたテーブル内のビュー一覧を取得します";
+                pickBtn.onclick = () => openAirtableViewPicker(input);
+                row.appendChild(pickBtn);
+            }
             if (f.helpUrl)
                 row.appendChild(makeApiKeyButton(f.helpUrl));
+            if (f.linkUrl)
+                row.appendChild(makeLinkButton(f.linkUrl, f.linkLabel ?? "🌐 開く…"));
             label.appendChild(row);
         }
         else {
@@ -2018,6 +2059,8 @@ function parentBrowseKind(repType) {
         return "sharepoint";
     if (repType === "notion")
         return "notion";
+    if (repType === "airtable")
+        return "airtable";
     // Microsoft 365(Graph) は API での一覧取得ではなく、実装済みの種別そのものを一覧に出す。
     if (repType.startsWith("graph"))
         return "graph365";
@@ -2032,6 +2075,11 @@ const GRAPH_ONE_CLICK_TYPES = [
 const GRAPH_PARAMETERIZED_TYPES = ["graph_calendar", "graph_onedrive", "graph_planner"];
 /** 接続先種別ごとの「アクセス許可（共有）設定ページ」。テーブル一覧が 0 件のときの導線。 */
 const ACCESS_SETTINGS_URL = {
+    airtable: {
+        url: "https://airtable.com/workspaces",
+        label: "ワークスペースを開く…",
+        hint: "実在する Base や Table 一覧を取得するには、Personal Access Token に「schema.bases:read」および「data.records:read」スコープが必要です。",
+    },
     notion: {
         url: "https://www.notion.so/my-integrations",
         label: "アクセス許可を設定…",
@@ -2277,6 +2325,15 @@ async function loadParentTables() {
             const dbs = await invoke("browse_notion_databases_for_source", { id: siblingId, overridesJson: JSON.stringify(shared) });
             parentTableItems = dbs.map((d) => ({ key: d.id, label: d.title || "(無題)", type_: "notion", extraConfig: { database_id: d.id } }));
         }
+        else if (kind === "airtable") {
+            const tbls = await invoke("browse_airtable_tables_for_source", { id: siblingId, overridesJson: JSON.stringify(shared), baseId: null });
+            parentTableItems = tbls.map((t) => ({
+                key: t.id,
+                label: t.name ? `${t.name} [ID: ${t.id}]` : t.id,
+                type_: "airtable",
+                extraConfig: { table: t.id, table_name: t.name || t.id },
+            }));
+        }
         else if (kind === "graph365") {
             // API 取得ではなく、実装済みの種別のうち接続情報だけで使えるものを並べる。
             parentTableItems = GRAPH_ONE_CLICK_TYPES.map((t) => ({ key: t, label: typeLabel(t), type_: t, extraConfig: {} }));
@@ -2315,6 +2372,16 @@ async function loadParentTables() {
             else if (kind === "notion") {
                 if (typeof cfg.database_id === "string")
                     parentTableMatched.set(cfg.database_id, c.id);
+            }
+            else if (kind === "airtable") {
+                if (typeof cfg.table === "string") {
+                    parentTableMatched.set(cfg.table, c.id);
+                }
+                if (typeof cfg.table_name === "string") {
+                    const matchByName = parentTableItems.find(item => item.label.startsWith(cfg.table_name) || item.key === cfg.table_name);
+                    if (matchByName)
+                        parentTableMatched.set(matchByName.key, c.id);
+                }
             }
         });
     }
@@ -2731,12 +2798,15 @@ const TYPE_DEFS = [
             { key: "url", label: "公開 iCal URL", kind: "text", placeholder: "https://calendar.google.com/calendar/ical/.../public/basic.ics" },
         ] },
     { value: "airtable", label: "Airtable", fields: [
-            { key: "token", label: "Personal Access Token", kind: "password", placeholder: "pat...", helpUrl: "https://airtable.com/create/tokens" },
+            { key: "token", label: "Personal Access Token", kind: "password", placeholder: "pat...", helpUrl: "https://airtable.com/create/tokens", linkUrl: "https://airtable.com/workspaces", linkLabel: "🌐 ワークスペース…" },
             { key: "url_helper", label: "Airtable URL (ペーストで自動設定)", kind: "text", placeholder: "https://airtable.com/app.../tbl.../viw...", optional: true },
-            { key: "base_id", label: "Base ID", kind: "text", placeholder: "app..." },
-            { key: "table", label: "テーブル ID または名前", kind: "text", placeholder: "tbl... または テーブル名" },
-            { key: "view", label: "ビュー(任意)", kind: "text", placeholder: "viw... または ビュー名", optional: true },
-        ] },
+            { key: "base_id", label: "Base ID (実際の接続用)", kind: "text", placeholder: "app...", browseAirtableBase: true },
+            { key: "base_name", label: "Base名 (キャプション・確認用)", kind: "text", placeholder: "選択時に自動補完されます", optional: true },
+            { key: "table", label: "テーブル ID (実際の接続用)", kind: "text", placeholder: "tbl... または テーブル名", browseAirtableTable: true },
+            { key: "table_name", label: "テーブル名 (キャプション・確認用)", kind: "text", placeholder: "選択時に自動補完されます", optional: true },
+            { key: "view", label: "ビュー ID (実際の接続用・任意)", kind: "text", placeholder: "viw... または ビュー名", optional: true, browseAirtableView: true },
+            { key: "view_name", label: "ビュー名 (キャプション・確認用)", kind: "text", placeholder: "選択時に自動補完されます", optional: true },
+        ], browse: "airtable" },
     { value: "postgres", label: "PostgreSQL", fields: [
             { key: "host", label: "ホスト", kind: "text", placeholder: "localhost / xxx.rds.amazonaws.com" },
             { key: "port", label: "ポート", kind: "text", placeholder: "5432", optional: true },
@@ -3121,6 +3191,43 @@ function parseSharePointUrl(urlText) {
         return null;
     return { siteUrl, listName, libraryName };
 }
+/** URL貼り付け等で Base/Table/View の ID が確定した直後、可能なら名前(キャプション)も
+ * Airtable API から解決して base_name/table_name/view_name を自動入力する。
+ * トークン未入力・未解錠・API失敗時は静かに諦める（ID自体は既に埋まっているため実害はない）。 */
+async function resolveAirtableCaptions(baseId, tableId, viewId) {
+    const tokenEl = document.getElementById("fd-token");
+    const token = tokenEl?.value.trim() ?? "";
+    if (!token || token === SECRET_PLACEHOLDER)
+        return;
+    try {
+        if (baseId) {
+            const bases = await invoke("browse_airtable_bases", { token });
+            const b = bases.find((x) => x.id === baseId);
+            const nameEl = document.getElementById("fd-base_name");
+            if (b && nameEl && !nameEl.value.trim())
+                nameEl.value = b.name;
+        }
+        if (baseId && tableId) {
+            const tables = await invoke("browse_airtable_tables", { token, baseId });
+            const t = tables.find((x) => x.id === tableId);
+            const tNameEl = document.getElementById("fd-table_name");
+            if (t && tNameEl && !tNameEl.value.trim())
+                tNameEl.value = t.name;
+            if (t && viewId) {
+                const v = t.views.find((x) => x.id === viewId);
+                const vNameEl = document.getElementById("fd-view_name");
+                if (v && vNameEl && !vNameEl.value.trim())
+                    vNameEl.value = v.name;
+            }
+        }
+    }
+    catch {
+        // ネットワーク不調・権限不足等。ID は既に反映済みなので実害は無い。
+    }
+    finally {
+        autoFillDefaultName();
+    }
+}
 /** 各種データソース URL が入力・ペーストされた際、設定 ID フィールドを自動入力・展開する。 */
 function tryApplyUrlOrFileDropHelper(inputValue) {
     const type = typeSel.value;
@@ -3144,6 +3251,7 @@ function tryApplyUrlOrFileDropHelper(inputValue) {
             }
             autoFillDefaultName();
             maybeFetchAndRenderFields();
+            void resolveAirtableCaptions(info.baseId, info.tableId, info.viewId);
             return;
         }
     }
@@ -3283,9 +3391,19 @@ function deriveDefaultName(type_, config) {
             break;
         }
         case "airtable": {
+            const tblName = str("table_name");
             const tbl = str("table");
-            if (tbl)
-                return tbl;
+            const viwName = str("view_name");
+            const viw = str("view");
+            const baseName = str("base_name");
+            const t = tblName || tbl;
+            const v = viwName || viw;
+            if (t && v)
+                return baseName ? `${baseName}: ${t} (${v})` : `${t} (${v})`;
+            if (t)
+                return baseName ? `${baseName}: ${t}` : t;
+            if (baseName)
+                return baseName;
             break;
         }
         case "google_sheets": {
@@ -3439,10 +3557,19 @@ function renderTypeFields(prefill, hideKeys = []) {
                 tryApplyUrlOrFileDropHelper(input.value);
                 autoFillDefaultName();
                 maybeFetchAndRenderFields();
+                // URL貼り付けが ID 欄より先にトークンより先行した場合など、トークン確定時点で
+                // まだキャプション（base_name等）が空の ID があれば遅れて解決する。
+                if (f.key === "token" && def.value === "airtable") {
+                    const baseId = document.getElementById("fd-base_id")?.value.trim();
+                    const tableId = document.getElementById("fd-table")?.value.trim();
+                    const viewId = document.getElementById("fd-view")?.value.trim();
+                    if (baseId || tableId)
+                        void resolveAirtableCaptions(baseId || undefined, tableId || undefined, viewId || undefined);
+                }
             });
-            if (f.browse || f.helpUrl || f.browserProfile || f.browseSheet || f.browseTable || f.browseCell || f.browseColumn) {
-                // 参照ボタン（ファイル/フォルダ選択）、API キー取得ページを開くボタン、
-                // ブラウザプロファイル候補を自動検出するボタン、Excelシート名選択ボタン、Excelテーブル(ListObject)名選択ボタン、Excelセル/列選択ボタン。
+            if (f.browse || f.helpUrl || f.linkUrl || f.browserProfile || f.browseSheet || f.browseTable || f.browseCell || f.browseColumn || f.browseAirtableBase || f.browseAirtableTable || f.browseAirtableView) {
+                // 参照ボタン（ファイル/フォルダ選択）、API キー取得ページを開くボタン、リンクボタン、
+                // ブラウザプロファイル候補自動検出、Excelシート名選択、Excelテーブル(ListObject)名選択、Excelセル/列選択、Airtable選択ボタン。
                 const row = document.createElement("div");
                 row.className = "path-row";
                 row.appendChild(input);
@@ -3515,8 +3642,37 @@ function renderTypeFields(prefill, hideKeys = []) {
                     pickBtn.onclick = () => openCellPicker(input, f.browseColumn, "column");
                     row.appendChild(pickBtn);
                 }
+                if (f.browseAirtableBase) {
+                    const pickBtn = document.createElement("button");
+                    pickBtn.type = "button";
+                    pickBtn.className = "btn browse-btn";
+                    pickBtn.textContent = "一覧から選択…";
+                    pickBtn.title = "Personal Access Token を使用して利用可能な Base 一覧を取得します";
+                    pickBtn.onclick = () => openAirtableBasePicker(input);
+                    row.appendChild(pickBtn);
+                }
+                if (f.browseAirtableTable) {
+                    const pickBtn = document.createElement("button");
+                    pickBtn.type = "button";
+                    pickBtn.className = "btn browse-btn";
+                    pickBtn.textContent = "一覧から選択…";
+                    pickBtn.title = "指定された Base 内のテーブル一覧を取得します";
+                    pickBtn.onclick = () => openAirtableTablePicker(input);
+                    row.appendChild(pickBtn);
+                }
+                if (f.browseAirtableView) {
+                    const pickBtn = document.createElement("button");
+                    pickBtn.type = "button";
+                    pickBtn.className = "btn browse-btn";
+                    pickBtn.textContent = "一覧から選択…";
+                    pickBtn.title = "指定されたテーブル内のビュー一覧を取得します";
+                    pickBtn.onclick = () => openAirtableViewPicker(input);
+                    row.appendChild(pickBtn);
+                }
                 if (f.helpUrl)
                     row.appendChild(makeApiKeyButton(f.helpUrl));
+                if (f.linkUrl)
+                    row.appendChild(makeLinkButton(f.linkUrl, f.linkLabel ?? "🌐 開く…"));
                 label.appendChild(row);
             }
             else {
@@ -3955,6 +4111,14 @@ function renderBrowseArea(def) {
             btn.textContent = "サイト/チームから選択…";
             btn.onclick = openSharePointPicker;
             break;
+        case "airtable":
+            btn.textContent = "Base 一覧から選択…";
+            btn.onclick = () => {
+                const baseEl = document.getElementById("fd-base_id");
+                if (baseEl)
+                    openAirtableBasePicker(baseEl);
+            };
+            break;
     }
     browseAreaEl.appendChild(btn);
 }
@@ -4175,6 +4339,159 @@ async function openExcelTablePicker(tableInput) {
     }
 }
 $("sheet-picker-close").onclick = () => $("sheet-picker").close();
+async function fetchAirtableBasesForPicker() {
+    const tokenEl = (document.getElementById("fd-token") ?? document.getElementById("pf-token"));
+    const token = tokenEl?.value.trim() ?? "";
+    if (token && token !== SECRET_PLACEHOLDER) {
+        return await invoke("browse_airtable_bases", { token });
+    }
+    const sid = editingId ?? parentDialogState?.children[0]?.id;
+    if (sid) {
+        const overrides = editingId !== null ? JSON.stringify(buildConfigFromFields().config) : JSON.stringify(parentSharedNow());
+        return await invoke("browse_airtable_bases_for_source", { id: sid, overridesJson: overrides });
+    }
+    if (!token) {
+        alert("先に Personal Access Token を入力してください");
+        throw new Error("Personal Access Token 必須");
+    }
+    alert("マスターパスワードを解錠してください（プレースホルダーをクリック）");
+    throw new Error("マスターパスワードロック中");
+}
+async function fetchAirtableTablesForPicker(baseIdInput) {
+    const tokenEl = (document.getElementById("fd-token") ?? document.getElementById("pf-token"));
+    const token = tokenEl?.value.trim() ?? "";
+    const baseEl = (document.getElementById("fd-base_id") ?? document.getElementById("pf-base_id"));
+    const baseId = baseIdInput ?? baseEl?.value.trim() ?? "";
+    if (!baseId) {
+        alert("先に Base ID を入力・選択してください");
+        throw new Error("Base ID 必須");
+    }
+    if (token && token !== SECRET_PLACEHOLDER) {
+        return await invoke("browse_airtable_tables", { token, baseId });
+    }
+    const sid = editingId ?? parentDialogState?.children[0]?.id;
+    if (sid) {
+        const overrides = editingId !== null ? JSON.stringify(buildConfigFromFields().config) : JSON.stringify(parentSharedNow());
+        return await invoke("browse_airtable_tables_for_source", { id: sid, overridesJson: overrides, baseId: baseId || null });
+    }
+    if (!token) {
+        alert("先に Personal Access Token を入力してください");
+        throw new Error("Personal Access Token 必須");
+    }
+    alert("マスターパスワードを解錠してください（プレースホルダーをクリック）");
+    throw new Error("マスターパスワードロック中");
+}
+async function openAirtableBasePicker(baseInput) {
+    const titleEl = $("airtable-picker-title");
+    if (titleEl)
+        titleEl.textContent = "Airtable Base を選択";
+    const listEl = $("airtable-picker-list");
+    listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
+    const dlg = $("airtable-picker");
+    dlg.showModal();
+    try {
+        const bases = await fetchAirtableBasesForPicker();
+        listEl.innerHTML = "";
+        if (bases.length === 0) {
+            listEl.innerHTML = "<div class='picker-empty'>利用可能な Base が見つかりませんでした（権限や schema.bases:read スコープを確認してください）</div>";
+        }
+        for (const b of bases) {
+            const item = document.createElement("div");
+            item.className = "picker-item";
+            item.textContent = b.name ? `${b.name} [ID: ${b.id}]` : b.id;
+            item.onclick = () => {
+                baseInput.value = b.id;
+                const nameEl = (document.getElementById("fd-base_name") ?? document.getElementById("pf-base_name"));
+                if (nameEl)
+                    nameEl.value = b.name;
+                autoFillDefaultName();
+                maybeFetchAndRenderFields();
+                dlg.close();
+            };
+            listEl.appendChild(item);
+        }
+    }
+    catch (e) {
+        setPickerMessage(listEl, `取得失敗: ${String(e)}`);
+    }
+}
+async function openAirtableTablePicker(tableInput) {
+    const titleEl = $("airtable-picker-title");
+    if (titleEl)
+        titleEl.textContent = "Airtable テーブルを選択";
+    const listEl = $("airtable-picker-list");
+    listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
+    const dlg = $("airtable-picker");
+    dlg.showModal();
+    try {
+        const tables = await fetchAirtableTablesForPicker();
+        listEl.innerHTML = "";
+        if (tables.length === 0) {
+            listEl.innerHTML = "<div class='picker-empty'>テーブルが見つかりませんでした</div>";
+        }
+        for (const t of tables) {
+            const item = document.createElement("div");
+            item.className = "picker-item";
+            item.textContent = t.name ? `${t.name} [ID: ${t.id}]` : t.id;
+            item.onclick = () => {
+                tableInput.value = t.id;
+                const nameEl = (document.getElementById("fd-table_name") ?? document.getElementById("pf-table_name"));
+                if (nameEl)
+                    nameEl.value = t.name;
+                autoFillDefaultName();
+                maybeFetchAndRenderFields();
+                dlg.close();
+            };
+            listEl.appendChild(item);
+        }
+    }
+    catch (e) {
+        setPickerMessage(listEl, `取得失敗: ${String(e)}`);
+    }
+}
+async function openAirtableViewPicker(viewInput) {
+    const tableEl = document.getElementById("fd-table");
+    const tableVal = tableEl?.value.trim() ?? "";
+    if (!tableVal) {
+        alert("先にテーブルを指定・選択してください");
+        return;
+    }
+    const titleEl = $("airtable-picker-title");
+    if (titleEl)
+        titleEl.textContent = "Airtable ビューを選択";
+    const listEl = $("airtable-picker-list");
+    listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
+    const dlg = $("airtable-picker");
+    dlg.showModal();
+    try {
+        const tables = await fetchAirtableTablesForPicker();
+        const table = tables.find(t => t.id === tableVal || t.name === tableVal || t.id.toLowerCase() === tableVal.toLowerCase() || t.name.toLowerCase() === tableVal.toLowerCase());
+        listEl.innerHTML = "";
+        if (!table || !table.views || table.views.length === 0) {
+            listEl.innerHTML = "<div class='picker-empty'>このテーブルに選択可能なビューが見つかりませんでした</div>";
+            return;
+        }
+        for (const v of table.views) {
+            const item = document.createElement("div");
+            item.className = "picker-item";
+            item.textContent = v.name ? `${v.name} [ID: ${v.id} / 種別: ${v.type_}]` : v.id;
+            item.onclick = () => {
+                viewInput.value = v.id;
+                const nameEl = (document.getElementById("fd-view_name") ?? document.getElementById("pf-view_name"));
+                if (nameEl)
+                    nameEl.value = v.name;
+                autoFillDefaultName();
+                maybeFetchAndRenderFields();
+                dlg.close();
+            };
+            listEl.appendChild(item);
+        }
+    }
+    catch (e) {
+        setPickerMessage(listEl, `取得失敗: ${String(e)}`);
+    }
+}
+$("airtable-picker-close").onclick = () => $("airtable-picker").close();
 // ---- Excel セル/列範囲ピッカー (10x10グリッド) ----
 async function openCellPicker(cellInput, gridMode = "top", pickMode = "cell") {
     const path = getTargetExcelPath();
