@@ -23,6 +23,17 @@ import { ENTRA_APPS_URL, NOTION_INTEGRATIONS_URL, TYPE_DEFS } from "./source-typ
 import type { FieldDef, TypeDef } from "./source-types/forms";
 import { parentLabel as formatParentLabel, shortTimestamp, sourceMatchesFilter as matchesSourceFilter, sourceTree, sourceTypeLabel } from "./features/sources/tree";
 import { reorderedSourceIds } from "./features/sources/reorder";
+import {
+  buildGridColumns,
+  buildSourceFieldIndex,
+  gridCellText,
+  nextSortState,
+  PINNED_GRID_COLUMNS as PINNED_COLUMNS,
+  sortedGridRows,
+  sortHintFor as gridSortHint,
+  toRawFieldNames,
+} from "./features/grid/data";
+import type { SortState } from "./features/grid/data";
 
 // ==== 状態 ====
 let sources: SourceInfo[] = [];
@@ -1058,66 +1069,24 @@ async function runSearch() {
 let gridColumnOrder: string[] = [];
 
 function rebuildColumns() {
-  const seen = new Set<string>();
-  const cols: string[] = [];
-  for (const r of rawRows) {
-    for (const k of Object.keys(r.fields)) {
-      if (!seen.has(k)) { seen.add(k); cols.push(k); }
-    }
-  }
-  const known = gridColumnOrder.filter((c) => cols.includes(c));
-  const extra = cols.filter((c) => !gridColumnOrder.includes(c));
-  columns = ["#", "テーブル", "元行", "見出し", ...known, ...extra];
+  columns = buildGridColumns(rawRows, gridColumnOrder);
 }
 
 // ============================================================
 // 列見出しクリックによる並べ替え（昇順 → 降順 → 解除 のトグル）
 // 状態はモジュール変数のみに持つ（要件: 「再起動まで記憶する」＝永続化しない）。
 // ============================================================
-let sortState: { column: string; dir: "asc" | "desc" } | null = null;
-/** 日本語を自然に、数字混じりの文字列も桁数順に並べる比較器。 */
-const sortCollator = new Intl.Collator("ja", { numeric: true, sensitivity: "base" });
-
-/** 値の比較。両方が数値として解釈できるときだけ数値比較にする。 */
-function compareCellValues(a: string, b: string): number {
-  const na = Number(a);
-  const nb = Number(b);
-  if (Number.isFinite(na) && Number.isFinite(nb)) return na < nb ? -1 : na > nb ? 1 : 0;
-  return sortCollator.compare(a, b);
-}
+let sortState: SortState = null;
 
 /** sortState に従って rawRows から表示用の rows を作る。 */
 function applySort() {
-  if (!sortState) {
-    rows = rawRows;
-    return;
-  }
-  const idx = columns.indexOf(sortState.column);
-  if (idx < 0) {
-    // 検索条件が変わって対象列が消えた場合はソートも解除する。
-    sortState = null;
-    rows = rawRows;
-    return;
-  }
-  const sign = sortState.dir === "asc" ? 1 : -1;
-  // 元の並び順 i をタイブレークに使い、同値の行の相対順序を安定させる。
-  const keyed = rawRows.map((r, i) => ({ r, i, k: cellText(r, idx).trim() }));
-  keyed.sort((x, y) => {
-    // 空値は昇順・降順どちらでも末尾に置く（空が先頭を占めると読みづらいため）。
-    if (x.k === "" || y.k === "") {
-      if (x.k === y.k) return x.i - y.i;
-      return x.k === "" ? 1 : -1;
-    }
-    const c = compareCellValues(x.k, y.k);
-    return c !== 0 ? sign * c : x.i - y.i;
-  });
-  rows = keyed.map((e) => e.r);
+  const sorted = sortedGridRows(rawRows, columns, sortState);
+  rows = sorted.rows;
+  sortState = sorted.sortState;
 }
 
 function toggleSort(column: string) {
-  if (!sortState || sortState.column !== column) sortState = { column, dir: "asc" };
-  else if (sortState.dir === "asc") sortState = { column, dir: "desc" };
-  else sortState = null;
+  sortState = nextSortState(sortState, column);
   selectedCell = null; // 並びが変わるので選択セルは解除する
   applySort();
   renderHead();
@@ -1127,41 +1096,7 @@ function toggleSort(column: string) {
 
 /** 見出しの title に「次に押したらどうなるか」を出す。 */
 function sortHintFor(column: string): string {
-  if (sortState?.column !== column) return `${column}\nクリックで昇順に並べ替え`;
-  return sortState.dir === "asc" ? `${column}\nクリックで降順に並べ替え` : `${column}\nクリックで並べ替えを解除`;
-}
-
-/** 検索結果 rows から「ソースID → そのソースに出現した表示名の集合」を 1 パスで作る。
- * 列設定ダイアログ・列並べ替えの保存で使う。以前はソース数 × 行数の二重走査をしていたため、
- * 行数が多いと列設定ダイアログの表示が極端に遅くなっていた。 */
-function buildSourceFieldIndex(): Map<number, Set<string>> {
-  const index = new Map<number, Set<string>>();
-  for (const r of rows) {
-    let set = index.get(r.source_id);
-    if (!set) {
-      set = new Set<string>();
-      index.set(r.source_id, set);
-    }
-    for (const k in r.fields) set.add(k);
-  }
-  return index;
-}
-
-/** column_aliases（実フィールド名 → 表示名）の逆引き表を作る。 */
-function invertAliases(aliases: Record<string, string>): Map<string, string> {
-  const inv = new Map<string, string>();
-  for (const [raw, disp] of Object.entries(aliases)) {
-    if (!inv.has(disp)) inv.set(disp, raw);
-  }
-  return inv;
-}
-
-/** 表示名の集合を、そのソースでの実フィールド名の集合へ戻す。 */
-function toRawFieldNames(displayNames: Iterable<string>, aliases: Record<string, string>): string[] {
-  const inv = invertAliases(aliases);
-  const out = new Set<string>();
-  for (const d of displayNames) out.add(inv.get(d) ?? d);
-  return [...out];
+  return gridSortHint(column, sortState);
 }
 
 // ---- 検索履歴パネル ----
@@ -1322,7 +1257,6 @@ let gridDragSrcCol: string | null = null;
 /** 列見出しのドラッグ直後に発火する click を無視するためのフラグ（ソートとの誤爆防止）。 */
 let suppressHeadClick = false;
 /** テーブルの元フィールドに対応しない疑似列（常に先頭に固定・並べ替え/列対応編集の対象外）。 */
-const PINNED_COLUMNS = new Set(["#", "テーブル", "元行", "見出し"]);
 
 function renderHead() {
   headEl.innerHTML = "";
@@ -1399,7 +1333,7 @@ function renderHead() {
         // update_source はサーバー側で再取得(reload)を伴うため、進捗を出しつつ順に処理する。
         const displayOrder = remainingOrder;
         const orderRank = new Map(displayOrder.map((d, i) => [d, i]));
-        const fieldIndex = buildSourceFieldIndex();
+        const fieldIndex = buildSourceFieldIndex(rows);
         const targets = sources.filter((s) => (fieldIndex.get(s.id)?.size ?? 0) > 0);
         let done = 0;
         let failed = 0;
@@ -1456,12 +1390,7 @@ function renderHead() {
 }
 
 function cellText(r: Row, col: number, rowIndex?: number): string {
-  const colName = columns[col];
-  if (colName === "#") return rowIndex !== undefined ? String(rowIndex + 1) : "";
-  if (colName === "テーブル") return r.source_name;
-  if (colName === "元行") return r.row_number !== undefined && r.row_number !== null ? String(r.row_number) : "";
-  if (colName === "見出し") return r.label ?? "";
-  return r.fields[colName] ?? "";
+  return gridCellText(r, columns[col], rowIndex);
 }
 
 function renderRows() {
@@ -1552,7 +1481,7 @@ async function openColumnContextMenu(_ev: MouseEvent, columnName: string) {
 
   // 検索結果にあるソースID・出現フィールドを 1 パスで収集し、設定取得は並列に投げる
   // （逐次 await + 行数×ソース数の二重走査だと表示までに数秒かかっていた）。
-  const fieldIndex = buildSourceFieldIndex();
+  const fieldIndex = buildSourceFieldIndex(rows);
   const sourceIds = [...fieldIndex.keys()];
   hint.textContent = "読み込み中…";
   const details = await Promise.all(
