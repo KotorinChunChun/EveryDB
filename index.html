@@ -275,36 +275,6 @@
       </div>
     </dialog>
 
-    <!-- マスターパスワード 初回設定（必須・キャンセル不可） -->
-    <dialog id="mp-setup-dialog" class="dialog">
-      <form method="dialog" id="mp-setup-form">
-        <h3>マスターパスワードの設定</h3>
-        <p class="dialog-note">
-          Notion/SharePoint 等のシークレットを扱う前に、閲覧用のマスターパスワードを設定してください。
-          設定後、シークレットを「表示」する際にこのパスワードを求めます（一度入力すれば 10 分間は再要求しません）。
-        </p>
-        <label>パスワード <input id="mp-setup-pw1" type="password" autocomplete="new-password" required /></label>
-        <label>確認 <input id="mp-setup-pw2" type="password" autocomplete="new-password" required /></label>
-        <div id="mp-setup-error" class="form-error"></div>
-        <div class="dialog-actions">
-          <button value="ok" class="btn primary">設定する</button>
-        </div>
-      </form>
-    </dialog>
-
-    <!-- マスターパスワード 入力（閲覧解錠） -->
-    <dialog id="mp-verify-dialog" class="dialog">
-      <form method="dialog" id="mp-verify-form">
-        <h3>マスターパスワード</h3>
-        <p class="dialog-note">シークレットを表示するにはマスターパスワードを入力してください。</p>
-        <label>パスワード <input id="mp-verify-pw" type="password" autocomplete="current-password" required /></label>
-        <div id="mp-verify-error" class="form-error"></div>
-        <div class="dialog-actions">
-          <button id="mp-verify-cancel" type="button" value="cancel" class="btn" formnovalidate>キャンセル</button>
-          <button type="submit" value="ok" class="btn primary">解錠</button>
-        </div>
-      </form>
-    </dialog>
 
     <!-- 列見出し右クリック: 列名/表示状態のテーブル別対応編集 -->
     <dialog id="column-map-dialog" class="dialog wide">
@@ -362,8 +332,64 @@
         </div>
         <span class="roles-hint">応答が一時的に遅くなる場合があります</span>
       </label>
+      <label>トークン
+        <div class="zoom-row">
+          <button type="button" id="s-credential-manager" class="btn">🔑 保存済みトークンの管理…</button>
+        </div>
+        <span class="roles-hint">Notion/Airtable/Microsoft 365/Box/PostgreSQL/MySQL のトークン・パスワードを名前を付けて保存し、複数のデータソースで使い回せます</span>
+      </label>
       <div class="dialog-actions">
-        <button id="settings-close" class="btn primary">閉じる</button>
+        <button id="settings-close" class="btn">閉じる</button>
+      </div>
+    </dialog>
+
+    <!-- 保存済みトークンの管理（追加・置換・削除。要件: トークン管理画面） -->
+    <dialog id="credential-manager" class="dialog wide">
+      <button id="credential-manager-close-x" class="dialog-close-x" type="button" title="閉じる">×</button>
+      <h3>保存済みトークンの管理</h3>
+      <div class="type-row">
+        <label class="type-label">種別
+          <select id="cm-scope">
+            <option value="notion">Notion</option>
+            <option value="airtable">Airtable</option>
+            <option value="graph">Microsoft 365 (Graph)</option>
+            <option value="box">Box</option>
+            <option value="postgres">PostgreSQL</option>
+            <option value="mysql">MySQL</option>
+          </select>
+        </label>
+        <button type="button" id="cm-guide" class="btn" title="この種別の接続手順書を開く">📖 手順書</button>
+      </div>
+
+      <fieldset class="roles-fieldset">
+        <legend>プロファイル</legend>
+        <div id="cm-list" class="cm-profile-list">
+          <button type="button" id="cm-new" class="cm-profile-item cm-new-item">＋ 新規作成</button>
+        </div>
+      </fieldset>
+
+      <fieldset id="cm-form-fieldset" class="roles-fieldset">
+        <legend>プロファイルの詳細</legend>
+        <label>名前(ラベル) <input id="cm-label" type="text" placeholder="例: 個人用 Notion" /></label>
+        <div id="cm-form-fields"></div>
+        <div id="cm-error" class="form-error"></div>
+        <div class="dialog-actions">
+          <button id="cm-form-save" class="btn primary" type="button">保存</button>
+        </div>
+      </fieldset>
+
+      <div class="dialog-actions">
+        <button id="credential-manager-close" class="btn" type="button">閉じる</button>
+      </div>
+    </dialog>
+
+    <!-- 保存済みトークンの選択（各フィールドの「選択…／変更…」から開く） -->
+    <dialog id="credential-select-picker" class="dialog">
+      <h3 id="credential-select-picker-title">保存済みトークンを選択</h3>
+      <div id="credential-select-picker-list" class="picker-list"></div>
+      <div class="dialog-actions">
+        <button id="credential-select-picker-manage" class="btn" type="button">🔑 管理画面を開く…</button>
+        <button id="credential-select-picker-close" class="btn">閉じる</button>
       </div>
     </dialog>
 
@@ -384,6 +410,16 @@
       <div class="dialog-actions">
         <button id="confirm-dialog-cancel" class="btn" type="button">キャンセル</button>
         <button id="confirm-dialog-ok" class="btn danger" type="button">削除する</button>
+      </div>
+    </dialog>
+
+    <!-- データソース一覧下部「更新エラー」の詳細表示 -->
+    <dialog id="status-errors-dialog" class="dialog wide">
+      <button id="status-errors-close-x" class="dialog-close-x" type="button" title="閉じる">×</button>
+      <h3>更新エラー</h3>
+      <div id="status-errors-list" class="status-errors-list"></div>
+      <div class="dialog-actions">
+        <button id="status-errors-close" class="btn primary" type="button">閉じる</button>
       </div>
     </dialog>
 

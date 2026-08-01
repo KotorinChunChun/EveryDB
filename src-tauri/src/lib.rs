@@ -1,11 +1,13 @@
 pub mod browse;
 mod commands;
 pub mod connectors;
+pub mod credentials;
 pub mod db;
 pub mod graph;
 pub mod model;
 pub mod refresh;
 pub mod secret;
+pub mod winauth;
 
 use rusqlite::Connection;
 use tauri::menu::{Menu, MenuItem};
@@ -113,9 +115,8 @@ pub fn run() {
             commands::delete_search_preset,
             commands::open_ref,
             commands::encode_shift_jis,
-            commands::mp_status,
-            commands::mp_set,
-            commands::mp_verify,
+            commands::winauth_status,
+            commands::winauth_verify,
             commands::get_source_detail,
             commands::update_source,
             commands::duplicate_source,
@@ -140,6 +141,13 @@ pub fn run() {
             commands::browse_sqlite_tables,
             commands::browse_accdb_tables,
             commands::browse_browser_profiles,
+            commands::list_credentials,
+            commands::add_credential,
+            commands::update_credential,
+            commands::delete_credential,
+            commands::credential_usage,
+            commands::credential_public_fields,
+            commands::credential_secret_value,
             commands::autostart_status,
             commands::autostart_set,
             commands::set_zoom,

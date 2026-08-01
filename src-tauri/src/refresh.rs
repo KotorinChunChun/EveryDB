@@ -6,12 +6,15 @@ use rusqlite::Connection;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::commands::AppState;
-use crate::{connectors, db};
+use crate::{connectors, credentials, db};
 
 /// 1 ソースを取得してスナップショット全置換し、ステータスを更新する（要件 §4-1）。
 pub fn reload_one(conn: &mut Connection, id: i64) -> anyhow::Result<()> {
     let (type_, cfg) = db::get_source_config(conn, id)?;
-    let connector = connectors::build_connector(&type_, &cfg)?;
+    // 保存済みトークンへの参照（cred:<id>）を実値へ展開してから接続する。
+    // DB に保存される config_json 自体（cfg）は変更しない＝参照は維持される。
+    let resolved_cfg = credentials::resolve_credentials(conn, &cfg)?;
+    let connector = connectors::build_connector(&type_, &resolved_cfg)?;
     match connector.fetch() {
         Ok(records) => {
             db::replace_source_records(conn, id, &records)?;

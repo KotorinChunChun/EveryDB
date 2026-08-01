@@ -9,12 +9,11 @@ use crate::model::{SearchResponse, SourceInfo};
 use crate::refresh::reload_one;
 use crate::{db, secret};
 
-const MASTER_PASSWORD_META_KEY: &str = "master_password_hash";
-const UNLOCK_DURATION: Duration = Duration::from_secs(600); // 10 分（要件 §9-4）
+const UNLOCK_DURATION: Duration = Duration::from_secs(600); // 直近の Windows Hello 確認から 10 分は再要求しない
 
 pub struct AppState {
     pub db: Mutex<Connection>,
-    /// マスターパスワード解錠の有効期限（None または過去時刻 = ロック中）。
+    /// 直近の Windows Hello 確認の有効期限（None または過去時刻 = 未確認/期限切れ）。
     unlocked_until: Mutex<Option<Instant>>,
 }
 
@@ -41,39 +40,45 @@ fn err_to_string<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
-// ---- マスターパスワード（要件 §9-4）----
+// ---- 秘密情報の閲覧ゲート（Windows Hello による本人確認）----
+// 以前はアプリ独自の「マスターパスワード」を DB に保存して使っていたが、DPAPI による暗号化が
+// 既に Windows ユーザーに紐づいているため、その上にアプリ独自パスワードを持つ必然性が無く、
+// OS 標準の本人確認（Windows Hello: 顔 / 指紋 / PIN）に置き換えた。本ツールの DB は
+// パスワード（ハッシュ含む）を一切保持しない。
 
+// winauth_status / winauth_verify は async fn にする。中身が呼ぶ WinRT の IAsyncOperation::get()
+// はブロッキング待機のため、素の同期 fn のままだと add_source 等と同じ理由（コメント参照）で
+// Tauri のメインスレッドを塞いでしまう。実際に「再表示ボタンを押すとアプリごとフリーズし、
+// Windows Hello の画面も出ない」不具合として発生した（メインスレッドが自分自身の待機で
+// 塞がり、ダイアログの表示・完了通知も進まなくなっていたとみられる）。async fn にすることで
+// Tauri の非同期ランタイム側のスレッドで実行され、UI スレッドは塞がれない。
 #[tauri::command]
-pub fn mp_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    let is_set = db::get_meta(&conn, MASTER_PASSWORD_META_KEY).map_err(err_to_string)?.is_some();
-    Ok(serde_json::json!({ "is_set": is_set, "unlocked": state.is_unlocked() }))
+pub async fn winauth_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({ "available": crate::winauth::is_available(), "unlocked": state.is_unlocked() }))
 }
 
+/// Windows Hello の確認ダイアログを出す。直近 10 分以内に確認済みなら再要求しない
+/// （`is_unlocked` を先にチェックする点は呼び出し側の役割）。
+/// Windows Hello が使えない環境（PIN 未設定・非対応ハード等）では確認をスキップして許可する
+/// （DPAPI 自体は引き続き有効なので、リモート攻撃者が横から secrets を読めるようにはならない）。
 #[tauri::command]
-pub fn mp_set(state: State<'_, AppState>, password: String) -> Result<(), String> {
-    if password.chars().count() < 4 {
-        return Err("4 文字以上で設定してください".to_string());
+pub async fn winauth_verify(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
+    if !crate::winauth::is_available() {
+        state.unlock();
+        return Ok(true);
     }
-    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    if db::get_meta(&conn, MASTER_PASSWORD_META_KEY).map_err(err_to_string)?.is_some() {
-        return Err("既にマスターパスワードは設定済みです".to_string());
-    }
-    let hash = secret::hash_master_password(&password).map_err(err_to_string)?;
-    db::set_meta(&conn, MASTER_PASSWORD_META_KEY, &hash).map_err(err_to_string)?;
-    drop(conn);
-    state.unlock(); // 設定直後は解錠済み扱い
-    Ok(())
-}
-
-#[tauri::command]
-pub fn mp_verify(state: State<'_, AppState>, password: String) -> Result<bool, String> {
-    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    let hash = db::get_meta(&conn, MASTER_PASSWORD_META_KEY)
-        .map_err(err_to_string)?
-        .ok_or("マスターパスワードが未設定です")?;
-    drop(conn);
-    let ok = secret::verify_master_password(&password, &hash).map_err(err_to_string)?;
+    #[cfg(windows)]
+    let hwnd = app
+        .get_webview_window("main")
+        .ok_or("メインウィンドウが見つかりません")?
+        .hwnd()
+        .map_err(err_to_string)?;
+    #[cfg(not(windows))]
+    let hwnd = {
+        let _ = &app;
+        ()
+    };
+    let ok = crate::winauth::verify(hwnd, "EveryDB: 保存済みのトークンを表示します").map_err(err_to_string)?;
     if ok {
         state.unlock();
     }
@@ -100,12 +105,6 @@ pub async fn add_source(
     config_json: String,
 ) -> Result<i64, String> {
     let mut conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    // 秘密情報を持つ種別（Notion/Graph 系）は、マスターパスワード設定を前提とする（要件 §9-4）。
-    if secret::has_secret_fields(&type_)
-        && db::get_meta(&conn, MASTER_PASSWORD_META_KEY).map_err(err_to_string)?.is_none()
-    {
-        return Err("このソース種別は秘密情報を扱うため、先にマスターパスワードを設定してください".to_string());
-    }
     // 秘密フィールド（Notion トークン等）は DPAPI で暗号化してから保存する（要件 §4-3-bis）。
     let config_json = secret::protect_config(&type_, &config_json).map_err(err_to_string)?;
     let id = db::insert_source(&conn, &type_, &name, &config_json).map_err(err_to_string)?;
@@ -141,9 +140,9 @@ fn fill_shared_from_sibling(
 /// 既存の兄弟ソースから接続情報を引き継いで、同じ接続先配下にテーブルを追加する。
 /// 接続設定ダイアログのテーブル一覧から追加するときに使う。
 ///
-/// マスターパスワードが未解錠だと UI 側の秘密フィールドはマスク（`••••••••`）されているため、
-/// その値で追加すると壊れたソースができてしまう。ここでは**暗号化されたままの値をコピー**する
-/// ことで、UI が平文の秘密情報を扱わずに済むようにしている。
+/// UI 側の秘密フィールドは未確認時マスク（`••••••••`）されているため、その値で追加すると
+/// 壊れたソースができてしまう。ここでは**暗号化されたままの値をコピー**することで、
+/// UI が平文の秘密情報を扱わずに済むようにしている。
 #[tauri::command]
 pub async fn add_source_from_sibling(
     state: State<'_, AppState>,
@@ -154,11 +153,6 @@ pub async fn add_source_from_sibling(
     shared_keys: Vec<String>,
 ) -> Result<i64, String> {
     let mut conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    if secret::has_secret_fields(&type_)
-        && db::get_meta(&conn, MASTER_PASSWORD_META_KEY).map_err(err_to_string)?.is_none()
-    {
-        return Err("このソース種別は秘密情報を扱うため、先にマスターパスワードを設定してください".to_string());
-    }
     let (_, sibling_json) = db::get_source_config(&conn, sibling_id).map_err(err_to_string)?;
     let merged = fill_shared_from_sibling(&config_json, &sibling_json, &shared_keys)?;
     // 既に `dpapi:` 付きの値は protect_config が二重暗号化しないので、そのまま渡してよい。
@@ -188,10 +182,17 @@ pub fn get_source_detail(state: State<'_, AppState>, id: i64) -> Result<serde_js
     } else {
         secret::mask_config(&config_json).map_err(err_to_string)?
     };
+    // 保存済みトークンへの参照（cred:<id>）フィールドは、解錠中でも実値を出さず常にマスクする
+    // （実体は credentials 側にあり、ソース編集画面での「解錠して編集」は意味を持たないため。
+    // 誤って別の値を書き込むとリンクが意図せず外れてしまう。値を変えたい場合はトークン管理画面で）。
+    let visible = crate::credentials::remask_cred_refs(&conn, &config_json, &visible).map_err(err_to_string)?;
+    let linked_credentials =
+        crate::credentials::cred_ref_labels(&conn, &config_json).map_err(err_to_string)?;
     let config: serde_json::Value = serde_json::from_str(&visible).map_err(err_to_string)?;
     Ok(serde_json::json!({
         "type_": type_, "name": name, "refresh_interval": refresh_interval,
         "config": config, "unlocked": unlocked, "has_secret": secret::has_secret_fields(&type_),
+        "linked_credentials": linked_credentials,
     }))
 }
 
@@ -230,9 +231,12 @@ pub fn reorder_sources(state: State<'_, AppState>, ordered_ids: Vec<i64>) -> Res
 }
 
 /// 追加ダイアログ用: まだ保存していない接続情報で試し取得し、フィールド名一覧を返す（要件 §9-3）。
+/// 秘密フィールドに保存済みトークンへの参照（cred:<id>）が入っていることがあるため解決してから使う。
 #[tauri::command]
-pub fn preview_source_fields(type_: String, config_json: String) -> Result<Vec<String>, String> {
-    crate::connectors::raw_field_names(&type_, &config_json).map_err(err_to_string)
+pub fn preview_source_fields(state: State<'_, AppState>, type_: String, config_json: String) -> Result<Vec<String>, String> {
+    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+    let resolved = crate::credentials::resolve_credentials(&conn, &config_json).map_err(err_to_string)?;
+    crate::connectors::raw_field_names(&type_, &resolved).map_err(err_to_string)
 }
 
 #[derive(serde::Serialize)]
@@ -252,6 +256,7 @@ pub struct FieldPreview {
 pub fn preview_source_fields_by_id(state: State<'_, AppState>, id: i64) -> Result<FieldPreview, String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
     let (type_, config_json) = db::get_source_config(&conn, id).map_err(err_to_string)?;
+    let config_json = crate::credentials::resolve_credentials(&conn, &config_json).map_err(err_to_string)?;
     match crate::connectors::raw_field_names(&type_, &config_json) {
         Ok(names) => Ok(FieldPreview { names, from_cache: false }),
         Err(live_err) => {
@@ -263,6 +268,61 @@ pub fn preview_source_fields_by_id(state: State<'_, AppState>, id: i64) -> Resul
             }
         }
     }
+}
+
+// ---- 保存済みトークン（要件: トークン管理画面。過去に設定したトークンの再利用・一括置換）----
+
+#[tauri::command]
+pub fn list_credentials(state: State<'_, AppState>, scope: String) -> Result<Vec<crate::credentials::CredentialSummary>, String> {
+    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+    crate::credentials::list_credentials(&conn, &scope).map_err(err_to_string)
+}
+
+#[tauri::command]
+pub fn add_credential(state: State<'_, AppState>, scope: String, label: String, fields_json: String) -> Result<i64, String> {
+    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+    crate::credentials::add_credential(&conn, &scope, &label, &fields_json).map_err(err_to_string)
+}
+
+/// 「置換」。値を書き換えると、参照している全ソースへ自動的に反映される（共有参照方式）。
+#[tauri::command]
+pub fn update_credential(state: State<'_, AppState>, id: i64, label: String, fields_json: String) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+    crate::credentials::update_credential(&conn, id, &label, &fields_json).map_err(err_to_string)
+}
+
+/// 使用中ソースがあれば拒否する（要件: 削除をブロックし使用中ソース一覧を表示）。
+#[tauri::command]
+pub fn delete_credential(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+    crate::credentials::delete_credential(&conn, id)
+}
+
+#[tauri::command]
+pub fn credential_usage(state: State<'_, AppState>, id: i64) -> Result<Vec<crate::credentials::CredentialUsage>, String> {
+    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+    let out = crate::credentials::find_usage(&conn, id)
+        .map_err(err_to_string)?
+        .into_iter()
+        .map(|(source_id, source_name)| crate::credentials::CredentialUsage { source_id, source_name })
+        .collect();
+    Ok(out)
+}
+
+/// ピッカー用: ラベルと非秘密フィールドの平文値だけを返す（秘密フィールドの実値は渡さない）。
+#[tauri::command]
+pub fn credential_public_fields(state: State<'_, AppState>, id: i64) -> Result<serde_json::Value, String> {
+    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+    let (label, fields) = crate::credentials::public_fields(&conn, id).map_err(err_to_string)?;
+    Ok(serde_json::json!({ "label": label, "fields": fields }))
+}
+
+/// まだソースとして保存していない新規追加フロー用: 選択済みトークンの秘密フィールド実値を
+/// 一度だけ返す（Base一覧・データベース一覧等のライブブラウズに使う）。
+#[tauri::command]
+pub fn credential_secret_value(state: State<'_, AppState>, id: i64) -> Result<String, String> {
+    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+    crate::credentials::resolve_secret_value(&conn, id).map_err(err_to_string)
 }
 
 // ---- ブラウズして追加（要件 §9-2）----
@@ -279,14 +339,26 @@ pub fn browse_notion_databases(token: String) -> Result<Vec<crate::browse::Notio
 /// 接続設定ダイアログはマスターパスワードが未解錠だと秘密フィールドがマスクされて表示される。
 /// その値をそのまま外部 API へ渡すと必ず認証エラーになるため、一覧取得はフロントから受け取った
 /// 値ではなくこの実効設定を使う（`preview_source_fields_by_id` と同じ考え方）。
+/// 保存済みトークンへの参照（cred:<id>）を実値へ展開してから復号する。
+fn resolve_and_decrypt(conn: &Connection, config_json: &str) -> Result<String, String> {
+    let resolved = crate::credentials::resolve_credentials(conn, config_json).map_err(err_to_string)?;
+    secret::unprotect_config(&resolved).map_err(err_to_string)
+}
+
 fn effective_config(
     conn: &Connection,
     id: i64,
     overrides_json: &str,
 ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
     let (_, config_json) = db::get_source_config(conn, id).map_err(err_to_string)?;
-    let decrypted = secret::unprotect_config(&config_json).map_err(err_to_string)?;
-    merge_overrides(&decrypted, overrides_json)
+    let decrypted = resolve_and_decrypt(conn, &config_json)?;
+    let merged = merge_overrides(&decrypted, overrides_json)?;
+    // override 自体が「このセッションで選び直した」新しい cred:<id> 参照であることがある
+    // （ダイアログ上でトークンを変更しただけでまだ保存していない状態）。その場合 merge_overrides は
+    // 単なる文字列として上書きするだけなので、マージ後にもう一度解決・復号する。
+    let merged_json = serde_json::to_string(&merged).map_err(err_to_string)?;
+    let merged_decrypted = resolve_and_decrypt(conn, &merged_json)?;
+    serde_json::from_str(&merged_decrypted).map_err(err_to_string)
 }
 
 /// 復号済み設定に、ダイアログ上の編集値を重ねる。空・プレースホルダーは未編集として無視する。
@@ -300,6 +372,9 @@ fn merge_overrides(
         serde_json::from_str(overrides_json).map_err(err_to_string)?;
     for (k, v) in overrides {
         let s = v.as_str().unwrap_or_default();
+        // 空・プレースホルダーは「未編集」扱い（保存済みの値を使う）。
+        // cred:<id> は「このセッションで選び直した新しいリンク」を意味する実際の編集値のため、
+        // 通常の値と同様に適用する（呼び出し元の effective_config 側で改めて解決・復号する）。
         if s.is_empty() || s == secret::SECRET_PLACEHOLDER {
             continue; // 未編集 → 保存済みの値を使う
         }
@@ -622,6 +697,20 @@ mod parent_dialog_tests {
     }
 
     #[test]
+    fn merge_overrides_applies_fresh_cred_reference_as_a_real_edit() {
+        // cred:<id> は「ダイアログ上でこのセッション中に選び直した新しいリンク」を意味する
+        // 実際の編集値であり、プレースホルダーとは違って無視してはいけない
+        // （無視すると「トークンを変更した直後は反映されない」不具合になる。実際に発生した：
+        // 接続設定でトークンを変更→保存前に「テーブル一覧の更新」を押すと旧トークンで検証されていた）。
+        // 実際の解決（cred:<id> → 実値）は merge_overrides の外、effective_config 側の役割。
+        let saved_and_resolved = r#"{"token":"ntn_old_resolved_value","database_id":"db1"}"#;
+        let overrides = r#"{"token":"cred:7","database_id":"db2"}"#;
+        let merged = merge_overrides(saved_and_resolved, overrides).unwrap();
+        assert_eq!(merged["token"], "cred:7"); // そのまま適用される（呼び出し元が改めて解決する）
+        assert_eq!(merged["database_id"], "db2");
+    }
+
+    #[test]
     fn merge_overrides_applies_edited_values() {
         let saved = r#"{"token":"ntn_old","site_url":"https://old"}"#;
         let edited = r#"{"token":"ntn_new","site_url":"https://new","extra":"x"}"#;
@@ -629,6 +718,30 @@ mod parent_dialog_tests {
         assert_eq!(merged["token"], "ntn_new");
         assert_eq!(merged["site_url"], "https://new");
         assert_eq!(merged["extra"], "x");
+    }
+
+    #[test]
+    fn effective_config_resolves_a_freshly_overridden_credential_reference() {
+        // 再現テスト: 接続設定でトークンを選び直した直後、保存する前に「テーブル一覧の更新」を
+        // 押しても新しいトークンが使われず、旧トークンで検証されているように見える不具合の回帰確認。
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::init_schema(&conn).unwrap();
+        let old_id = crate::credentials::add_credential(&conn, "notion", "旧", r#"{"token":"ntn_old"}"#).unwrap();
+        let new_id = crate::credentials::add_credential(&conn, "notion", "新", r#"{"token":"ntn_new"}"#).unwrap();
+        let source_id = crate::db::insert_source(
+            &conn, "notion", "テスト",
+            &format!(r#"{{"token":"cred:{old_id}","database_id":"db1"}}"#),
+        ).unwrap();
+
+        // 保存前の override（フロントが「変更…」で選び直した直後の状態を模す）。
+        let overrides = format!(r#"{{"token":"cred:{new_id}"}}"#);
+        let cfg = super::effective_config(&conn, source_id, &overrides).unwrap();
+        assert_eq!(cfg["token"], "ntn_new"); // 保存前でも新しく選んだトークンの実値が使われる
+        assert_eq!(cfg["database_id"], "db1"); // override に無いフィールドは保存済みの値を維持
+
+        // override が無ければ、引き続き保存済み(旧)のトークンが使われる。
+        let cfg2 = super::effective_config(&conn, source_id, "{}").unwrap();
+        assert_eq!(cfg2["token"], "ntn_old");
     }
 
     #[test]

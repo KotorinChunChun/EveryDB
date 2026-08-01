@@ -49,6 +49,17 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
         );
 
+        -- 保存済みトークン（要件: トークンの再利用・一括置換）。
+        -- scope: "notion" | "airtable" | "graph" | "box" | "postgres" | "mysql"。
+        -- fields_json: そのスコープの関連フィールドをまとめた JSON（秘密フィールドのみ dpapi: 暗号化）。
+        CREATE TABLE IF NOT EXISTS credentials (
+            id          INTEGER PRIMARY KEY,
+            scope       TEXT NOT NULL,
+            label       TEXT NOT NULL,
+            fields_json TEXT NOT NULL,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        );
+
         CREATE TABLE IF NOT EXISTS records (
             id          INTEGER PRIMARY KEY,
             source_id   INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,

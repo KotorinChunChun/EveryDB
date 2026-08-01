@@ -28,8 +28,8 @@ interface SearchResponse {
   rows: Row[];
   truncated: boolean;
 }
-interface MpStatus {
-  is_set: boolean;
+interface WinAuthStatus {
+  available: boolean;
   unlocked: boolean;
 }
 interface SourceDetail {
@@ -39,6 +39,22 @@ interface SourceDetail {
   config: Record<string, unknown>;
   unlocked: boolean;
   has_secret: boolean;
+  /** フィールドキー → リンク中の保存済みトークンの id/ラベル（該当なしのキーは含まれない）。 */
+  linked_credentials: Record<string, { id: number; label: string }>;
+}
+
+/** 保存済みトークンのスコープ。関連フィールドをひとまとめにする単位（sharedKeysFor と同じ発想）。 */
+type CredentialScope = "notion" | "airtable" | "graph" | "box" | "postgres" | "mysql";
+interface CredentialUsage {
+  source_id: number;
+  source_name: string;
+}
+interface CredentialSummary {
+  id: number;
+  scope: string;
+  label: string;
+  created_at: string;
+  used_by: CredentialUsage[];
 }
 
 // ==== 状態 ====
@@ -52,7 +68,7 @@ let columns: string[] = []; // 表示する列（Source + フィールド名の�
 let searchSeq = 0; // 送出したリクエストの通し番号
 let lastAppliedSeq = -1; // 表示に反映済みの最大 seq（競合対策）
 let selectedCell: { row: number; col: number } | null = null;
-let mpStatus: MpStatus = { is_set: false, unlocked: false };
+let winAuthStatus: WinAuthStatus = { available: false, unlocked: false };
 
 const ROW_H = 26; // px 固定行高（仮想スクロール用）
 const COL_W = 200; // px 既定列幅
@@ -128,72 +144,30 @@ const rowsEl = $<HTMLDivElement>("grid-rows");
 const resultInfo = $<HTMLDivElement>("result-info");
 
 // ============================================================
-// マスターパスワード（要件 §9-4）
+// 秘密情報の閲覧確認（Windows Hello）
 // ============================================================
-async function refreshMpStatus() {
-  mpStatus = await invoke<MpStatus>("mp_status");
+// 以前はアプリ独自の「マスターパスワード」（初回起動時の設定必須・DB にハッシュ保存）だったが、
+// トークンの実際の暗号化は既に Windows DPAPI が現在の Windows ユーザーに紐づけて行っており、
+// その上にアプリ独自パスワードを重ねて DB に持つ必然性が無いため廃止した。
+// 代わりに OS 標準の本人確認（Windows Hello: 顔 / 指紋 / PIN）を使う。
+// セットアップ操作は不要（Windows Hello は Windows 側で設定済みかどうかが決まるだけ）。
+async function refreshWinAuthStatus() {
+  winAuthStatus = await invoke<WinAuthStatus>("winauth_status");
 }
 
-async function ensureMasterPasswordSetup() {
-  await refreshMpStatus();
-  if (mpStatus.is_set) return;
-  const dlg = $<HTMLDialogElement>("mp-setup-dialog");
-  const err = $<HTMLDivElement>("mp-setup-error");
-  const pw1 = $<HTMLInputElement>("mp-setup-pw1");
-  const pw2 = $<HTMLInputElement>("mp-setup-pw2");
-  dlg.showModal();
-  await new Promise<void>((resolve) => {
-    $<HTMLFormElement>("mp-setup-form").onsubmit = async (e) => {
-      e.preventDefault();
-      err.textContent = "";
-      if (pw1.value.length < 4) { err.textContent = "4 文字以上で入力してください"; return; }
-      if (pw1.value !== pw2.value) { err.textContent = "確認用パスワードが一致しません"; return; }
-      try {
-        await invoke("mp_set", { password: pw1.value });
-        await refreshMpStatus();
-        dlg.close();
-        resolve();
-      } catch (e2) {
-        err.textContent = String(e2);
-      }
-    };
-  });
-}
-
-/** シークレットを表示/使用する操作の前に解錠を保証する。解錠済みなら即 true。 */
+/** シークレットを表示/使用する操作の前に本人確認を保証する。
+ * 直近 10 分以内に確認済みなら省略する。解錠済みなら即 true。 */
 async function ensureUnlocked(): Promise<boolean> {
-  await refreshMpStatus();
-  if (mpStatus.unlocked) return true;
-  const dlg = $<HTMLDialogElement>("mp-verify-dialog");
-  const err = $<HTMLDivElement>("mp-verify-error");
-  const pw = $<HTMLInputElement>("mp-verify-pw");
-  pw.value = "";
-  err.textContent = "";
-  dlg.showModal();
-  return new Promise<boolean>((resolve) => {
-    $<HTMLFormElement>("mp-verify-form").onsubmit = async (e) => {
-      e.preventDefault();
-      const submitter = (e as SubmitEvent).submitter as HTMLButtonElement | null;
-      if (submitter?.value === "cancel") { dlg.close("cancel"); resolve(false); return; }
-      try {
-        const ok = await invoke<boolean>("mp_verify", { password: pw.value });
-        if (ok) {
-          await refreshMpStatus();
-          dlg.close();
-          resolve(true);
-        } else {
-          err.textContent = "パスワードが違います";
-        }
-      } catch (e2) {
-        err.textContent = String(e2);
-      }
-    };
-    $<HTMLButtonElement>("mp-verify-cancel").addEventListener(
-      "click",
-      () => { dlg.close("cancel"); resolve(false); },
-      { once: true },
-    );
-  });
+  await refreshWinAuthStatus();
+  if (winAuthStatus.unlocked) return true;
+  try {
+    const ok = await invoke<boolean>("winauth_verify");
+    await refreshWinAuthStatus();
+    return ok;
+  } catch (e) {
+    alert("本人確認に失敗しました: " + String(e));
+    return false;
+  }
 }
 
 // ============================================================
@@ -824,12 +798,40 @@ async function reloadOne(id: number) {
 function updateStatus() {
   const errs = sources.filter((s) => s.status === "error");
   if (errs.length) {
-    statusEl.textContent = "更新エラー:\n" + errs.map((s) => `・${s.name}: ${s.last_error ?? ""}`).join("\n");
+    // サイドバー下部は幅・フォントサイズとも狭く、長いパス付きのエラーを並べると読めなくなる
+    // （実測で確認済み）。ここは1行の要約だけにし、詳細は専用ダイアログで見せる。
+    statusEl.innerHTML = "";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "status-error-link";
+    btn.textContent = `⚠ 更新エラー: ${errs.length}件（クリックで詳細）`;
+    btn.onclick = () => openStatusErrorsDialog(errs);
+    statusEl.appendChild(btn);
   } else {
     const last = sources.map((s) => s.last_success_at).filter(Boolean).sort().pop();
     statusEl.textContent = last ? `最終更新: ${last}` : "まだ更新されていません";
   }
 }
+
+function openStatusErrorsDialog(errs: SourceInfo[]) {
+  const listEl = $<HTMLDivElement>("status-errors-list");
+  listEl.innerHTML = "";
+  for (const s of errs) {
+    const item = document.createElement("div");
+    item.className = "status-error-item";
+    const name = document.createElement("div");
+    name.className = "status-error-name";
+    name.textContent = s.name;
+    const msg = document.createElement("div");
+    msg.className = "status-error-msg";
+    msg.textContent = s.last_error ?? "(エラー内容なし)";
+    item.append(name, msg);
+    listEl.appendChild(item);
+  }
+  $<HTMLDialogElement>("status-errors-dialog").showModal();
+}
+$<HTMLButtonElement>("status-errors-close").onclick = () => $<HTMLDialogElement>("status-errors-dialog").close();
+$<HTMLButtonElement>("status-errors-close-x").onclick = () => $<HTMLDialogElement>("status-errors-dialog").close();
 
 const sourceFilterInput = $<HTMLInputElement>("source-filter");
 const sourceFilterClearBtn = $<HTMLButtonElement>("source-filter-clear");
@@ -2003,21 +2005,523 @@ function makeLinkButton(url: string, text: string): HTMLButtonElement {
   return btn;
 }
 
+/** 秘密フィールドを「選択専用」のトークン参照ウィジェットにする（要件: 接続単位での生入力・保存は
+ * 廃止し、全て管理されているトークンだけを参照させる）。実値は画面に一切出さず、
+ * 選んだトークンのプロファイル名だけを表示する。fd-/pf- どちらのダイアログでも使う。 */
+function wireCredentialSelector(input: HTMLInputElement, f: FieldDef, idPrefix: string, row: HTMLElement, label: HTMLElement) {
+  const scope = f.credentialScope!;
+  const bundleFields = f.credentialBundleFields ?? [];
+  // 実値はどこにも表示しない。input は cred:<id> 参照/プレースホルダーを持つだけの
+  // データキャリアとして残す（getFieldValue 等の既存データフローをそのまま使うため）。
+  input.hidden = true;
+  label.textContent = "使用するトークン";
+
+  const chip = document.createElement("span");
+  chip.className = "credential-profile-chip";
+  row.appendChild(chip);
+
+  const pickBtn = document.createElement("button");
+  pickBtn.type = "button";
+  pickBtn.className = "btn browse-btn";
+  row.appendChild(pickBtn);
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "btn browse-btn";
+  copyBtn.textContent = "📋 コピー";
+  copyBtn.title = "トークンをクリップボードにコピーします（本人確認を求められることがあります）";
+  row.appendChild(copyBtn);
+
+  function currentCredentialId(): number | null {
+    if (input.dataset.credRef) return Number(input.dataset.credRef);
+    const known = currentLinkedCredentials[f.key];
+    return known ? known.id : null;
+  }
+
+  function applyPick(id: number, credLabel: string, fields: Record<string, unknown>) {
+    input.dataset.credRef = String(id);
+    input.dataset.credLabel = credLabel;
+    input.value = SECRET_PLACEHOLDER;
+    for (const bf of bundleFields) {
+      const bfEl = document.getElementById(`${idPrefix}${bf}`) as HTMLInputElement | null;
+      const v = fields[bf];
+      if (bfEl && v !== undefined) bfEl.value = String(v);
+    }
+    renderState();
+    // Airtable: 先に URL 貼り付け等で base_id/table/view の ID だけ埋まっていた場合、
+    // トークンが確定した今のタイミングでキャプション（base_name 等）を遅れて解決する。
+    if (f.key === "token" && idPrefix === "fd-" && currentTypeDef().value === "airtable") {
+      const baseId = (document.getElementById("fd-base_id") as HTMLInputElement | null)?.value.trim();
+      const tableId = (document.getElementById("fd-table") as HTMLInputElement | null)?.value.trim();
+      const viewId = (document.getElementById("fd-view") as HTMLInputElement | null)?.value.trim();
+      if (baseId || tableId) void resolveAirtableCaptions(baseId || undefined, tableId || undefined, viewId || undefined);
+    }
+  }
+
+  function renderState() {
+    const lbl = input.dataset.credLabel;
+    if (lbl) {
+      chip.textContent = `🔑 ${lbl}`;
+      chip.classList.remove("unset");
+      pickBtn.textContent = "変更…";
+      copyBtn.hidden = false;
+    } else {
+      chip.textContent = "未選択";
+      chip.classList.add("unset");
+      pickBtn.textContent = "選択…";
+      copyBtn.hidden = true;
+    }
+  }
+
+  pickBtn.onclick = () => openCredentialSelectPicker(scope, applyPick);
+  copyBtn.onclick = () => {
+    const id = currentCredentialId();
+    if (id === null) return;
+    // 複数フィールドの束（Graph のテナントID/クライアントID/シークレット等）を使う種別は、
+    // まとめて JSON でコピーする（要件: M365 は3つの ID を JSON 形式でコピーできるように）。
+    if (bundleFields.length > 0) {
+      void copyCredentialBundleAsJson(id, f.key, bundleFields, idPrefix);
+    } else {
+      void copyCredentialSecretToClipboard(id);
+    }
+  };
+
+  const known = currentLinkedCredentials[f.key];
+  if (known) input.dataset.credLabel = known.label;
+  renderState();
+}
+
+/** 保存済みトークンのスコープの表示名（ピッカーのタイトルに出し、何のトークン一覧かを明確にする）。 */
+function credentialScopeLabel(scope: CredentialScope): string {
+  switch (scope) {
+    case "notion": return "Notion";
+    case "airtable": return "Airtable";
+    case "graph": return "Microsoft 365 (Graph)";
+    case "box": return "Box";
+    case "postgres": return "PostgreSQL";
+    case "mysql": return "MySQL";
+  }
+}
+
+/** 直近にピッカーを開いたときのスコープ。「🔑 管理画面を開く…」で接続先に合致する種別を
+ * 初期選択させるために使う（要件: 接続設定画面経由で開いた場合、データソースに合致する種別を
+ * 最初から選択させる）。 */
+let lastPickerScope: CredentialScope | null = null;
+
+function renderCredentialPickerList(items: CredentialSummary[], onPick: (id: number, label: string, fields: Record<string, unknown>) => void) {
+  const listEl = $<HTMLDivElement>("credential-select-picker-list");
+  listEl.innerHTML = "";
+  if (items.length === 0) {
+    listEl.innerHTML = "<div class='picker-empty'>該当する保存済みトークンがありません。下の「🔑 管理画面を開く…」から追加できます</div>";
+    return;
+  }
+  for (const c of items) {
+    const item = document.createElement("div");
+    item.className = "picker-item";
+    item.textContent = `${c.label}（作成: ${c.created_at}）`;
+    item.onclick = async () => {
+      try {
+        const res = await invoke<{ label: string; fields: Record<string, unknown> }>("credential_public_fields", { id: c.id });
+        onPick(c.id, res.label, res.fields);
+        $<HTMLDialogElement>("credential-select-picker").close();
+      } catch (e) {
+        alert("取得に失敗しました: " + String(e));
+      }
+    };
+    listEl.appendChild(item);
+  }
+}
+
+/** 保存済みトークンの選択ピッカー。関係ないサービスのトークンが混ざらないよう、必ず対象スコープ
+ * だけを取得し（要件: 使おうとしているサービスと関係ないものが出ないようにする）、加えて
+ * 新規登録はここでは行わず、「🔑 管理画面を開く…」からトークン管理画面で行う
+ * （要件: ピッカーからその場登録する機能は廃止し、管理画面に一本化）。 */
+async function openCredentialSelectPicker(
+  scope: CredentialScope,
+  onPick: (id: number, label: string, fields: Record<string, unknown>) => void,
+) {
+  lastPickerScope = scope;
+  const titleEl = $<HTMLHeadingElement>("credential-select-picker-title");
+  titleEl.textContent = `保存済みトークンを選択（${credentialScopeLabel(scope)}）`;
+  const listEl = $<HTMLDivElement>("credential-select-picker-list");
+  listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
+  const dlg = $<HTMLDialogElement>("credential-select-picker");
+
+  dlg.showModal();
+  try {
+    // scope を指定して取得するため、他サービスのトークンはそもそも含まれない。
+    const items = await invoke<CredentialSummary[]>("list_credentials", { scope });
+    renderCredentialPickerList(items, onPick);
+  } catch (e) {
+    setPickerMessage(listEl, `取得失敗: ${String(e)}`);
+  }
+}
+$<HTMLButtonElement>("credential-select-picker-close").onclick = () => $<HTMLDialogElement>("credential-select-picker").close();
+$<HTMLButtonElement>("credential-select-picker-manage").onclick = () => {
+  $<HTMLDialogElement>("credential-select-picker").close();
+  void openCredentialManager(lastPickerScope ?? undefined);
+};
+
+// ---- 保存済みトークンの管理画面（要件: トークン管理画面。追加・削除・置換を一括で） ----
+/** 置換中の対象 ID（null なら新規追加モード）。 */
+let cmEditingId: number | null = null;
+/** 保存ボタンの活性判定用に、フォームを表示した直後の値を保持する
+ * （要件: 変更が無い場合は保存ボタンをグレーアウトし、変更がある場合のみ押せるようにする）。 */
+let cmFormBaseline: Record<string, string> = {};
+
+interface CredentialFieldDef {
+  key: string;
+  label: string;
+  secret: boolean;
+  /** API キー・トークンの取得ページ。接続画面から移設したもの。 */
+  helpUrl?: string;
+  linkUrl?: string;
+  linkLabel?: string;
+}
+
+/** そのスコープを構成するフィールド定義（トークン管理画面の追加/置換フォーム・ピッカーの
+ * その場登録フォーム用の定義）。取得ページ等のリンクボタンは、接続画面側から一本化してここに集約した
+ * （要件: 接続単位でのトークン入力を廃止し、取得導線もトークン管理画面へ移す）。 */
+function credentialScopeFieldDefs(scope: CredentialScope): CredentialFieldDef[] {
+  switch (scope) {
+    case "notion":
+      return [{ key: "token", label: "インテグレーショントークン", secret: true, helpUrl: NOTION_INTEGRATIONS_URL }];
+    case "airtable":
+      return [{
+        key: "token", label: "Personal Access Token", secret: true,
+        helpUrl: "https://airtable.com/create/tokens", linkUrl: "https://airtable.com/workspaces", linkLabel: "🌐 ワークスペース…",
+      }];
+    case "graph":
+      return [
+        { key: "tenant_id", label: "テナントID", secret: false, helpUrl: ENTRA_APPS_URL },
+        { key: "client_id", label: "クライアントID", secret: false, helpUrl: ENTRA_APPS_URL },
+        { key: "client_secret", label: "クライアントシークレット(値)", secret: true, helpUrl: ENTRA_APPS_URL },
+      ];
+    case "box":
+      return [
+        { key: "client_id", label: "クライアントID", secret: false, helpUrl: "https://app.box.com/developers/console" },
+        { key: "client_secret", label: "クライアントシークレット", secret: true, helpUrl: "https://app.box.com/developers/console" },
+        // Enterprise ID はアプリの認証情報ではなく組織情報なので、Developer Console ではなく
+        // Admin Console の「アカウントと請求」（Account & Billing）に表示される
+        // （要件: Enterprise ID の取得ページは API 用の Developer Console とは違うので調査して修正）。
+        { key: "enterprise_id", label: "Enterprise ID", secret: false, helpUrl: "https://app.box.com/master/settings/account" },
+      ];
+    case "postgres":
+    case "mysql":
+      return [
+        { key: "user", label: "ユーザー", secret: false },
+        { key: "password", label: "パスワード", secret: true },
+      ];
+  }
+}
+
+/** そのスコープの手順書に相当する種別キー（既存の docs/guides/*.md 振り分けを流用する）。 */
+function representativeTypeForScope(scope: CredentialScope): string {
+  switch (scope) {
+    case "notion": return "notion";
+    case "airtable": return "airtable";
+    case "graph": return "graph_entra_users";
+    case "box": return "box_files";
+    case "postgres": return "postgres";
+    case "mysql": return "mysql";
+  }
+}
+
+/** 非秘密フィールドの値をそのままコピーする（既に平文で画面にあるため本人確認は不要）。 */
+async function copyPlainValueToClipboard(value: string, message: string) {
+  if (!value) return;
+  try {
+    await navigator.clipboard.writeText(value);
+    showToast(message);
+  } catch {
+    showToast("コピーに失敗しました");
+  }
+}
+
+function renderCredentialFormFields(scope: CredentialScope) {
+  const container = $<HTMLDivElement>("cm-form-fields");
+  container.innerHTML = "";
+  for (const f of credentialScopeFieldDefs(scope)) {
+    const label = document.createElement("label");
+    label.textContent = f.label;
+    const input = document.createElement("input");
+    input.type = f.secret ? "password" : "text";
+    input.autocomplete = "off";
+    input.id = `cmf-${f.key}`;
+    const row = document.createElement("div");
+    row.className = "path-row";
+    row.appendChild(input);
+
+    // 現在の値をコピーするボタン（要件: 再表示ではなくコピー。テナントID/クライアントID等の
+    // 非秘密フィールドにも設置する）。編集対象が確定してから使う（＝新規作成フォームではまだ
+    // 何も無いので非表示にしておく）。秘密フィールドは Windows Hello 経由でその場限りに取得し、
+    // 非秘密フィールドは既に画面上の平文値をそのままコピーする（本人確認は不要）。
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "btn browse-btn";
+    copyBtn.id = `cmf-copy-${f.key}`;
+    copyBtn.textContent = "📋 コピー";
+    copyBtn.hidden = true;
+    if (f.secret) {
+      copyBtn.title = "現在の値をクリップボードにコピーします（本人確認を求められることがあります）";
+      copyBtn.onclick = () => {
+        const credentialId = copyBtn.dataset.credentialId;
+        if (!credentialId) return;
+        void copyCredentialSecretToClipboard(Number(credentialId));
+      };
+    } else {
+      copyBtn.title = "現在の値をクリップボードにコピーします";
+      copyBtn.onclick = () => void copyPlainValueToClipboard(input.value, `${f.label}をコピーしました`);
+    }
+    row.appendChild(copyBtn);
+    if (f.helpUrl) row.appendChild(makeApiKeyButton(f.helpUrl));
+    if (f.linkUrl) row.appendChild(makeLinkButton(f.linkUrl, f.linkLabel ?? "🌐 開く…"));
+    label.appendChild(row);
+    container.appendChild(label);
+    input.oninput = () => updateCmSaveButtonState();
+  }
+}
+
+/** 現在フォームに表示されている値のスナップショット（ラベル＋スコープ内の各フィールド）。 */
+function currentCmFormValues(): Record<string, string> {
+  const values: Record<string, string> = { label: $<HTMLInputElement>("cm-label").value };
+  const scope = $<HTMLSelectElement>("cm-scope").value as CredentialScope;
+  for (const f of credentialScopeFieldDefs(scope)) {
+    const el = document.getElementById(`cmf-${f.key}`) as HTMLInputElement | null;
+    values[f.key] = el ? el.value : "";
+  }
+  return values;
+}
+
+/** フォームを表示し終えた直後の値を基準として記憶し、保存ボタンの活性状態を初期化する。 */
+function captureCmFormBaseline() {
+  cmFormBaseline = currentCmFormValues();
+  updateCmSaveButtonState();
+}
+
+/** 基準値からの差分があるときだけ保存ボタンを押せるようにする。 */
+function updateCmSaveButtonState() {
+  const current = currentCmFormValues();
+  const keys = new Set([...Object.keys(cmFormBaseline), ...Object.keys(current)]);
+  let dirty = false;
+  for (const k of keys) {
+    if (cmFormBaseline[k] !== current[k]) { dirty = true; break; }
+  }
+  $<HTMLButtonElement>("cm-form-save").disabled = !dirty;
+}
+
+function resetCredentialForm() {
+  cmEditingId = null;
+  $<HTMLInputElement>("cm-label").value = "";
+  const scope = $<HTMLSelectElement>("cm-scope").value as CredentialScope;
+  renderCredentialFormFields(scope);
+  updateCredentialListSelection();
+  captureCmFormBaseline();
+}
+
+async function startEditCredential(c: CredentialSummary) {
+  cmEditingId = c.id;
+  $<HTMLInputElement>("cm-label").value = c.label;
+  const scope = c.scope as CredentialScope;
+  renderCredentialFormFields(scope);
+  updateCredentialListSelection();
+  // 非秘密フィールドは現在の平文値を、秘密フィールドはプレースホルダーを表示する
+  // （未編集のまま保存すれば merge_preserving_placeholder が既存値を維持する）。
+  try {
+    const res = await invoke<{ label: string; fields: Record<string, unknown> }>("credential_public_fields", { id: c.id });
+    for (const [k, v] of Object.entries(res.fields)) {
+      const el = document.getElementById(`cmf-${k}`) as HTMLInputElement | null;
+      if (el) el.value = String(v);
+    }
+  } catch { /* noop */ }
+  for (const f of credentialScopeFieldDefs(scope)) {
+    if (f.secret) {
+      const el = document.getElementById(`cmf-${f.key}`) as HTMLInputElement | null;
+      if (el) el.value = SECRET_PLACEHOLDER;
+    }
+    const copyBtn = document.getElementById(`cmf-copy-${f.key}`) as HTMLButtonElement | null;
+    if (copyBtn) {
+      copyBtn.hidden = false;
+      copyBtn.dataset.credentialId = String(c.id);
+    }
+  }
+  captureCmFormBaseline();
+}
+
+/** 一覧の中で「今どれを編集しているか（＝これから作るか）」が分かるよう、対象行を着色する。 */
+function updateCredentialListSelection() {
+  const listEl = $<HTMLDivElement>("cm-list");
+  for (const item of Array.from(listEl.querySelectorAll<HTMLElement>(".cm-profile-item"))) {
+    const isNew = item.id === "cm-new";
+    const selected = isNew ? cmEditingId === null : item.dataset.credentialId === String(cmEditingId);
+    item.classList.toggle("selected", selected);
+  }
+}
+
+async function refreshCredentialList() {
+  const scope = $<HTMLSelectElement>("cm-scope").value;
+  const listEl = $<HTMLDivElement>("cm-list");
+  const errEl = $<HTMLDivElement>("cm-error");
+  errEl.textContent = "";
+  // 「＋ 新規作成」は常時1行目に残す。既存プロファイルの行だけ入れ替える。
+  const newBtn = $<HTMLButtonElement>("cm-new");
+  listEl.innerHTML = "";
+  listEl.appendChild(newBtn);
+  const loadingEl = document.createElement("div");
+  loadingEl.className = "picker-empty";
+  loadingEl.textContent = "読み込み中…";
+  listEl.appendChild(loadingEl);
+  try {
+    const items = await invoke<CredentialSummary[]>("list_credentials", { scope });
+    loadingEl.remove();
+    if (items.length === 0) {
+      const emptyEl = document.createElement("div");
+      emptyEl.className = "picker-empty";
+      emptyEl.textContent = "まだ保存済みトークンがありません";
+      listEl.appendChild(emptyEl);
+    }
+    for (const c of items) {
+      const item = document.createElement("div");
+      item.className = "cm-profile-item";
+      item.dataset.credentialId = String(c.id);
+      item.tabIndex = 0;
+      item.onclick = () => void startEditCredential(c);
+      item.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); void startEditCredential(c); } };
+
+      const name = document.createElement("span");
+      name.className = "cm-profile-name";
+      name.textContent = `${c.label}（作成: ${c.created_at}${c.used_by.length ? ` / 使用中: ${c.used_by.length}件` : ""}）`;
+      item.appendChild(name);
+
+      const delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "btn danger";
+      delBtn.textContent = "削除";
+      delBtn.onclick = async (ev) => {
+        ev.stopPropagation();
+        if (c.used_by.length > 0) {
+          alert(
+            `${c.used_by.length}件のソースで使用中のため削除できません: ${c.used_by.map((u) => u.source_name).join("、")}\n` +
+            "先に別のトークンへ付け替えるか、それらのソースを削除してください",
+          );
+          return;
+        }
+        if (!(await confirmDelete(`「${c.label}」を削除しますか？`))) return;
+        try {
+          await invoke("delete_credential", { id: c.id });
+          if (cmEditingId === c.id) resetCredentialForm();
+          await refreshCredentialList();
+        } catch (e) {
+          errEl.textContent = "削除に失敗: " + String(e);
+        }
+      };
+      item.appendChild(delBtn);
+      listEl.appendChild(item);
+      if (c.used_by.length > 0) {
+        const usageEl = document.createElement("div");
+        usageEl.className = "cm-profile-usage";
+        usageEl.textContent = `使用中の接続先: ${c.used_by.map((u) => u.source_name).join("、")}`;
+        listEl.appendChild(usageEl);
+      }
+    }
+    updateCredentialListSelection();
+  } catch (e) {
+    loadingEl.remove();
+    setPickerMessage(listEl, `取得失敗: ${String(e)}`);
+    listEl.insertBefore(newBtn, listEl.firstChild);
+  }
+}
+
+async function openCredentialManager(initialScope?: CredentialScope) {
+  if (initialScope) $<HTMLSelectElement>("cm-scope").value = initialScope;
+  resetCredentialForm();
+  $<HTMLDialogElement>("credential-manager").showModal();
+  await refreshCredentialList();
+}
+
+$<HTMLInputElement>("cm-label").oninput = () => updateCmSaveButtonState();
+$<HTMLButtonElement>("cm-form-save").onclick = async () => {
+  const errEl = $<HTMLDivElement>("cm-error");
+  errEl.textContent = "";
+  const scope = $<HTMLSelectElement>("cm-scope").value as CredentialScope;
+  const label = $<HTMLInputElement>("cm-label").value.trim();
+  if (!label) {
+    errEl.textContent = "名前を入力してください";
+    return;
+  }
+  const defs = credentialScopeFieldDefs(scope);
+  const fields: Record<string, unknown> = {};
+  for (const f of defs) {
+    const el = document.getElementById(`cmf-${f.key}`) as HTMLInputElement | null;
+    if (el) fields[f.key] = el.value.trim();
+  }
+  if (cmEditingId === null) {
+    const missing = defs.some((f) => !String(fields[f.key] ?? "").trim());
+    if (missing) {
+      errEl.textContent = "すべての項目を入力してください";
+      return;
+    }
+  }
+  try {
+    let savedId: number;
+    if (cmEditingId !== null) {
+      await invoke("update_credential", { id: cmEditingId, label, fieldsJson: JSON.stringify(fields) });
+      savedId = cmEditingId;
+    } else {
+      savedId = await invoke<number>("add_credential", { scope, label, fieldsJson: JSON.stringify(fields) });
+    }
+    // 保存直後に「新規作成」へ切り替えず、保存したプロファイルを選択したままにする
+    // （要件: 保存を押した直後に選択が新規作成に切り替わらないでほしい）。
+    await refreshCredentialList();
+    await startEditCredential({ id: savedId, scope, label, created_at: "", used_by: [] });
+  } catch (e) {
+    errEl.textContent = "保存に失敗: " + String(e);
+  }
+};
+$<HTMLButtonElement>("cm-new").onclick = () => resetCredentialForm();
+$<HTMLSelectElement>("cm-scope").onchange = () => {
+  resetCredentialForm();
+  void refreshCredentialList();
+};
+$<HTMLButtonElement>("cm-guide").onclick = () => openGuide(representativeTypeForScope($<HTMLSelectElement>("cm-scope").value as CredentialScope));
+$<HTMLButtonElement>("credential-manager-close").onclick = () => $<HTMLDialogElement>("credential-manager").close();
+$<HTMLButtonElement>("credential-manager-close-x").onclick = () => $<HTMLDialogElement>("credential-manager").close();
+$<HTMLButtonElement>("s-credential-manager").onclick = () => void openCredentialManager();
+
 function renderFieldsInto(container: HTMLElement, idPrefix: string, fields: FieldDef[], prefill?: Record<string, unknown>) {
   container.innerHTML = "";
+  // 秘密フィールドの束（token/client_secret/password 本体 + tenant_id 等のバンドル）を先に洗い出す。
+  // 束の非秘密フィールドは選択専用ウィジェットが埋めるため、個別入力は読み取り専用にする
+  // （要件: 接続単位での保存は不要、全て管理されているトークンを参照させる）。
+  const credentialManagedKeys = new Set<string>();
   for (const f of fields) {
+    if (f.credentialScope) {
+      credentialManagedKeys.add(f.key);
+      for (const bf of f.credentialBundleFields ?? []) credentialManagedKeys.add(bf);
+    }
+  }
+  for (const f of fields) {
+    const isCredOwner = !!f.credentialScope;
+    const isCredManagedSibling = !isCredOwner && credentialManagedKeys.has(f.key);
     const label = document.createElement("label");
     label.textContent = f.label;
     const input = document.createElement("input");
     input.type = f.kind === "password" ? "password" : "text";
     input.autocomplete = f.kind === "password" ? "off" : "on";
     input.id = `${idPrefix}${f.key}`;
-    if (f.placeholder) input.placeholder = f.placeholder;
+    if (f.placeholder && !isCredManagedSibling) input.placeholder = f.placeholder;
     if (prefill) {
       const v = prefill[f.key];
       if (v !== undefined && v !== null) input.value = String(v);
     }
-    if (f.browse || f.helpUrl || f.linkUrl || f.browseAirtableBase || f.browseAirtableTable || f.browseAirtableView) {
+    if (isCredManagedSibling) {
+      // トークンのバンドルフィールド（tenant_id 等）は選択専用ウィジェットが埋めるだけの
+      // データキャリアで、画面には一切出さない（要件: 接続画面はプロファイル名だけ見せる）。
+      input.hidden = true;
+      container.appendChild(input);
+      continue;
+    }
+    if (isCredOwner || (f.browse || f.helpUrl || f.linkUrl || f.browseAirtableBase || f.browseAirtableTable || f.browseAirtableView)) {
       const row = document.createElement("div");
       row.className = "path-row";
       row.appendChild(input);
@@ -2040,6 +2544,7 @@ function renderFieldsInto(container: HTMLElement, idPrefix: string, fields: Fiel
         };
         row.appendChild(browseBtn);
       }
+      if (isCredOwner) wireCredentialSelector(input, f, idPrefix, row, label);
       if (f.browseAirtableBase) {
         const pickBtn = document.createElement("button");
         pickBtn.type = "button";
@@ -2067,8 +2572,8 @@ function renderFieldsInto(container: HTMLElement, idPrefix: string, fields: Fiel
         pickBtn.onclick = () => openAirtableViewPicker(input);
         row.appendChild(pickBtn);
       }
-      if (f.helpUrl) row.appendChild(makeApiKeyButton(f.helpUrl));
-      if (f.linkUrl) row.appendChild(makeLinkButton(f.linkUrl, f.linkLabel ?? "🌐 開く…"));
+      if (!isCredOwner && f.helpUrl) row.appendChild(makeApiKeyButton(f.helpUrl));
+      if (!isCredOwner && f.linkUrl) row.appendChild(makeLinkButton(f.linkUrl, f.linkLabel ?? "🌐 開く…"));
       label.appendChild(row);
     } else {
       label.appendChild(input);
@@ -2158,10 +2663,12 @@ async function openParentSettingsDialog(parentKey: string) {
     `この接続情報は次の ${children.length} 個のテーブルに反映されます: ${children.map((c) => c.name).join(", ")}`;
 
   let prefill: Record<string, unknown> = {};
+  currentLinkedCredentials = {};
   if (fieldDefs.length > 0) {
     try {
       const detail = await invoke<SourceDetail>("get_source_detail", { id: children[0].id });
       prefill = detail.config;
+      currentLinkedCredentials = detail.linked_credentials ?? {};
     } catch { /* noop */ }
   }
   renderFieldsInto(parentDynamicEl, "pf-", fieldDefs, prefill);
@@ -2175,6 +2682,8 @@ async function openParentSettingsDialog(parentKey: string) {
 parentDynamicEl.addEventListener("focusin", async (ev) => {
   const el = ev.target as HTMLInputElement;
   if (el.type !== "password" || el.value !== SECRET_PLACEHOLDER || !parentDialogState) return;
+  // 保存済みトークンへのリンク中は実値が無い（credentials 側にある）ため解錠を促す意味が無い。
+  if (el.dataset.credLabel) return;
   const ok = await ensureUnlocked();
   if (ok) {
     const detail = await invoke<SourceDetail>("get_source_detail", { id: parentDialogState.children[0].id });
@@ -2197,7 +2706,7 @@ $<HTMLButtonElement>("parent-save").onclick = async () => {
     const el = document.getElementById(`pf-${k}`) as HTMLInputElement | null;
     if (!el) continue;
     const fdef = fieldDefs.find((f) => f.key === k);
-    const raw = k === "path" ? normalizePath(el.value) : el.value.trim();
+    const raw = currentFieldRawValue(el, k);
     if (fdef?.optional && raw === "") continue; // 空の任意項目は既存値を維持（変更しない）
     sharedValues[k] = raw;
   }
@@ -2302,13 +2811,22 @@ const parentTablesHint = $<HTMLDivElement>("parent-tables-hint");
 const parentTablesCount = $<HTMLSpanElement>("parent-tables-count");
 const parentTablesAccessBtn = $<HTMLButtonElement>("parent-tables-access");
 
+/** フィールド入力欄の「現在の実効値」。保存済みトークンにリンク中で未編集なら参照(cred:<id>)を、
+ * それ以外は通常の入力値を返す。プレースホルダーのまま素通ししてしまうと、トークンを選び直した
+ * 直後（保存前）に「テーブル一覧の更新」等のライブ取得が旧トークンのままになる不具合になるため、
+ * getFieldValue()・parentSharedNow()・parent-save の保存処理で共通して使う。 */
+function currentFieldRawValue(el: HTMLInputElement, key: string): string {
+  if (el.dataset.credRef && el.value === SECRET_PLACEHOLDER) return `cred:${el.dataset.credRef}`;
+  return key === "path" ? normalizePath(el.value) : el.value.trim();
+}
+
 /** ダイアログ上で編集中の接続情報（保存前の値も含む）。一覧取得の上書き値として使う。 */
 function parentSharedNow(): Record<string, string> {
   const out: Record<string, string> = {};
   if (!parentDialogState) return out;
   for (const k of parentDialogState.keys) {
     const el = document.getElementById(`pf-${k}`) as HTMLInputElement | null;
-    if (el) out[k] = k === "path" ? normalizePath(el.value) : el.value.trim();
+    if (el) out[k] = currentFieldRawValue(el, k);
   }
   return out;
 }
@@ -2373,11 +2891,17 @@ async function loadParentTables() {
         "browse_airtable_tables_for_source",
         { id: siblingId, overridesJson: JSON.stringify(shared), baseId: null },
       );
+      // base_id/base_name は共有フィールド(token)には含めていないため、兄弟テーブルの設定から
+      // 引き継ぐ。無いと新規テーブルがどの Base にも属さない扱いになり、汎用の「Airtable」
+      // ツリーへ入ってしまう（実際に発生した不具合）。
+      const siblingDetail = await invoke<SourceDetail>("get_source_detail", { id: siblingId }).catch(() => null);
+      const baseId = siblingDetail ? String(siblingDetail.config.base_id ?? "") : "";
+      const baseName = siblingDetail ? String(siblingDetail.config.base_name ?? "") : "";
       parentTableItems = tbls.map((t) => ({
         key: t.id,
         label: t.name ? `${t.name} [ID: ${t.id}]` : t.id,
         type_: "airtable",
-        extraConfig: { table: t.id, table_name: t.name || t.id },
+        extraConfig: { table: t.id, table_name: t.name || t.id, base_id: baseId, base_name: baseName },
       }));
     } else if (kind === "graph365") {
       // API 取得ではなく、実装済みの種別のうち接続情報だけで使えるものを並べる。
@@ -2484,6 +3008,54 @@ async function copyToClipboard(text: string, label: string) {
     resultInfo.textContent = `${label}: ${text.slice(0, 60)}`;
   } catch {
     resultInfo.textContent = "クリップボードへのコピーに失敗";
+  }
+}
+
+/** 画面中央に非モーダルのメッセージを1秒表示してフェードアウトする（要件: トークンコピー時の通知）。
+ * 値そのものはどこにも表示しない（テキストボックス・resultInfo 等へは一切出さない）。 */
+function showToast(message: string) {
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = message;
+  document.body.appendChild(el);
+  setTimeout(() => {
+    el.classList.add("toast-fade-out");
+    setTimeout(() => el.remove(), 400);
+  }, 1000);
+}
+
+/** 保存済みトークンの実値をクリップボードへコピーする（要件: 再表示ではなくコピーにする）。
+ * 値は入力欄等の画面には一切出さず、コピー完了はトースト表示のみで知らせる。 */
+async function copyCredentialSecretToClipboard(id: number) {
+  const ok = await ensureUnlocked();
+  if (!ok) return;
+  try {
+    const value = await invoke<string>("credential_secret_value", { id });
+    await navigator.clipboard.writeText(value);
+    showToast("トークンをコピーしました");
+  } catch (e) {
+    showToast("コピーに失敗しました: " + String(e));
+  }
+}
+
+/** バンドル（複数フィールドの束）を持つ種別向け: 非秘密フィールドは画面上の現在値、
+ * 秘密フィールドは Windows Hello 経由の実値をまとめて JSON でコピーする
+ * （要件: Microsoft 365 はテナントID/クライアントID/シークレットの3つを JSON でコピーできるように）。 */
+async function copyCredentialBundleAsJson(id: number, secretKey: string, bundleFields: string[], idPrefix: string) {
+  const ok = await ensureUnlocked();
+  if (!ok) return;
+  try {
+    const secretValue = await invoke<string>("credential_secret_value", { id });
+    const obj: Record<string, string> = {};
+    for (const bf of bundleFields) {
+      const el = document.getElementById(`${idPrefix}${bf}`) as HTMLInputElement | null;
+      obj[bf] = el?.value ?? "";
+    }
+    obj[secretKey] = secretValue;
+    await navigator.clipboard.writeText(JSON.stringify(obj, null, 2));
+    showToast("トークンをコピーしました");
+  } catch (e) {
+    showToast("コピーに失敗しました: " + String(e));
   }
 }
 
@@ -2741,6 +3313,12 @@ interface FieldDef {
   browseAirtableTable?: boolean;
   /** Airtable の View 一覧を取得して選ばせるボタンを出す。 */
   browseAirtableView?: boolean;
+  /** この秘密フィールドを保存済みトークンとして再利用できるようにする（要件: トークン管理画面）。
+   * 指定すると「📋 保存済みから選択…」「💾 これを保存…」ボタンが並ぶ。 */
+  credentialScope?: CredentialScope;
+  /** 同じトークンを選んだときに一緒に埋めたい非秘密フィールドのキー（tenant_id 等）。
+   * 選択時の一回限りのコピーで、以後の「置換」には追随しない（§7-1 参照）。 */
+  credentialBundleFields?: string[];
 }
 interface TypeDef {
   value: string;
@@ -2796,7 +3374,7 @@ const GOV_DATA_SOURCE_FIELDS: FieldDef[] = [
 const GRAPH_AUTH_FIELDS: FieldDef[] = [
   { key: "tenant_id", label: "テナントID", kind: "text", placeholder: "ディレクトリ(テナント) ID", helpUrl: ENTRA_APPS_URL },
   { key: "client_id", label: "クライアントID", kind: "text", placeholder: "アプリケーション(クライアント) ID", helpUrl: ENTRA_APPS_URL },
-  { key: "client_secret", label: "クライアントシークレット(値)", kind: "password", placeholder: "シークレットの値(ID ではない)", helpUrl: ENTRA_APPS_URL },
+  { key: "client_secret", label: "クライアントシークレット(値)", kind: "password", placeholder: "シークレットの値(ID ではない)", helpUrl: ENTRA_APPS_URL, credentialScope: "graph", credentialBundleFields: ["tenant_id", "client_id"] },
 ];
 const TYPE_DEFS: TypeDef[] = [
   { value: "csv", label: "CSV ファイル", fields: [
@@ -2828,7 +3406,7 @@ const TYPE_DEFS: TypeDef[] = [
   { value: "ime_msime", label: "IME辞書: Microsoft IME", fields: [pathField(TEXT_FILTERS)] },
   { value: "ime_google", label: "IME辞書: Google 日本語入力", fields: [pathField(TEXT_FILTERS)] },
   { value: "notion", label: "Notion データベース", fields: [
-    { key: "token", label: "インテグレーショントークン", kind: "password", placeholder: "ntn_...", helpUrl: NOTION_INTEGRATIONS_URL },
+    { key: "token", label: "インテグレーショントークン", kind: "password", placeholder: "ntn_...", helpUrl: NOTION_INTEGRATIONS_URL, credentialScope: "notion" },
     { key: "url_helper", label: "Notion データベース URL (ペーストで自動設定)", kind: "text", placeholder: "https://www.notion.so/.../a86724d5...", optional: true },
     { key: "database_id", label: "データベースID", kind: "text", placeholder: "URL 内の 32 桁 ID" },
   ], browse: "notion" },
@@ -2876,7 +3454,7 @@ const TYPE_DEFS: TypeDef[] = [
     { key: "url", label: "公開 iCal URL", kind: "text", placeholder: "https://calendar.google.com/calendar/ical/.../public/basic.ics" },
   ] },
   { value: "airtable", label: "Airtable", fields: [
-    { key: "token", label: "Personal Access Token", kind: "password", placeholder: "pat...", helpUrl: "https://airtable.com/create/tokens", linkUrl: "https://airtable.com/workspaces", linkLabel: "🌐 ワークスペース…" },
+    { key: "token", label: "Personal Access Token", kind: "password", placeholder: "pat...", helpUrl: "https://airtable.com/create/tokens", linkUrl: "https://airtable.com/workspaces", linkLabel: "🌐 ワークスペース…", credentialScope: "airtable" },
     { key: "url_helper", label: "Airtable URL (ペーストで自動設定)", kind: "text", placeholder: "https://airtable.com/app.../tbl.../viw...", optional: true },
     { key: "base_id", label: "Base ID (実際の接続用)", kind: "text", placeholder: "app...", browseAirtableBase: true },
     { key: "base_name", label: "Base名 (キャプション・確認用)", kind: "text", placeholder: "選択時に自動補完されます", optional: true },
@@ -2892,7 +3470,7 @@ const TYPE_DEFS: TypeDef[] = [
     { key: "schema", label: "スキーマ(任意)", kind: "text", placeholder: "public", optional: true },
     { key: "table", label: "テーブル名", kind: "text" },
     { key: "user", label: "ユーザー", kind: "text" },
-    { key: "password", label: "パスワード", kind: "password" },
+    { key: "password", label: "パスワード", kind: "password", credentialScope: "postgres", credentialBundleFields: ["user"] },
     { key: "sslmode", label: "SSLモード(任意)", kind: "select", optional: true, options: [
       { value: "prefer", label: "prefer (可能なら暗号化・既定)" },
       { value: "require", label: "require (暗号化を必須)" },
@@ -2907,13 +3485,13 @@ const TYPE_DEFS: TypeDef[] = [
     { key: "database", label: "データベース名", kind: "text" },
     { key: "table", label: "テーブル名", kind: "text" },
     { key: "user", label: "ユーザー", kind: "text" },
-    { key: "password", label: "パスワード", kind: "password" },
+    { key: "password", label: "パスワード", kind: "password", credentialScope: "mysql", credentialBundleFields: ["user"] },
     { key: "use_tls", label: "TLS で接続する(リモート接続時は必ず有効化)", kind: "checkbox", default: false },
     { key: "ssl_accept_invalid_certs", label: "自己署名証明書を許可(社内サーバー向け)", kind: "checkbox", default: false },
   ] },
   { value: "box_files", label: "Box (ファイル一覧)", fields: [
     { key: "client_id", label: "クライアントID", kind: "text", helpUrl: "https://app.box.com/developers/console" },
-    { key: "client_secret", label: "クライアントシークレット", kind: "password", helpUrl: "https://app.box.com/developers/console" },
+    { key: "client_secret", label: "クライアントシークレット", kind: "password", helpUrl: "https://app.box.com/developers/console", credentialScope: "box", credentialBundleFields: ["client_id", "enterprise_id"] },
     { key: "enterprise_id", label: "Enterprise ID", kind: "text" },
     { key: "folder_id", label: "開始フォルダID(任意)", kind: "text", placeholder: "0 (ルート)", optional: true },
   ] },
@@ -2944,7 +3522,7 @@ const TYPE_DEFS: TypeDef[] = [
 // ============================================================
 // 接続先と、その配下のテーブルで共有される「接続情報」フィールドの判定
 // ============================================================
-type ParentKind = "path" | "sharepoint" | "notion" | "graph365" | "postgres" | "mysql" | "box" | "none";
+type ParentKind = "path" | "sharepoint" | "notion" | "airtable" | "graph365" | "postgres" | "mysql" | "box" | "none";
 const PATH_GROUPED_TYPES = new Set([
   "csv", "folder", "ime_msime", "ime_google", "excel_table", "excel_range", "excel_sheets",
   "sqlite", "accdb", "browser_history", "browser_bookmarks", "browser_downloads",
@@ -2952,6 +3530,7 @@ const PATH_GROUPED_TYPES = new Set([
 
 function parentKindOf(type_: string): ParentKind {
   if (type_ === "notion") return "notion";
+  if (type_ === "airtable") return "airtable";
   if (type_.startsWith("graph_sharepoint")) return "sharepoint";
   if (type_.startsWith("graph")) return "graph365";
   if (type_ === "postgres") return "postgres";
@@ -2967,6 +3546,7 @@ function parentKindLabel(kind: ParentKind, repType: string): string {
     case "path": return `ファイル（${TYPE_DEFS.find((t) => t.value === repType)?.label ?? repType}）`;
     case "sharepoint": return "SharePoint サイト";
     case "notion": return "Notion";
+    case "airtable": return "Airtable";
     case "graph365": return "Microsoft 365 (Graph)";
     case "postgres": return "PostgreSQL サーバー";
     case "mysql": return "MySQL サーバー";
@@ -2981,6 +3561,7 @@ function sharedKeysFor(kind: ParentKind): string[] {
     case "path": return ["path"];
     case "sharepoint": return ["site_url", "tenant_id", "client_id", "client_secret"];
     case "notion": return ["token"];
+    case "airtable": return ["token"];
     case "graph365": return ["tenant_id", "client_id", "client_secret"];
     case "postgres": return ["host", "port", "database", "user", "password"];
     case "mysql": return ["host", "port", "database", "user", "password"];
@@ -3110,6 +3691,9 @@ let hiddenSharedKeys: string[] = [];
 let hiddenSharedValues: Record<string, unknown> = {};
 /** 種別が変わっても保持したい既存のフィールド役割設定（編集時の初期反映用）。 */
 let currentRoleState: { label_column?: string; open_ref_column?: string; searchable: Set<string>; display: Set<string>; aliases: Record<string, string>; order?: string[] } | null = null;
+/** 現在開いているダイアログで、フィールドキー → リンク中の保存済みトークンの id/ラベル。
+ * 追加ダイアログ・接続設定(親)ダイアログの両方で共通利用する（同時に一方しか開かないため）。 */
+let currentLinkedCredentials: Record<string, { id: number; label: string }> = {};
 
 for (const t of TYPE_DEFS) {
   const opt = document.createElement("option");
@@ -3181,6 +3765,9 @@ function updateOpenTableButton() {
 function getFieldValue(f: FieldDef): unknown {
   const el = document.getElementById(`fd-${f.key}`) as HTMLInputElement | null;
   if (!el) return undefined;
+  // 保存済みトークンにリンク中で、まだ手入力で上書きされていなければ cred:<id> 参照を送る
+  // （実際の値ではなく参照だけを保存することで、後から一括置換できる。要件: トークン管理画面）。
+  if (el.dataset.credRef && el.value === SECRET_PLACEHOLDER) return `cred:${el.dataset.credRef}`;
   if (f.kind === "checkbox") return el.checked;
   if (f.kind === "list") {
     const items = el.value.split(",").map((s) => s.trim()).filter(Boolean);
@@ -3270,7 +3857,14 @@ function parseSharePointUrl(urlText: string): { siteUrl?: string; listName?: str
  * トークン未入力・未解錠・API失敗時は静かに諦める（ID自体は既に埋まっているため実害はない）。 */
 async function resolveAirtableCaptions(baseId?: string, tableId?: string, viewId?: string) {
   const tokenEl = document.getElementById("fd-token") as HTMLInputElement | null;
-  const token = tokenEl?.value.trim() ?? "";
+  let token = tokenEl?.value.trim() ?? "";
+  if (tokenEl?.dataset.credRef) {
+    try {
+      token = await invoke<string>("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
+    } catch {
+      return; // 静かに諦める（ID は既に反映済みのため実害は無い）。
+    }
+  }
   if (!token || token === SECRET_PLACEHOLDER) return;
   try {
     if (baseId) {
@@ -3519,8 +4113,20 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
   const def = currentTypeDef();
   dynamicEl.innerHTML = "";
   let currentInlineRow: HTMLElement | null = null;
+  // 秘密フィールドの束（token/client_secret/password 本体 + tenant_id 等のバンドル）を先に洗い出す。
+  // 束の非秘密フィールドは選択専用ウィジェットが埋めるため、個別入力は読み取り専用にする
+  // （要件: 接続単位での保存は不要、全て管理されているトークンを参照させる）。
+  const credentialManagedKeys = new Set<string>();
+  for (const f of def.fields) {
+    if (f.credentialScope) {
+      credentialManagedKeys.add(f.key);
+      for (const bf of f.credentialBundleFields ?? []) credentialManagedKeys.add(bf);
+    }
+  }
   for (const f of def.fields) {
     if (hideKeys.includes(f.key)) continue;
+    const isCredOwner = !!f.credentialScope;
+    const isCredManagedSibling = !isCredOwner && credentialManagedKeys.has(f.key);
     const label = document.createElement("label");
     if (f.kind === "checkbox") {
       label.className = "check";
@@ -3569,11 +4175,18 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
       input.autocomplete = f.kind === "password" ? "off" : "on";
       input.id = `fd-${f.key}`;
       if (f.kind === "number" && f.min !== undefined) input.min = String(f.min);
-      if (f.placeholder) input.placeholder = f.placeholder;
+      if (f.placeholder && !isCredManagedSibling) input.placeholder = f.placeholder;
       if (prefill) {
         const v = prefill[f.key];
         if (Array.isArray(v)) input.value = v.join(", ");
         else if (v !== undefined && v !== null) input.value = String(v);
+      }
+      if (isCredManagedSibling) {
+        // トークンのバンドルフィールド（tenant_id 等）は選択専用ウィジェットが埋めるだけの
+        // データキャリアで、画面には一切出さない（要件: 接続画面はプロファイル名だけ見せる）。
+        input.hidden = true;
+        dynamicEl.appendChild(input);
+        continue;
       }
       input.addEventListener("input", () => {
         tryApplyUrlOrFileDropHelper(input.value);
@@ -3596,12 +4209,14 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
           if (baseId || tableId) void resolveAirtableCaptions(baseId || undefined, tableId || undefined, viewId || undefined);
         }
       });
-      if (f.browse || f.helpUrl || f.linkUrl || f.browserProfile || f.browseSheet || f.browseTable || f.browseCell || f.browseColumn || f.browseAirtableBase || f.browseAirtableTable || f.browseAirtableView) {
+      if (isCredOwner || f.browse || f.helpUrl || f.linkUrl || f.browserProfile || f.browseSheet || f.browseTable || f.browseCell || f.browseColumn || f.browseAirtableBase || f.browseAirtableTable || f.browseAirtableView) {
         // 参照ボタン（ファイル/フォルダ選択）、API キー取得ページを開くボタン、リンクボタン、
-        // ブラウザプロファイル候補自動検出、Excelシート名選択、Excelテーブル(ListObject)名選択、Excelセル/列選択、Airtable選択ボタン。
+        // ブラウザプロファイル候補自動検出、Excelシート名選択、Excelテーブル(ListObject)名選択、Excelセル/列選択、
+        // Airtable選択ボタン、保存済みトークンの選択ウィジェット。
         const row = document.createElement("div");
         row.className = "path-row";
         row.appendChild(input);
+        if (isCredOwner) wireCredentialSelector(input, f, "fd-", row, label);
         if (f.browse) {
           const browseBtn = document.createElement("button");
           browseBtn.type = "button";
@@ -3697,8 +4312,8 @@ function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] 
           pickBtn.onclick = () => openAirtableViewPicker(input);
           row.appendChild(pickBtn);
         }
-        if (f.helpUrl) row.appendChild(makeApiKeyButton(f.helpUrl));
-        if (f.linkUrl) row.appendChild(makeLinkButton(f.linkUrl, f.linkLabel ?? "🌐 開く…"));
+        if (!isCredOwner && f.helpUrl) row.appendChild(makeApiKeyButton(f.helpUrl));
+        if (!isCredOwner && f.linkUrl) row.appendChild(makeLinkButton(f.linkUrl, f.linkLabel ?? "🌐 開く…"));
         label.appendChild(row);
       } else {
         label.appendChild(input);
@@ -3951,6 +4566,7 @@ function openAddDialog() {
   dialogMode = "add";
   editingId = null;
   currentRoleState = null;
+  currentLinkedCredentials = {};
   hiddenSharedKeys = [];
   hiddenSharedValues = {};
   nameManuallyEdited = false;
@@ -3975,6 +4591,7 @@ async function openEditDialog(id: number) {
   const info = sources.find((s) => s.id === id);
   dialogMode = "edit";
   editingId = id;
+  currentLinkedCredentials = detail.linked_credentials ?? {};
   $<HTMLDivElement>("add-dialog-title").textContent = `編集: ${detail.name}`;
   const lastLoadedEl = $<HTMLDivElement>("f-last-loaded");
   if (info?.last_success_at) {
@@ -4069,9 +4686,6 @@ $<HTMLFormElement>("add-form").addEventListener("submit", async (e) => {
       await invoke("update_source", { id: editingId, name, configJson: JSON.stringify(config) });
     } else {
       const type_ = typeSel.value;
-      if (needsMasterPassword(type_)) {
-        await ensureMasterPasswordSetup();
-      }
       await invoke("add_source", { type: type_, name, configJson: JSON.stringify(config) });
     }
     typeSel.disabled = false;
@@ -4086,18 +4700,15 @@ $<HTMLFormElement>("add-form").addEventListener("submit", async (e) => {
   }
 });
 
-function needsMasterPassword(type_: string): boolean {
-  // 秘密情報（トークン/パスワード/シークレット）を扱う種別。
-  return ["notion", "airtable", "postgres", "mysql", "box_files"].includes(type_) || type_.startsWith("graph");
-}
-
-// ---- 秘密フィールドは「表示」時にマスターパスワードを要求する(要件 §9-4) ----
+// ---- 秘密フィールドは「表示」時に Windows Hello の本人確認を要求する ----
 // パスワード種別の入力(password type)はブラウザ標準でマスクされるため追加対応不要。
 // ロック中の編集ダイアログでプレースホルダーが入っている場合、フィールドをクリックしたら解錠を促す。
 dynamicEl.addEventListener("focusin", async (ev) => {
   const el = ev.target as HTMLInputElement;
   if (el.type !== "password") return;
   if (el.value !== SECRET_PLACEHOLDER) return;
+  // 保存済みトークンへのリンク中は実値が無い（credentials 側にある）ため解錠を促す意味が無い。
+  if (el.dataset.credLabel) return;
   const ok = await ensureUnlocked();
   if (ok && editingId !== null) {
     const detail = await invoke<SourceDetail>("get_source_detail", { id: editingId });
@@ -4149,8 +4760,18 @@ function renderBrowseArea(def: TypeDef) {
 // ---- Notion DB ピッカー ----
 async function openNotionPicker() {
   const tokenEl = document.getElementById("fd-token") as HTMLInputElement | null;
-  const token = tokenEl?.value.trim();
-  if (!token) { alert("先にインテグレーショントークンを入力してください"); return; }
+  let token = tokenEl?.value.trim();
+  // 選択専用ウィジェットになったため、リンク中なら credRef からその場限りで実値を解決する
+  // （まだソースとして保存していないため source id 経由の解決ができない）。
+  if (tokenEl?.dataset.credRef) {
+    try {
+      token = await invoke<string>("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
+    } catch (e) {
+      alert("トークンの取得に失敗しました: " + String(e));
+      return;
+    }
+  }
+  if (!token || token === SECRET_PLACEHOLDER) { alert("先にトークンを選択してください"); return; }
   const listEl = $<HTMLDivElement>("notion-picker-list");
   listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
   const dlg = $<HTMLDialogElement>("notion-picker");
@@ -4375,8 +4996,9 @@ interface AirtableTableItem {
 
 async function fetchAirtableBasesForPicker(): Promise<AirtableBaseItem[]> {
   const tokenEl = (document.getElementById("fd-token") ?? document.getElementById("pf-token")) as HTMLInputElement | null;
-  const token = tokenEl?.value.trim() ?? "";
-  if (token && token !== SECRET_PLACEHOLDER) {
+  // このセッションで選び直したトークンがあれば最優先（未保存でも常に最新の選択を使う）。
+  if (tokenEl?.dataset.credRef) {
+    const token = await invoke<string>("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
     return await invoke<AirtableBaseItem[]>("browse_airtable_bases", { token });
   }
   const sid = editingId ?? parentDialogState?.children[0]?.id;
@@ -4384,24 +5006,20 @@ async function fetchAirtableBasesForPicker(): Promise<AirtableBaseItem[]> {
     const overrides = editingId !== null ? JSON.stringify(buildConfigFromFields().config) : JSON.stringify(parentSharedNow());
     return await invoke<AirtableBaseItem[]>("browse_airtable_bases_for_source", { id: sid, overridesJson: overrides });
   }
-  if (!token) {
-    alert("先に Personal Access Token を入力してください");
-    throw new Error("Personal Access Token 必須");
-  }
-  alert("マスターパスワードを解錠してください（プレースホルダーをクリック）");
-  throw new Error("マスターパスワードロック中");
+  alert("先にトークンを選択してください");
+  throw new Error("トークン未選択");
 }
 
 async function fetchAirtableTablesForPicker(baseIdInput?: string): Promise<AirtableTableItem[]> {
   const tokenEl = (document.getElementById("fd-token") ?? document.getElementById("pf-token")) as HTMLInputElement | null;
-  const token = tokenEl?.value.trim() ?? "";
   const baseEl = (document.getElementById("fd-base_id") ?? document.getElementById("pf-base_id")) as HTMLInputElement | null;
   const baseId = baseIdInput ?? baseEl?.value.trim() ?? "";
   if (!baseId) {
     alert("先に Base ID を入力・選択してください");
     throw new Error("Base ID 必須");
   }
-  if (token && token !== SECRET_PLACEHOLDER) {
+  if (tokenEl?.dataset.credRef) {
+    const token = await invoke<string>("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
     return await invoke<AirtableTableItem[]>("browse_airtable_tables", { token, baseId });
   }
   const sid = editingId ?? parentDialogState?.children[0]?.id;
@@ -4409,12 +5027,8 @@ async function fetchAirtableTablesForPicker(baseIdInput?: string): Promise<Airta
     const overrides = editingId !== null ? JSON.stringify(buildConfigFromFields().config) : JSON.stringify(parentSharedNow());
     return await invoke<AirtableTableItem[]>("browse_airtable_tables_for_source", { id: sid, overridesJson: overrides, baseId: baseId || null });
   }
-  if (!token) {
-    alert("先に Personal Access Token を入力してください");
-    throw new Error("Personal Access Token 必須");
-  }
-  alert("マスターパスワードを解錠してください（プレースホルダーをクリック）");
-  throw new Error("マスターパスワードロック中");
+  alert("先にトークンを選択してください");
+  throw new Error("トークン未選択");
 }
 
 async function openAirtableBasePicker(baseInput: HTMLInputElement) {
@@ -4801,17 +5415,25 @@ $<HTMLButtonElement>("table-picker-none").onclick = () => {
 // ---- SharePoint サイト/チーム → リスト・ライブラリ ピッカー ----
 let spMode: "sites" | "teams" = "sites";
 
-function graphAuthFromDialog(): { tenant_id: string; client_id: string; client_secret: string } | null {
+/** Graph の tenant_id/client_id は選択専用ウィジェットが平文で埋めるバンドルフィールドのため
+ * そのまま読める。client_secret は選択専用（読み取り専用・実値非公開）のため、リンク中の
+ * トークンから credential_secret_value でその場限りに解決する。 */
+async function graphAuthFromDialog(): Promise<{ tenant_id: string; client_id: string; client_secret: string } | null> {
   const tenant_id = (document.getElementById("fd-tenant_id") as HTMLInputElement | null)?.value.trim();
   const client_id = (document.getElementById("fd-client_id") as HTMLInputElement | null)?.value.trim();
-  const client_secret = (document.getElementById("fd-client_secret") as HTMLInputElement | null)?.value.trim();
-  if (!tenant_id || !client_id || !client_secret) return null;
+  const secretEl = document.getElementById("fd-client_secret") as HTMLInputElement | null;
+  if (!tenant_id || !client_id) return null;
+  let client_secret: string | undefined;
+  if (secretEl?.dataset.credRef) {
+    client_secret = await invoke<string>("credential_secret_value", { id: Number(secretEl.dataset.credRef) });
+  }
+  if (!client_secret) return null;
   return { tenant_id, client_id, client_secret };
 }
 
 async function openSharePointPicker() {
-  const auth = graphAuthFromDialog();
-  if (!auth) { alert("先にテナントID/クライアントID/クライアントシークレットを入力してください"); return; }
+  const auth = await graphAuthFromDialog();
+  if (!auth) { alert("先にトークンを選択してください（テナントID/クライアントID/クライアントシークレット）"); return; }
   spMode = "sites";
   $<HTMLDivElement>("sp-step-source").hidden = false;
   $<HTMLDivElement>("sp-step-resources").hidden = true;
@@ -4934,14 +5556,14 @@ $<HTMLButtonElement>("sp-tab-sites").onclick = async () => {
   spMode = "sites";
   $<HTMLButtonElement>("sp-tab-sites").classList.add("active");
   $<HTMLButtonElement>("sp-tab-teams").classList.remove("active");
-  const auth = graphAuthFromDialog();
+  const auth = await graphAuthFromDialog();
   if (auth) await loadSpSourceList(auth);
 };
 $<HTMLButtonElement>("sp-tab-teams").onclick = async () => {
   spMode = "teams";
   $<HTMLButtonElement>("sp-tab-teams").classList.add("active");
   $<HTMLButtonElement>("sp-tab-sites").classList.remove("active");
-  const auth = graphAuthFromDialog();
+  const auth = await graphAuthFromDialog();
   if (auth) await loadSpSourceList(auth);
 };
 $<HTMLButtonElement>("sp-picker-cancel").onclick = () => $<HTMLDialogElement>("sp-picker").close();
@@ -5204,6 +5826,6 @@ listen("focus-search", () => {
   await initZoom();
   await initSidebarWidth();
   await loadParentLabels();
-  await ensureMasterPasswordSetup();
+  await refreshWinAuthStatus();
   await loadSources();
 })();

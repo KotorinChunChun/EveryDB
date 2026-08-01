@@ -9,6 +9,12 @@
   --muted: #9a9a9a;
   --accent: #0e639c;
   --accent-2: #1177bb;
+  --on-accent: #ffffff;
+  --danger: #5a1d1d;
+  --danger-border: #8a3434;
+  --danger-hover: #7a2a2a;
+  --on-danger: #ffffff;
+  --focus-ring: rgba(17, 119, 187, 0.45);
   --sel: #094771;
   --row-alt: #232323;
   font-family: "Segoe UI", "Yu Gothic UI", system-ui, sans-serif;
@@ -22,8 +28,14 @@
   --border: #cfcfcf;
   --text: #1c1c1c;
   --muted: #5f5f5f;
-  --accent: #0e639c;
-  --accent-2: #1177bb;
+  --accent: #0b5c94;
+  --accent-2: #0a4d7c;
+  --on-accent: #ffffff;
+  --danger: #c62828;
+  --danger-border: #a01f1f;
+  --danger-hover: #ad2323;
+  --on-danger: #ffffff;
+  --focus-ring: rgba(11, 92, 148, 0.35);
   --sel: #cfe4f7;
   --row-alt: #f7f7f7;
 }
@@ -38,11 +50,26 @@
   --muted: #b0b0b0;
   --accent: #3399ff;
   --accent-2: #5cb3ff;
+  --on-accent: #000000;
+  --danger: #b33333;
+  --danger-border: #ff5555;
+  --danger-hover: #d24545;
+  --on-danger: #ffffff;
+  --focus-ring: rgba(92, 179, 255, 0.55);
   --sel: #003a66;
   --row-alt: #080808;
 }
 
 * { box-sizing: border-box; }
+
+/* フォーカス時の強調表示（要件: 全状況のフォーカス色を統一）。テーマごとの色味は
+   --focus-ring / --accent-2 で決まる。個別要素の :focus (border-color 変更等) はこれに重ねてよい。 */
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible,
+.btn:focus-visible, [tabindex]:focus-visible {
+  outline: none;
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
 
 /* hidden 属性は常に display:none を優先させる（.ctx-menu 等が display:flex を持つと
    UA の [hidden] ルールが詳細度負けして消えなくなるため、明示的に打ち消す）。 */
@@ -89,8 +116,9 @@ body {
 }
 .btn:hover:not(:disabled) { background: #3a3a3d; }
 .btn:disabled { opacity: 0.45; cursor: default; }
-.btn.primary { background: var(--accent); border-color: var(--accent); }
-.btn.primary:hover { background: var(--accent-2); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
+.btn.primary:disabled { color: var(--on-accent); }
 
 .limit-label { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .limit-label-row .row-limit { width: 120px; margin-top: 3px; }
@@ -205,7 +233,7 @@ input.m-interval:focus { outline: none; border-color: var(--accent-2); }
   color: var(--muted); cursor: pointer; font-size: 11px;
 }
 .m-btn:hover { background: var(--panel-2); border-color: var(--border); color: var(--text); }
-.m-btn.danger:hover { background: #7a2a2a; border-color: #a33; color: #fff; }
+.m-btn.danger:hover { background: var(--danger-hover); border-color: var(--danger-border); color: var(--on-danger); }
 /* 管理モードでは行が詰まりすぎないよう高さを揃え、テーブル行と接続先行で
    要素間の gap も揃える（揃えないと固定幅の管理列が行ごとに横ずれする）。 */
 .sidebar.manage .source-item, .sidebar.manage .tree-parent { padding-top: 2px; padding-bottom: 2px; gap: 4px; }
@@ -297,6 +325,15 @@ tr.drop-target-after td::after { bottom: -1px; }
 .dot.idle { background: #6e7681; }
 
 .status { margin-top: auto; padding-top: 10px; color: var(--muted); font-size: 11px; white-space: pre-wrap; }
+.status-error-link { background: none; border: none; color: #f85149; cursor: pointer; font-size: 11px; padding: 0; text-align: left; }
+.status-error-link:hover { text-decoration: underline; }
+
+/* 更新エラー詳細ダイアログ（要件: サイドバー下部のエラー一覧が読みにくい） */
+.status-errors-list { max-height: 60vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+.status-error-item { padding: 8px 10px; border-bottom: 1px solid #2a2a2a; }
+.status-error-item:last-child { border-bottom: none; }
+.status-error-name { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+.status-error-msg { font-size: 12px; color: var(--muted); white-space: pre-wrap; word-break: break-all; }
 
 .content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
@@ -388,7 +425,7 @@ tr.drop-target-after td::after { bottom: -1px; }
 .dialog h3 { margin: 0 0 14px; }
 .dialog label { display: block; margin-bottom: 10px; }
 .dialog label.check { display: flex; align-items: center; gap: 6px; }
-.dialog input[type="text"], .dialog select, .dialog textarea {
+.dialog input[type="text"], .dialog input[type="password"], .dialog select, .dialog textarea {
   width: 100%;
   margin-top: 3px;
   padding: 6px 8px;
@@ -403,8 +440,8 @@ tr.drop-target-after td::after { bottom: -1px; }
 .dialog textarea.web-page-columns { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
-.btn.danger { background: #5a1d1d; border-color: #7a2a2a; }
-.btn.danger:hover { background: #7a2a2a; }
+.btn.danger { background: var(--danger); border-color: var(--danger-border); color: var(--on-danger); }
+.btn.danger:hover { background: var(--danger-hover); border-color: var(--danger-border); }
 .column-map-table select {
   width: 100%; padding: 5px 6px; background: var(--panel-2); border: 1px solid var(--border);
   border-radius: 4px; color: var(--text);
@@ -420,8 +457,8 @@ tr.drop-target-after td::after { bottom: -1px; }
   display: block; width: 100%; text-align: left; padding: 6px 10px; background: none; border: none;
   color: var(--text); border-radius: 4px; cursor: pointer; font-size: 13px;
 }
-.ctx-menu button:hover:not(:disabled) { background: var(--accent); }
-.ctx-menu button.danger:hover:not(:disabled) { background: #7a2a2a; }
+.ctx-menu button:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); }
+.ctx-menu button.danger:hover:not(:disabled) { background: var(--danger-hover); color: var(--on-danger); }
 .ctx-menu button:disabled { opacity: 0.45; cursor: default; }
 .ctx-menu hr { margin: 4px 0; border: none; border-top: 1px solid var(--border); }
 
@@ -432,7 +469,7 @@ tr.drop-target-after td::after { bottom: -1px; }
   box-shadow: 0 4px 16px rgba(0,0,0,0.4);
 }
 .history-item { padding: 6px 10px; cursor: pointer; font-size: 12px; color: var(--text); }
-.history-item:hover { background: var(--accent); }
+.history-item:hover { background: var(--accent); color: var(--on-accent); }
 .history-empty { padding: 8px 10px; color: var(--muted); font-size: 12px; }
 .preset-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .preset-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -446,7 +483,7 @@ tr.drop-target-after td::after { bottom: -1px; }
 .type-row { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 10px; }
 .type-row .type-label { flex: 1; margin-bottom: 0; }
 .type-row > .btn { flex: none; height: 28px; padding: 0 12px; }
-.type-row #parent-type-label { flex: 1; }
+.type-row #parent-type-label { flex: 1; margin: 0; }
 
 /* 手順書ダイアログ（docs/guides/*.md の簡易 Markdown 表示） */
 #guide-dialog { max-height: 90vh; display: flex; flex-direction: column; }
@@ -612,6 +649,42 @@ tr.drop-target-after td::after { bottom: -1px; }
 .picker-list.checklist .picker-item:hover { background: var(--panel-2); }
 .picker-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .picker-item .badge { margin-left: auto; font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; }
+
+/* 保存済みトークン（要件: トークン管理画面）。「プロファイル」欄は新規作成ボタンも既存の
+ * プロファイルも同じ幅・同じ見た目の「行」として並べ、クリックで選択（着色）する1つのリストにする。 */
+.cm-profile-list { border: 1px solid var(--border); border-radius: 6px; max-height: 240px; overflow-y: auto; }
+.cm-profile-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; box-sizing: border-box; text-align: left; padding: 8px 10px;
+  border: none; border-bottom: 1px solid #2a2a2a; background: none; color: var(--text);
+  cursor: pointer; font: inherit; font-size: 13px;
+}
+.cm-profile-item:last-child { border-bottom: none; }
+.cm-profile-item:hover { background: var(--panel-2); }
+.cm-profile-item.selected { background: rgba(51, 153, 255, 0.18); box-shadow: inset 3px 0 0 var(--accent-2); }
+.cm-new-item { color: var(--accent-2); font-weight: 600; }
+.cm-profile-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cm-profile-item .btn { flex: none; }
+.cm-profile-usage { padding: 0 10px 7px; font-size: 11px; color: var(--muted); white-space: normal; word-break: break-all; border-bottom: 1px solid #2a2a2a; }
+.cm-profile-usage:last-child { border-bottom: none; }
+
+/* トークンコピー時の通知トースト（非モーダル・画面中央・1秒でフェードアウト）。 */
+.toast {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 20px; font-size: 13px; z-index: 9999;
+  pointer-events: none; opacity: 1; transition: opacity 0.4s ease;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+.toast.toast-fade-out { opacity: 0; }
+
+/* 接続画面の「使用するトークン」表示（読み取り専用の値入力欄は出さず、プロファイル名だけ見せる）。 */
+.credential-profile-chip {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px;
+  padding: 6px 10px; font-size: 13px;
+}
+.credential-profile-chip.unset { color: var(--muted); }
 
 .sp-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
 .sp-tab { padding: 5px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px 4px 0 0; color: var(--muted); cursor: pointer; }
