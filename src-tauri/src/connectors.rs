@@ -11,7 +11,7 @@ use crate::model::Record;
 mod common;
 use common::{make_record, make_record_with_row, CommonCfg};
 mod local;
-use local::{CsvConnector, FolderConnector, SqliteConnector};
+use local::{CsvConnector, FolderConnector, ImeCfg, ImeConnector, ImeFlavor, SqliteConnector};
 mod database;
 use database::{MysqlConnector, PostgresConnector};
 
@@ -986,28 +986,6 @@ pub(crate) fn fmt_epoch(secs: i64) -> String {
     let y = if m <= 2 { y + 1 } else { y };
     format!("{y:04}-{m:02}-{d:02} {h:02}:{mi:02}:{s:02}")
 }
-// ---- IME 辞書（エクスポート済みテキスト）----
-#[derive(Deserialize)]
-struct ImeCfg {
-    path: String,
-}
-
-enum ImeFlavor {
-    MsIme,  // UTF-16LE / 読み・語・品詞
-    Google, // UTF-8   / 読み・単語・品詞・コメント
-}
-
-struct ImeConnector {
-    cfg: ImeCfg,
-    flavor: ImeFlavor,
-}
-
-impl ImeConnector {
-    fn new(cfg: ImeCfg, flavor: ImeFlavor) -> Self {
-        Self { cfg, flavor }
-    }
-}
-
 // ---- PokéAPI ----
 
 #[derive(Deserialize)]
@@ -1755,43 +1733,6 @@ mod tests {
         );
         println!("Airtable から {} 件取得", recs.len());
         assert!(!recs.is_empty());
-    }
-}
-
-impl Connector for ImeConnector {
-    fn fetch(&self) -> Result<Vec<Record>> {
-        let bytes = std::fs::read(&self.cfg.path)?;
-        let (text, columns): (std::borrow::Cow<str>, &[&str]) = match self.flavor {
-            ImeFlavor::MsIme => {
-                let (t, _, _) = encoding_rs::UTF_16LE.decode(&bytes);
-                (t, &["読み", "語", "品詞"])
-            }
-            ImeFlavor::Google => {
-                let (t, _, _) = encoding_rs::UTF_8.decode(&bytes);
-                (t, &["読み", "単語", "品詞", "コメント"])
-            }
-        };
-
-        let mut out = Vec::new();
-        for line in text.lines() {
-            let line = line.trim_end_matches('\r');
-            if line.is_empty() || line.starts_with('!') {
-                continue; // 空行・コメント行(! 始まり)は無視
-            }
-            let cols: Vec<&str> = line.split('\t').collect();
-            let pairs: Vec<(String, String)> = columns
-                .iter()
-                .enumerate()
-                .map(|(i, name)| (name.to_string(), cols.get(i).unwrap_or(&"").to_string()))
-                .collect();
-            // label = 2 列目(語/単語)、open_ref = 辞書ファイルパス。
-            let cfg = CommonCfg {
-                label_column: Some(columns[1].to_string()),
-                ..Default::default()
-            };
-            out.push(make_record(pairs, &self.cfg.path, &cfg));
-        }
-        Ok(out)
     }
 }
 
