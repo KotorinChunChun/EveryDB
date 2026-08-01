@@ -15,7 +15,7 @@ import {
 } from "./shared/storage";
 import { getCellUrl, parseAirtableUrl, parseGoogleSheetsUrl, parseNotionUrl, parseSharePointUrl } from "./shared/urls";
 import type { CredentialScope, CredentialSummary, Row, SearchResponse, SourceDetail, SourceInfo, WinAuthStatus } from "./shared/types";
-import { guideNameForType, parentKindForType } from "./source-types/registry";
+import { guideNameForType, parentKindForType, representativeTypeForCredentialScope as representativeTypeForScope } from "./source-types/registry";
 import type { ParentKind } from "./source-types/registry";
 
 // ==== 状態 ====
@@ -2176,17 +2176,6 @@ function credentialScopeFieldDefs(scope: CredentialScope): CredentialFieldDef[] 
   }
 }
 
-/** そのスコープの手順書に相当する種別キー（既存の docs/guides/*.md 振り分けを流用する）。 */
-function representativeTypeForScope(scope: CredentialScope): string {
-  switch (scope) {
-    case "notion": return "notion";
-    case "airtable": return "airtable";
-    case "graph": return "graph_entra_users";
-    case "box": return "box_files";
-    case "postgres": return "postgres";
-    case "mysql": return "mysql";
-  }
-}
 
 /** 非秘密フィールドの値をそのままコピーする（既に平文で画面にあるため本人確認は不要）。 */
 async function copyPlainValueToClipboard(value: string, message: string) {
