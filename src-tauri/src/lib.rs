@@ -4,6 +4,7 @@ pub mod browse;
 pub mod browse_commands;
 mod commands;
 pub mod connectors;
+pub mod credential_commands;
 pub mod credentials;
 pub mod db;
 pub mod graph;
@@ -124,8 +125,8 @@ pub fn run() {
             search_commands::delete_search_preset,
             opener::open_ref,
             commands::encode_shift_jis,
-            commands::winauth_status,
-            commands::winauth_verify,
+            credential_commands::winauth_status,
+            credential_commands::winauth_verify,
             commands::get_source_detail,
             commands::update_source,
             commands::duplicate_source,
@@ -150,15 +151,15 @@ pub fn run() {
             browse_commands::browse_sqlite_tables,
             browse_commands::browse_accdb_tables,
             browse_commands::browse_browser_profiles,
-            commands::list_credentials,
-            commands::add_credential,
-            commands::update_credential,
-            commands::delete_credential,
-            commands::credential_usage,
-            commands::credential_public_fields,
-            commands::credential_secret_value,
-            commands::box_oauth_authorize,
-            commands::box_oauth_cancel,
+            credential_commands::list_credentials,
+            credential_commands::add_credential,
+            credential_commands::update_credential,
+            credential_commands::delete_credential,
+            credential_commands::credential_usage,
+            credential_commands::credential_public_fields,
+            credential_commands::credential_secret_value,
+            credential_commands::box_oauth_authorize,
+            credential_commands::box_oauth_cancel,
             settings::autostart_status,
             settings::autostart_set,
             settings::set_zoom,
