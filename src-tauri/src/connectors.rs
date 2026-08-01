@@ -57,9 +57,54 @@ fn normalize_path_in_config(config_json: &str) -> Result<String> {
     }
 }
 
+/// Rust factoryが受け入れる安定したデータソースID。フロントのmetadataと対応を保つ。
+pub const SUPPORTED_SOURCE_TYPES: &[&str] = &[
+    "csv",
+    "sqlite",
+    "accdb",
+    "excel_table",
+    "excel_range",
+    "excel_cell",
+    "excel_sheets",
+    "folder",
+    "ime_msime",
+    "ime_google",
+    "notion",
+    "graph_entra_users",
+    "graph_entra_groups",
+    "graph_teams",
+    "graph_sharepoint_list",
+    "graph_sharepoint_library",
+    "graph_entra_devices",
+    "graph_intune_devices",
+    "graph_licenses",
+    "graph_calendar",
+    "graph_onedrive",
+    "graph_planner",
+    "browser_history",
+    "browser_bookmarks",
+    "browser_downloads",
+    "google_sheets",
+    "ical_calendar",
+    "airtable",
+    "postgres",
+    "mysql",
+    "box_files",
+    "postal_code",
+    "corporate_number",
+    "web_page",
+    "pokeapi",
+];
+
+pub fn is_supported_source_type(type_: &str) -> bool {
+    SUPPORTED_SOURCE_TYPES.contains(&type_)
+}
 /// 種別 + config_json からコネクタを生成するファクトリ。
 pub fn build_connector(type_: &str, config_json: &str) -> Result<Box<dyn Connector>> {
     use serde_json::from_str;
+    if !is_supported_source_type(type_) {
+        return Err(anyhow!("未対応のデータソース種別: {type_}"));
+    }
     // 保存時に暗号化された秘密フィールドをここで復号する（要件 §4-3-bis）。
     let config_json = crate::secret::unprotect_config(config_json)?;
     // ファイルパスの両端クォートを除去する（要件: クォート付きパス対応）。
@@ -116,7 +161,9 @@ pub fn build_connector(type_: &str, config_json: &str) -> Result<Box<dyn Connect
         "corporate_number" => Ok(Box::new(from_str::<CorporateNumberConnector>(config_json)?)),
         "web_page" => Ok(Box::new(from_str::<WebPageConnector>(config_json)?)),
         "pokeapi" => Ok(Box::new(from_str::<PokeApiConnector>(config_json)?)),
-        other => Err(anyhow!("未対応のデータソース種別: {other}")),
+        other => Err(anyhow!(
+            "factory定義が不足しているデータソース種別: {other}"
+        )),
     }
 }
 
@@ -1438,6 +1485,21 @@ query {
     }
 }
 
+#[cfg(test)]
+#[test]
+fn every_registered_source_type_has_a_factory_branch() {
+    for type_ in SUPPORTED_SOURCE_TYPES {
+        match build_connector(type_, "{}") {
+            Ok(_) => {}
+            Err(error) => assert!(
+                !error.to_string().contains("factory定義が不足"),
+                "factory branch is missing for {type_}: {error}"
+            ),
+        }
+    }
+    assert!(is_supported_source_type("airtable"));
+    assert!(!is_supported_source_type("unknown"));
+}
 #[cfg(test)]
 mod tests {
     use super::*;
