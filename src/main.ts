@@ -43,6 +43,7 @@ import {
 } from "./features/grid/data";
 import type { SortState } from "./features/grid/data";
 import { scrollTopToRevealRow, visibleRowRange } from "./features/grid/viewport";
+import { normalizeRowLimit, presetSourceIds, shouldApplySearchResponse } from "./features/search/state";
 
 // ==== 状態 ====
 let sources: SourceInfo[] = [];
@@ -1023,8 +1024,7 @@ function scheduleSearch() {
 }
 
 function currentRowLimit(): number {
-  const v = parseInt($<HTMLInputElement>("row-limit").value, 10);
-  return Number.isFinite(v) && v > 0 ? v : 10000;
+  return normalizeRowLimit($<HTMLInputElement>("row-limit").value);
 }
 
 async function runSearch() {
@@ -1038,7 +1038,7 @@ async function runSearch() {
     resultInfo.textContent = "検索エラー: " + String(e);
     return;
   }
-  if (resp.seq <= lastAppliedSeq) return; // 古い結果は破棄
+  if (!shouldApplySearchResponse(resp.seq, lastAppliedSeq)) return; // 古い結果は破棄
   lastAppliedSeq = resp.seq;
   rawRows = resp.rows;
   rebuildColumns();
@@ -1184,7 +1184,7 @@ async function showPresetPanel() {
 
 function applyPreset(p: SearchPreset) {
   searchInput.value = p.query;
-  selectedSourceIds = new Set(p.source_ids.filter((id) => sources.some((s) => s.id === id)));
+  selectedSourceIds = presetSourceIds(p.source_ids, sources.map((s) => s.id));
   renderSources();
   runSearch();
 }
