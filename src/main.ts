@@ -24,6 +24,14 @@ import type { FieldDef, TypeDef } from "./source-types/forms";
 import { parentLabel as formatParentLabel, shortTimestamp, sourceMatchesFilter as matchesSourceFilter, sourceTree, sourceTypeLabel } from "./features/sources/tree";
 import { reorderedSourceIds } from "./features/sources/reorder";
 import {
+  includeNewSourceIds,
+  restoreSelectedIds,
+  selectAllIfEmpty,
+  setVisibleSelection,
+  toggleParentSelection,
+  toggleSourceSelection,
+} from "./features/sources/selection";
+import {
   buildGridColumns,
   buildSourceFieldIndex,
   gridCellText,
@@ -145,18 +153,11 @@ async function loadSources() {
   if (!initialLoadDone) {
     initialLoadDone = true;
     const saved = loadSelectedSourcesState();
-    if (saved && Array.isArray(saved)) {
-      const valid = new Set(sources.map((s) => s.id));
-      selectedSourceIds = new Set(saved.filter((id) => valid.has(id)));
-    } else if (selectedSourceIds.size === 0) {
-      sources.forEach((s) => selectedSourceIds.add(s.id));
-    }
+    selectedSourceIds = saved !== null
+      ? restoreSelectedIds(saved, sources.map((source) => source.id))
+      : selectAllIfEmpty(selectedSourceIds, sources.map((source) => source.id));
   } else {
-    for (const s of sources) {
-      if (!oldIds.has(s.id)) {
-        selectedSourceIds.add(s.id);
-      }
-    }
+    selectedSourceIds = includeNewSourceIds(selectedSourceIds, oldIds, sources.map((source) => source.id));
   }
   saveSelectedSourcesState();
   renderSources();
@@ -368,16 +369,7 @@ function makeSourceItem(s: SourceInfo): HTMLElement {
   cb.checked = selectedSourceIds.has(s.id);
   cb.id = `src-${s.id}`;
   cb.onclick = (ev) => {
-    if ((ev as MouseEvent).altKey) {
-      // Alt+クリック: これだけ ON、他は全解除（ソロ選択）。
-      selectedSourceIds = new Set([s.id]);
-      saveSelectedSourcesState();
-      renderSources();
-      runSearch();
-      return;
-    }
-    if (cb.checked) selectedSourceIds.add(s.id);
-    else selectedSourceIds.delete(s.id);
+    selectedSourceIds = toggleSourceSelection(selectedSourceIds, s.id, cb.checked, (ev as MouseEvent).altKey);
     saveSelectedSourcesState();
     renderSources();
     runSearch();
@@ -526,16 +518,8 @@ function renderSources() {
     const toggleCheck = (ev?: MouseEvent | Event) => {
       if (ev) ev.stopPropagation();
       const isAlt = ev && "altKey" in ev && (ev as MouseEvent).altKey;
-      if (isAlt) {
-        // Alt+クリック: この接続先配下のテーブルのみ ON、他は全解除（ソロ選択）。
-        selectedSourceIds = new Set(children.map((c) => c.id));
-      } else {
-        const turnOn = !(selCount === children.length);
-        for (const c of children) {
-          if (turnOn) selectedSourceIds.add(c.id);
-          else selectedSourceIds.delete(c.id);
-        }
-      }
+      selectedSourceIds = toggleParentSelection(selectedSourceIds, children.map((child) => child.id), Boolean(isAlt));
+      saveSelectedSourcesState();
       renderSources();
       runSearch();
     };
@@ -760,13 +744,13 @@ sourceFilterClearBtn.onclick = () => {
 
 // 全選択 / 全解除は「いま一覧に見えているテーブル」だけを対象にする（絞り込み外の選択は保つ）。
 $<HTMLButtonElement>("select-all").onclick = () => {
-  for (const s of visibleSources()) selectedSourceIds.add(s.id);
+  selectedSourceIds = setVisibleSelection(selectedSourceIds, visibleSources().map((source) => source.id), true);
   saveSelectedSourcesState();
   renderSources();
   runSearch();
 };
 $<HTMLButtonElement>("select-none").onclick = () => {
-  for (const s of visibleSources()) selectedSourceIds.delete(s.id);
+  selectedSourceIds = setVisibleSelection(selectedSourceIds, visibleSources().map((source) => source.id), false);
   saveSelectedSourcesState();
   renderSources();
   runSearch();
