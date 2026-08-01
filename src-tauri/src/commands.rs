@@ -809,6 +809,29 @@ pub fn autostart_set(app: AppHandle, enabled: bool) -> Result<(), String> {
     }
 }
 
+/// フロントエンドの getCellUrl と共通の、アプリ内から開いてよい URL scheme。
+/// 未登録の scheme（例: javascript:）はローカルパスとして扱い、ShellExecute に渡さない。
+const OPENABLE_URL_SCHEMES: &[&str] = &[
+    "http:",
+    "https:",
+    "file:",
+    "notion:",
+    "ftp:",
+    "mailto:",
+    "teams:",
+    "obsidian:",
+];
+
+fn is_openable_url(target: &str) -> bool {
+    let lower = target.to_ascii_lowercase();
+    OPENABLE_URL_SCHEMES
+        .iter()
+        .any(|scheme| lower.starts_with(scheme))
+}
+
+fn is_file_url(target: &str) -> bool {
+    target.len() >= 5 && target[..5].eq_ignore_ascii_case("file:")
+}
 /// 「開く」で実行を許さない拡張子。open_ref の対象文字列はデータソース側の内容
 /// （CSV の 1 セル等）に由来するため、汚染されたデータで実行ファイルが起動されうる。
 /// ShellExecute に渡す前にここで弾く（要件外の防御。ドキュメント・データ系は従来通り開ける）。
@@ -845,10 +868,12 @@ pub fn encode_shift_jis(text: String) -> Vec<u8> {
 
 #[tauri::command]
 pub fn open_ref(app: AppHandle, target: String) -> Result<(), String> {
-    let is_url = target.starts_with("http://")
-        || target.starts_with("https://")
-        || target.starts_with("mailto:");
-    if is_url {
+    if is_openable_url(&target) {
+        // file: URL はローカルパスと同じ安全境界に置く。クエリ/fragment は拡張子判定から除く。
+        if is_file_url(&target) {
+            let path_part = target.split(['?', '#']).next().unwrap_or(&target);
+            reject_executable_target(path_part)?;
+        }
         app.opener()
             .open_url(target, None::<&str>)
             .map_err(err_to_string)
@@ -986,7 +1011,39 @@ mod parent_dialog_tests {
 
 #[cfg(test)]
 mod open_ref_tests {
-    use super::reject_executable_target;
+    use super::{is_openable_url, reject_executable_target};
+
+    #[test]
+    fn frontend_and_backend_agree_on_openable_url_schemes() {
+        for target in [
+            "https://example.com",
+            "HTTP://example.com",
+            "file:///C:/data/report.xlsx",
+            "notion://www.notion.so/page",
+            "ftp://example.com/archive",
+            "mailto:user@example.com",
+            "teams://chat/19:example",
+            "obsidian://open?vault=notes",
+        ] {
+            assert!(is_openable_url(target), "expected URL scheme: {target}");
+        }
+        for target in [
+            "javascript:alert(1)",
+            "C:\\data\\report.xlsx",
+            "www.example.com",
+        ] {
+            assert!(
+                !is_openable_url(target),
+                "expected non-URL target: {target}"
+            );
+        }
+    }
+
+    #[test]
+    fn file_url_keeps_executable_extension_protection() {
+        assert!(reject_executable_target("file:///C:/tmp/payload.exe").is_err());
+        assert!(reject_executable_target("file:///C:/data/report.xlsx").is_ok());
+    }
 
     #[test]
     fn rejects_executables_regardless_of_case() {
