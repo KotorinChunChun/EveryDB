@@ -304,3 +304,81 @@ impl Connector for ImeConnector {
         Ok(out)
     }
 }
+
+// ---- Access (accdb / mdb) : ODBC 経由（要件 M4）----
+#[derive(Deserialize)]
+pub(crate) struct AccessConnector {
+    path: String,
+    table: String,
+    #[serde(flatten)]
+    common: CommonCfg,
+}
+
+/// `[table]` で囲む前提の識別子検証。閉じ括弧・セミコロン等の危険文字のみ拒否
+/// （Access はテーブル名に日本語・空白を許すため英数字限定にはしない）。
+fn valid_bracket_ident(s: &str) -> bool {
+    !s.is_empty()
+        && !s
+            .chars()
+            .any(|c| c == ']' || c == '[' || c == ';' || c.is_control())
+}
+
+impl Connector for AccessConnector {
+    fn fetch(&self) -> Result<Vec<Record>> {
+        use odbc_api::{ConnectionOptions, Cursor, Environment, ResultSetMetadata};
+
+        if !valid_bracket_ident(&self.table) {
+            return Err(anyhow!("不正なテーブル名: {}", self.table));
+        }
+        // ODBC 接続文字列は `;` が属性の区切りなので、パスに `;` が混ざると
+        // 後続に任意の接続属性を注入できてしまう。ここで弾く。
+        if self.path.contains(';') || self.path.contains('{') || self.path.contains('}') {
+            return Err(anyhow!(
+                "パスに ODBC 接続文字列で使えない文字（; {{ }}）が含まれています: {}",
+                self.path
+            ));
+        }
+        // ODBC ドライバマネージャ経由で ACE ドライバに接続。
+        let cs = format!(
+            "Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};Dbq={};",
+            self.path
+        );
+        let env = Environment::new().map_err(|e| anyhow!("ODBC 環境の初期化に失敗: {e}"))?;
+        let conn = env
+            .connect_with_connection_string(&cs, ConnectionOptions::default())
+            .map_err(|e| anyhow!("Access への接続に失敗（ドライバ/パス確認）: {e}"))?;
+
+        let sql = format!("SELECT * FROM [{}]", self.table);
+        let mut cursor = match conn.execute(&sql, (), None)? {
+            Some(c) => c,
+            None => return Ok(Vec::new()),
+        };
+
+        let ncol = cursor.num_result_cols()? as u16;
+        let mut names = Vec::with_capacity(ncol as usize);
+        for i in 1..=ncol {
+            names.push(cursor.col_name(i)?);
+        }
+
+        let mut out = Vec::new();
+        let mut buf: Vec<u16> = Vec::new();
+        while let Some(mut row) = cursor.next_row()? {
+            let mut pairs = Vec::with_capacity(ncol as usize);
+            for i in 1..=ncol {
+                buf.clear();
+                // UTF-16(ワイド)で取得 → ロケール非依存で全 Unicode を安全に扱える。
+                let not_null = row.get_wide_text(i, &mut buf)?;
+                let val = if not_null {
+                    String::from_utf16_lossy(&buf)
+                        .trim_end_matches('\u{0}')
+                        .to_string()
+                } else {
+                    String::new()
+                };
+                pairs.push((names[(i - 1) as usize].clone(), val));
+            }
+            out.push(make_record(pairs, &self.path, &self.common));
+        }
+        Ok(out)
+    }
+}
