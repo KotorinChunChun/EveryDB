@@ -375,18 +375,19 @@ pub fn replace_source_records(conn: &mut Connection, source_id: i64, records: &[
 /// **半角スペース区切りの複数語は AND 検索**（全語を LIKE で AND 結合、要件 §9-5）。
 pub fn search(conn: &Connection, query: &str, source_ids: &[i64], limit: i64) -> Result<(Vec<Row>, bool)> {
     let limit = limit.clamp(1, 1_000_000); // 行数上限（要件: ユーザー設定可能）
+
+    // データソースのチェックが全て外れている場合は「全件対象」ではなく 0 件を返す
+    // （要件: 全チェックが外れているときは 1 件も出さない）。初回起動時は全ソースが
+    // 明示的に選択されるため、空集合はユーザーが意図的に全て外した状態だけを意味する。
+    if source_ids.is_empty() {
+        return Ok((Vec::new(), false));
+    }
+
     let terms: Vec<&str> = query.split(' ').map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
 
-    // IN 句の構築（空なら全ソース = 制約なし）
-    let (in_clause, id_params): (String, Vec<SqlValue>) = if source_ids.is_empty() {
-        ("1=1".to_string(), vec![])
-    } else {
-        let ph = vec!["?"; source_ids.len()].join(",");
-        (
-            format!("r.source_id IN ({ph})"),
-            source_ids.iter().map(|&i| SqlValue::Integer(i)).collect(),
-        )
-    };
+    let ph = vec!["?"; source_ids.len()].join(",");
+    let in_clause = format!("r.source_id IN ({ph})");
+    let id_params: Vec<SqlValue> = source_ids.iter().map(|&i| SqlValue::Integer(i)).collect();
 
     let rows = match terms.as_slice() {
         [] => browse(conn, &in_clause, &id_params, limit)?,
@@ -632,13 +633,29 @@ mod tests {
     }
 
     #[test]
+    fn empty_source_selection_returns_nothing() {
+        // 全チェックを外した状態は「全ソース対象」ではなく 0 件（要件）。
+        let (conn, sid) = setup();
+        // 前提: 選択されていれば当然ヒットする。
+        assert!(!search(&conn, "田中太", &[sid], DEFAULT_ROW_LIMIT).unwrap().0.is_empty());
+        assert!(!search(&conn, "", &[sid], DEFAULT_ROW_LIMIT).unwrap().0.is_empty());
+        // 選択が空なら検索もブラウズも 0 件、かつ打ち切り扱いにもしない。
+        let (rows, truncated) = search(&conn, "田中太", &[], DEFAULT_ROW_LIMIT).unwrap();
+        assert!(rows.is_empty());
+        assert!(!truncated);
+        assert!(search(&conn, "", &[], DEFAULT_ROW_LIMIT).unwrap().0.is_empty());
+    }
+
+    #[test]
     fn delete_source_removes_records_and_fts() {
         let (conn, sid) = setup();
         delete_source(&conn, sid).unwrap();
         // ブラウズも FTS 検索も 0 件（FTS に取り残しが無い）。
-        let (browse, _) = search(&conn, "", &[], DEFAULT_ROW_LIMIT).unwrap();
+        // 空の source_ids は「0 件」の意味になったため、削除したソースを明示的に指定して
+        // 取り残しの有無を確かめる。
+        let (browse, _) = search(&conn, "", &[sid], DEFAULT_ROW_LIMIT).unwrap();
         assert_eq!(browse.len(), 0);
-        let (fts, _) = search(&conn, "田中太", &[], DEFAULT_ROW_LIMIT).unwrap();
+        let (fts, _) = search(&conn, "田中太", &[sid], DEFAULT_ROW_LIMIT).unwrap();
         assert_eq!(fts.len(), 0);
         // sources 自体も消えている。
         assert_eq!(list_sources(&conn).unwrap().len(), 0);

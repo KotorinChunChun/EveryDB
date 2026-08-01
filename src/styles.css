@@ -15,6 +15,16 @@
   --danger-hover: #7a2a2a;
   --on-danger: #ffffff;
   --focus-ring: rgba(17, 119, 187, 0.45);
+  /* 通常ボタン（.btn.primary/.btn.danger 以外）専用のフォーカスリング色。
+     入力欄用の --focus-ring とは独立して調整できるようにしている。 */
+  --focus-ring-btn: var(--focus-ring);
+  --accent-focus: #1a8fd8;
+  --danger-focus: #9c3a3a;
+  /* 通常ボタンのホバー背景。以前は固定値 #87878c を全テーマ共通で使っていたため、
+     背景/文字色はテーマごとに変わるのにホバーだけ変わらない（要件: 分岐していないのはおかしい）
+     という不具合になっていた。--panel-2 を基準にテーマごとの方向（暗背景なら明るく、
+     明背景なら暗く）でホバー色を定義する。 */
+  --btn-hover-bg: #3a3a3d;
   --sel: #094771;
   --row-alt: #232323;
   font-family: "Segoe UI", "Yu Gothic UI", system-ui, sans-serif;
@@ -35,7 +45,15 @@
   --danger-border: #a01f1f;
   --danger-hover: #ad2323;
   --on-danger: #ffffff;
-  --focus-ring: rgba(11, 92, 148, 0.35);
+  /* 白背景では濃いリングが強すぎるので淡くする（要件: 基本ボタンのフォーカス色を薄く）。 */
+  --focus-ring: rgba(11, 92, 148, 0.16);
+  /* 通常ボタンのフォーカス色（要件で指定された色に変更）。 */
+  --focus-ring-btn: #f1f5f9;
+  /* 塗りつぶしボタン（保存/削除）は淡いリングだと下地に埋もれるため、
+     フォーカス時は背景自体をはっきり暗い色へ変える（要件: 変化を大きく）。 */
+  --accent-focus: #073d63;
+  --danger-focus: #8c1a1a;
+  --btn-hover-bg: #d8d8d8;
   --sel: #cfe4f7;
   --row-alt: #f7f7f7;
 }
@@ -56,6 +74,10 @@
   --danger-hover: #d24545;
   --on-danger: #ffffff;
   --focus-ring: rgba(92, 179, 255, 0.55);
+  --focus-ring-btn: var(--focus-ring);
+  --accent-focus: #7ec4ff;
+  --danger-focus: #e06a6a;
+  --btn-hover-bg: #232323;
   --sel: #003a66;
   --row-alt: #080808;
 }
@@ -64,11 +86,15 @@
 
 /* フォーカス時の強調表示（要件: 全状況のフォーカス色を統一）。テーマごとの色味は
    --focus-ring / --accent-2 で決まる。個別要素の :focus (border-color 変更等) はこれに重ねてよい。 */
-input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible,
-.btn:focus-visible, [tabindex]:focus-visible {
+input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   outline: none;
   border-color: var(--accent-2);
   box-shadow: 0 0 0 3px var(--focus-ring);
+}
+/* ボタンは枠色を種別ごとの色（危険色など）のまま保ちたいので、リングだけを重ねる。 */
+button:focus-visible, .btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring-btn);
 }
 
 /* hidden 属性は常に display:none を優先させる（.ctx-menu 等が display:flex を持つと
@@ -114,11 +140,18 @@ body {
   cursor: pointer;
   white-space: nowrap;
 }
-.btn:hover:not(:disabled) { background: #3a3a3d; }
+.btn:hover:not(:disabled) { background: var(--btn-hover-bg); }
 .btn:disabled { opacity: 0.45; cursor: default; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
 .btn.primary:disabled { color: var(--on-accent); }
+/* 塗りつぶしボタンは淡いリングが下地に埋もれるため、背景をはっきり変えたうえで
+   地の色を挟んだ二重リングを描き、フォーカス位置が確実に分かるようにする。 */
+.btn.primary:focus-visible {
+  background: var(--accent-focus);
+  border-color: var(--accent-focus);
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent-focus);
+}
 
 .limit-label { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .limit-label-row .row-limit { width: 120px; margin-top: 3px; }
@@ -424,6 +457,9 @@ tr.drop-target-after td::after { bottom: -1px; }
 .dialog-close-x:hover { background: var(--panel-2); color: var(--text); }
 .dialog h3 { margin: 0 0 14px; }
 .dialog label { display: block; margin-bottom: 10px; }
+/* ボタン群の見出し。<label> だとボタンが「関連コントロール」になり、ラベル余白の
+   ホバー/クリックがボタンへ伝播してしまうため、見た目だけ label と揃えた div を使う。 */
+.dialog .field { display: block; margin-bottom: 10px; }
 .dialog label.check { display: flex; align-items: center; gap: 6px; }
 .dialog input[type="text"], .dialog input[type="password"], .dialog select, .dialog textarea {
   width: 100%;
@@ -442,6 +478,11 @@ tr.drop-target-after td::after { bottom: -1px; }
 
 .btn.danger { background: var(--danger); border-color: var(--danger-border); color: var(--on-danger); }
 .btn.danger:hover { background: var(--danger-hover); border-color: var(--danger-border); }
+.btn.danger:focus-visible {
+  background: var(--danger-focus);
+  border-color: var(--danger-focus);
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--danger-focus);
+}
 .column-map-table select {
   width: 100%; padding: 5px 6px; background: var(--panel-2); border: 1px solid var(--border);
   border-radius: 4px; color: var(--text);

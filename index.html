@@ -313,7 +313,10 @@
         </div>
         <span id="s-hotkey-hint" class="roles-hint">入力欄をクリックし、設定したいキーを押してください（例: Alt+Ctrl+D）</span>
       </label>
-      <label>表示倍率
+      <!-- ボタン群の見出しに <label> を使うと、最初のボタンが「関連コントロール」になり、
+           ラベルの余白をホバーしただけでボタンが反応し、クリックすると発火してしまう。
+           単なる見出しなので div にする。 -->
+      <div class="field">表示倍率
         <div class="zoom-row">
           <button type="button" id="s-zoom-out" class="btn">－</button>
           <span id="s-zoom-value" class="zoom-value">100%</span>
@@ -321,23 +324,23 @@
           <button type="button" id="s-zoom-reset" class="btn">リセット</button>
         </div>
         <span class="roles-hint">Ctrl++ / Ctrl+- / Ctrl+0 でも変更できます</span>
-      </label>
+      </div>
       <label class="limit-label-row" title="検索結果の最大行数">検索結果の上限件数
         <input id="row-limit" class="row-limit" type="number" min="1" max="1000000" value="10000" />
       </label>
-      <label>データ更新
+      <div class="field">データ更新
         <div class="zoom-row">
           <button type="button" id="s-reload" class="btn">今すぐ全ソースを更新</button>
           <span id="reload-status" class="reload-status" hidden><span class="spinner"></span>更新中…</span>
         </div>
         <span class="roles-hint">応答が一時的に遅くなる場合があります</span>
-      </label>
-      <label>トークン
+      </div>
+      <div class="field">トークン
         <div class="zoom-row">
           <button type="button" id="s-credential-manager" class="btn">🔑 保存済みトークンの管理…</button>
         </div>
         <span class="roles-hint">Notion/Airtable/Microsoft 365/Box/PostgreSQL/MySQL のトークン・パスワードを名前を付けて保存し、複数のデータソースで使い回せます</span>
-      </label>
+      </div>
       <div class="dialog-actions">
         <button id="settings-close" class="btn">閉じる</button>
       </div>
