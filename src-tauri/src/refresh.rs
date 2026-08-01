@@ -5,7 +5,7 @@ use std::time::Duration;
 use rusqlite::Connection;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::commands::AppState;
+use crate::app_state::AppState;
 use crate::{connectors, credentials, db};
 
 /// 1 ソースを取得してスナップショット全置換し、ステータスを更新する（要件 §4-1）。

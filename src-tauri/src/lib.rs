@@ -1,3 +1,4 @@
+pub mod app_state;
 pub mod box_oauth;
 pub mod browse;
 mod commands;
@@ -17,7 +18,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-use commands::AppState;
+use app_state::AppState;
 
 /// トレイの「表示」・グローバルホットキーで共通のウィンドウ表示処理。
 /// 表示後に検索ボックスへフォーカスさせるイベントを送る（要件 §9-5: Everything ライク挙動）。
