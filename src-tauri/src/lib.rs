@@ -10,6 +10,7 @@ pub mod model;
 pub mod opener;
 pub mod refresh;
 pub mod secret;
+pub mod settings;
 pub mod winauth;
 
 use rusqlite::Connection;
@@ -156,18 +157,18 @@ pub fn run() {
             commands::credential_secret_value,
             commands::box_oauth_authorize,
             commands::box_oauth_cancel,
-            commands::autostart_status,
-            commands::autostart_set,
-            commands::set_zoom,
-            commands::get_zoom,
-            commands::set_theme,
-            commands::get_theme,
-            commands::set_hotkey,
-            commands::get_hotkey,
-            commands::set_sidebar_width,
-            commands::get_sidebar_width,
-            commands::list_parent_labels,
-            commands::set_parent_label,
+            settings::autostart_status,
+            settings::autostart_set,
+            settings::set_zoom,
+            settings::get_zoom,
+            settings::set_theme,
+            settings::get_theme,
+            settings::set_hotkey,
+            settings::get_hotkey,
+            settings::set_sidebar_width,
+            settings::get_sidebar_width,
+            settings::list_parent_labels,
+            settings::set_parent_label,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
