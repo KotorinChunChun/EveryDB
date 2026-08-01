@@ -17,7 +17,6 @@ pub mod settings;
 pub mod source_commands;
 pub mod winauth;
 
-use rusqlite::Connection;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, WindowEvent};
@@ -60,8 +59,7 @@ pub fn run() {
             // キャッシュ DB を初期化して状態管理下に置く。
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
-            let conn = Connection::open(dir.join("cache.db"))?;
-            db::init_schema(&conn)?;
+            let conn = db::open_cached_database(&dir.join("cache.db"))?;
             // 前回のズーム倍率とホットキーを復元する（要件 REQ-UI-01 / §9-5）。
             let saved_zoom: f64 = db::get_meta(&conn, "ui_zoom")?
                 .and_then(|s| s.parse().ok())

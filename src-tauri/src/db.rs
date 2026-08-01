@@ -1,118 +1,265 @@
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 use rusqlite::{params, params_from_iter, types::Value as SqlValue, Connection};
 use serde_json::Map;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::model::{Record, Row, SourceInfo};
 
 const PER_SOURCE_CAP: i64 = 200;
 /// 行数上限の既定値（UI から変更可能）。
 pub const DEFAULT_ROW_LIMIT: i64 = 10000;
+const SCHEMA_VERSION_KEY: &str = "schema_version";
+const CURRENT_SCHEMA_VERSION: i64 = 2;
 
-/// スキーマ初期化（要件 §5-2）。検索専用の records_fts は external content + trigram。
-pub fn init_schema(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        r#"
-        PRAGMA foreign_keys = ON;
-        PRAGMA journal_mode = WAL;
-        PRAGMA synchronous = NORMAL;
+/// cache.db を開き、必要な場合だけ移行前バックアップを取ってから初期化する。
+///
+/// バックアップは移行成功時に削除する。移行に失敗した場合は元のDBファイルへ復旧してから
+/// エラーを返すため、起動失敗によって既存データが中途半端な状態で残らない。
+pub fn open_cached_database(path: &Path) -> Result<Connection> {
+    initialize_database_with(path, init_schema)
+}
 
-        CREATE TABLE IF NOT EXISTS sources (
-            id               INTEGER PRIMARY KEY,
-            type             TEXT NOT NULL,
-            name             TEXT NOT NULL,
-            config_json      TEXT NOT NULL,
-            refresh_interval INTEGER NOT NULL DEFAULT 3600,
-            status           TEXT,
-            last_success_at  TEXT,
-            last_error       TEXT,
-            sort_order       INTEGER NOT NULL DEFAULT 0
-        );
+fn initialize_database_with<F>(path: &Path, initializer: F) -> Result<Connection>
+where
+    F: FnOnce(&Connection) -> Result<()>,
+{
+    let has_existing_data = path.is_file() && fs::metadata(path)?.len() > 0;
+    let needs_migration = if has_existing_data {
+        let conn = Connection::open(path)?;
+        let needs_migration = schema_needs_migration(&conn)?;
+        if needs_migration {
+            // WAL に残った内容を本体へ反映してからコピーする。
+            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        }
+        needs_migration
+    } else {
+        false
+    };
 
-        -- アプリ全体の単一値設定（マスターパスワードハッシュ等）。要件 §9-4。
-        CREATE TABLE IF NOT EXISTS app_meta (
-            key   TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
+    let backup = if needs_migration {
+        Some(create_migration_backup(path)?)
+    } else {
+        None
+    };
 
-        CREATE TABLE IF NOT EXISTS search_history (
-            id         INTEGER PRIMARY KEY,
-            query      TEXT NOT NULL,
-            used_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
-        );
+    let conn = Connection::open(path)?;
+    if let Err(error) = initializer(&conn) {
+        drop(conn);
+        if let Some(backup_path) = backup.as_deref() {
+            restore_migration_backup(path, backup_path)?;
+            let _ = fs::remove_file(backup_path);
+        }
+        return Err(error)
+            .context("DB schema migration failed; the previous database was restored");
+    }
 
-        -- 検索プリセット/お気に入り（要件 REQ-BM-01）。
-        CREATE TABLE IF NOT EXISTS search_presets (
-            id              INTEGER PRIMARY KEY,
-            name            TEXT NOT NULL,
-            query           TEXT NOT NULL DEFAULT '',
-            source_ids_json TEXT NOT NULL DEFAULT '[]',
-            created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
-        );
+    if let Some(backup_path) = backup {
+        fs::remove_file(&backup_path).with_context(|| {
+            format!(
+                "migration succeeded but temporary backup could not be removed: {}",
+                backup_path.display()
+            )
+        })?;
+    }
+    Ok(conn)
+}
 
-        -- 保存済みトークン（要件: トークンの再利用・一括置換）。
-        -- scope: "notion" | "airtable" | "graph" | "box" | "postgres" | "mysql"。
-        -- fields_json: そのスコープの関連フィールドをまとめた JSON（秘密フィールドのみ dpapi: 暗号化）。
-        CREATE TABLE IF NOT EXISTS credentials (
-            id          INTEGER PRIMARY KEY,
-            scope       TEXT NOT NULL,
-            label       TEXT NOT NULL,
-            fields_json TEXT NOT NULL,
-            created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
-        );
+fn create_migration_backup(path: &Path) -> Result<PathBuf> {
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| anyhow!("database path has no file name: {}", path.display()))?
+        .to_string_lossy();
+    let backup_path = path.with_file_name(format!("{file_name}.before-migration.bak"));
+    if backup_path.exists() {
+        return Err(anyhow!(
+            "existing migration backup must be inspected before retrying: {}",
+            backup_path.display()
+        ));
+    }
+    fs::copy(path, &backup_path).with_context(|| {
+        format!(
+            "failed to create migration backup: {} -> {}",
+            path.display(),
+            backup_path.display()
+        )
+    })?;
+    Ok(backup_path)
+}
 
-        CREATE TABLE IF NOT EXISTS records (
-            id          INTEGER PRIMARY KEY,
-            source_id   INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
-            label       TEXT,
-            open_ref    TEXT,
-            row_number  INTEGER,
-            fields_json TEXT NOT NULL,
-            search_text TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_records_source ON records(source_id);
-
-        CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(
-            search_text,
-            content='records',
-            content_rowid='id',
-            tokenize='trigram'
-        );
-
-        CREATE TRIGGER IF NOT EXISTS records_ai AFTER INSERT ON records BEGIN
-            INSERT INTO records_fts(rowid, search_text) VALUES (new.id, new.search_text);
-        END;
-        CREATE TRIGGER IF NOT EXISTS records_ad AFTER DELETE ON records BEGIN
-            INSERT INTO records_fts(records_fts, rowid, search_text)
-              VALUES ('delete', old.id, old.search_text);
-        END;
-        CREATE TRIGGER IF NOT EXISTS records_au AFTER UPDATE ON records BEGIN
-            INSERT INTO records_fts(records_fts, rowid, search_text)
-              VALUES ('delete', old.id, old.search_text);
-            INSERT INTO records_fts(rowid, search_text) VALUES (new.id, new.search_text);
-        END;
-        "#,
-    )?;
-    migrate_add_column(conn, "sources", "sort_order", "INTEGER NOT NULL DEFAULT 0")?;
-    migrate_add_column(conn, "records", "row_number", "INTEGER")?;
+fn restore_migration_backup(path: &Path, backup_path: &Path) -> Result<()> {
+    fs::copy(backup_path, path).with_context(|| {
+        format!(
+            "failed to restore migration backup: {} -> {}",
+            backup_path.display(),
+            path.display()
+        )
+    })?;
     Ok(())
 }
 
-/// 既存 DB に後付けで列を追加する簡易マイグレーション（列が無い場合のみ ALTER する）。
-fn migrate_add_column(conn: &Connection, table: &str, column: &str, decl: &str) -> Result<()> {
+/// スキーマ初期化。既存DBはschema_versionに応じて、列追加をトランザクション内で段階適用する。
+pub fn init_schema(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;",
+    )?;
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let result = (|| {
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS sources (
+                id               INTEGER PRIMARY KEY,
+                type             TEXT NOT NULL,
+                name             TEXT NOT NULL,
+                config_json      TEXT NOT NULL,
+                refresh_interval INTEGER NOT NULL DEFAULT 3600,
+                status           TEXT,
+                last_success_at  TEXT,
+                last_error       TEXT,
+                sort_order       INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS app_meta (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS search_history (
+                id         INTEGER PRIMARY KEY,
+                query      TEXT NOT NULL,
+                used_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS search_presets (
+                id              INTEGER PRIMARY KEY,
+                name            TEXT NOT NULL,
+                query           TEXT NOT NULL DEFAULT '',
+                source_ids_json TEXT NOT NULL DEFAULT '[]',
+                created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS credentials (
+                id          INTEGER PRIMARY KEY,
+                scope       TEXT NOT NULL,
+                label       TEXT NOT NULL,
+                fields_json TEXT NOT NULL,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS records (
+                id          INTEGER PRIMARY KEY,
+                source_id   INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+                label       TEXT,
+                open_ref    TEXT,
+                row_number  INTEGER,
+                fields_json TEXT NOT NULL,
+                search_text TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_records_source ON records(source_id);
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(
+                search_text,
+                content='records',
+                content_rowid='id',
+                tokenize='trigram'
+            );
+
+            CREATE TRIGGER IF NOT EXISTS records_ai AFTER INSERT ON records BEGIN
+                INSERT INTO records_fts(rowid, search_text) VALUES (new.id, new.search_text);
+            END;
+            CREATE TRIGGER IF NOT EXISTS records_ad AFTER DELETE ON records BEGIN
+                INSERT INTO records_fts(records_fts, rowid, search_text)
+                  VALUES ('delete', old.id, old.search_text);
+            END;
+            CREATE TRIGGER IF NOT EXISTS records_au AFTER UPDATE ON records BEGIN
+                INSERT INTO records_fts(records_fts, rowid, search_text)
+                  VALUES ('delete', old.id, old.search_text);
+                INSERT INTO records_fts(rowid, search_text) VALUES (new.id, new.search_text);
+            END;
+            "#,
+        )?;
+
+        let version = schema_version(conn)?;
+        if version > CURRENT_SCHEMA_VERSION {
+            return Err(anyhow!(
+                "database schema version {version} is newer than supported version {CURRENT_SCHEMA_VERSION}"
+            ));
+        }
+        if version < 1 {
+            migrate_add_column(conn, "sources", "sort_order", "INTEGER NOT NULL DEFAULT 0")?;
+        }
+        if version < 2 {
+            migrate_add_column(conn, "records", "row_number", "INTEGER")?;
+        }
+        set_meta(
+            conn,
+            SCHEMA_VERSION_KEY,
+            &CURRENT_SCHEMA_VERSION.to_string(),
+        )?;
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => {
+            conn.execute_batch("COMMIT")?;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
+}
+
+fn schema_version(conn: &Connection) -> Result<i64> {
+    match get_meta(conn, SCHEMA_VERSION_KEY)? {
+        Some(value) => value
+            .parse::<i64>()
+            .with_context(|| format!("invalid {SCHEMA_VERSION_KEY}: {value}")),
+        None => Ok(0),
+    }
+}
+
+fn schema_needs_migration(conn: &Connection) -> Result<bool> {
+    if !table_exists(conn, "app_meta")? {
+        return Ok(true);
+    }
+    Ok(schema_version(conn)? < CURRENT_SCHEMA_VERSION
+        || !table_has_column(conn, "sources", "sort_order")?
+        || !table_has_column(conn, "records", "row_number")?)
+}
+
+fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+        [table],
+        |row| row.get(0),
+    )?)
+}
+
+fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
     let exists = stmt
-        .query_map([], |r| r.get::<_, String>(1))?
-        .filter_map(|r| r.ok())
-        .any(|c| c == column);
-    if !exists {
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(|row| row.ok())
+        .any(|name| name == column);
+    Ok(exists)
+}
+
+fn migrate_add_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    declaration: &str,
+) -> Result<()> {
+    if !table_has_column(conn, table, column)? {
         conn.execute(
-            &format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"),
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {declaration}"),
             [],
         )?;
     }
     Ok(())
 }
-
 pub fn insert_source(conn: &Connection, type_: &str, name: &str, config_json: &str) -> Result<i64> {
     let next_order: i64 = conn.query_row(
         "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM sources",
@@ -676,6 +823,129 @@ mod tests {
         (conn, sid)
     }
 
+    fn create_legacy_fixture(path: &Path) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE sources (
+                id INTEGER PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL,
+                config_json TEXT NOT NULL, refresh_interval INTEGER NOT NULL DEFAULT 3600,
+                status TEXT, last_success_at TEXT, last_error TEXT
+            );
+            CREATE TABLE records (
+                id INTEGER PRIMARY KEY, source_id INTEGER NOT NULL, label TEXT,
+                open_ref TEXT, fields_json TEXT NOT NULL, search_text TEXT NOT NULL
+            );
+            INSERT INTO sources(id, type, name, config_json, refresh_interval)
+              VALUES(7, 'csv', '移行前ソース', '{"path":"C:\\legacy.csv"}', 900);
+            INSERT INTO records(source_id, label, open_ref, fields_json, search_text)
+              VALUES(7, '移行前レコード', 'file:///C:/legacy.csv', '{"name":"移行前"}', '移行前');
+            "#,
+        )
+        .unwrap();
+    }
+
+    fn temporary_database_path(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("everydb-db-test-{name}-{nonce}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cache.db");
+        (dir, path)
+    }
+
+    #[test]
+    fn migrates_legacy_fixture_without_losing_sources_or_records() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE sources (
+                id INTEGER PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL,
+                config_json TEXT NOT NULL, refresh_interval INTEGER NOT NULL DEFAULT 3600,
+                status TEXT, last_success_at TEXT, last_error TEXT
+            );
+            CREATE TABLE records (
+                id INTEGER PRIMARY KEY, source_id INTEGER NOT NULL, label TEXT,
+                open_ref TEXT, fields_json TEXT NOT NULL, search_text TEXT NOT NULL
+            );
+            INSERT INTO sources(id, type, name, config_json) VALUES(7, 'csv', '移行前ソース', '{"path":"C:\\legacy.csv"}');
+            INSERT INTO records(source_id, label, fields_json, search_text) VALUES(7, '移行前レコード', '{"name":"移行前"}', '移行前');
+            "#,
+        )
+        .unwrap();
+
+        init_schema(&conn).unwrap();
+
+        assert_eq!(
+            get_meta(&conn, SCHEMA_VERSION_KEY).unwrap().as_deref(),
+            Some("2")
+        );
+        assert!(table_has_column(&conn, "sources", "sort_order").unwrap());
+        assert!(table_has_column(&conn, "records", "row_number").unwrap());
+        let (name, config): (String, String) = conn
+            .query_row(
+                "SELECT name, config_json FROM sources WHERE id=7",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "移行前ソース");
+        assert_eq!(config, r#"{"path":"C:\\legacy.csv"}"#);
+        assert_eq!(
+            conn.query_row::<String, _, _>(
+                "SELECT label FROM records WHERE source_id=7",
+                [],
+                |row| row.get(0)
+            )
+            .unwrap(),
+            "移行前レコード"
+        );
+    }
+
+    #[test]
+    fn file_migration_cleans_up_backup_after_success() {
+        let (dir, path) = temporary_database_path("success");
+        create_legacy_fixture(&path);
+
+        let conn = open_cached_database(&path).unwrap();
+        assert_eq!(
+            get_meta(&conn, SCHEMA_VERSION_KEY).unwrap().as_deref(),
+            Some("2")
+        );
+        assert_eq!(list_sources(&conn).unwrap()[0].name, "移行前ソース");
+        drop(conn);
+
+        assert!(!path
+            .with_file_name("cache.db.before-migration.bak")
+            .exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn failed_file_migration_restores_backup() {
+        let (dir, path) = temporary_database_path("restore");
+        create_legacy_fixture(&path);
+
+        let result =
+            initialize_database_with(&path, |_| Err(anyhow::anyhow!("forced migration failure")));
+        assert!(result.is_err());
+
+        let restored = Connection::open(&path).unwrap();
+        assert_eq!(
+            restored
+                .query_row::<String, _, _>("SELECT name FROM sources WHERE id=7", [], |row| row
+                    .get(0))
+                .unwrap(),
+            "移行前ソース"
+        );
+        assert!(!path
+            .with_file_name("cache.db.before-migration.bak")
+            .exists());
+        drop(restored);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn fts_trigram_available_and_matches_japanese() {
         let (conn, sid) = setup();
