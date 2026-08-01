@@ -2,6 +2,18 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
+import { colLetterOf, formatSelectedColumns, parseColumnSelection } from "./shared/excel-columns";
+import {
+  loadNumberArray,
+  loadString,
+  loadStringArray,
+  saveJson,
+  saveString,
+  STORAGE_KEY_COLLAPSED_PARENTS,
+  STORAGE_KEY_ROW_LIMIT,
+  STORAGE_KEY_SELECTED_SOURCES,
+} from "./shared/storage";
+import { getCellUrl, parseAirtableUrl, parseGoogleSheetsUrl, parseNotionUrl, parseSharePointUrl } from "./shared/urls";
 
 // ==== 型 ====
 interface SourceInfo {
@@ -75,41 +87,26 @@ const COL_W = 200; // px 既定列幅
 const SECRET_PLACEHOLDER = "••••••••";
 
 // ==== 状態の永続化 (localStorage) ====
-const STORAGE_KEY_ROW_LIMIT = "everydb_row_limit";
-const STORAGE_KEY_SELECTED_SOURCES = "everydb_selected_source_ids";
-const STORAGE_KEY_COLLAPSED_PARENTS = "everydb_collapsed_parents";
-
-function saveRowLimitState(val: string) {
-  try { localStorage.setItem(STORAGE_KEY_ROW_LIMIT, val); } catch {}
+function saveRowLimitState(value: string) {
+  saveString(STORAGE_KEY_ROW_LIMIT, value);
 }
 function loadRowLimitState(): string | null {
-  try { return localStorage.getItem(STORAGE_KEY_ROW_LIMIT); } catch { return null; }
+  return loadString(STORAGE_KEY_ROW_LIMIT);
 }
 
 function saveSelectedSourcesState() {
-  try {
-    localStorage.setItem(STORAGE_KEY_SELECTED_SOURCES, JSON.stringify(Array.from(selectedSourceIds)));
-  } catch {}
+  saveJson(STORAGE_KEY_SELECTED_SOURCES, Array.from(selectedSourceIds));
 }
 function loadSelectedSourcesState(): number[] | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_SELECTED_SOURCES);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
+  return loadNumberArray(STORAGE_KEY_SELECTED_SOURCES);
 }
 
 function saveCollapsedParentsState() {
-  try {
-    localStorage.setItem(STORAGE_KEY_COLLAPSED_PARENTS, JSON.stringify(Array.from(collapsedParents)));
-  } catch {}
+  saveJson(STORAGE_KEY_COLLAPSED_PARENTS, Array.from(collapsedParents));
 }
 function loadCollapsedParentsState(): string[] | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_COLLAPSED_PARENTS);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
+  return loadStringArray(STORAGE_KEY_COLLAPSED_PARENTS);
 }
-
 /** ファイルパス両端のダブルクォート・空白を除去する（エクスプローラの「パスのコピー」対策）。 */
 function normalizePath(v: string | undefined | null): string {
   let s = (v ?? "").trim();
@@ -888,18 +885,6 @@ const gridCtxMenu = $<HTMLDivElement>("grid-ctx-menu");
 const parentCtxMenu = $<HTMLDivElement>("parent-ctx-menu");
 let ctxTargetId: number | null = null;
 let parentCtxTargetKey: string | null = null;
-
-function getCellUrl(text: string): string | null {
-  const t = text.trim();
-  if (!t) return null;
-  if (/^(https?|file|notion|ftp|mailto|teams|obsidian):/i.test(t)) {
-    return t;
-  }
-  if (/^www\./i.test(t)) {
-    return "https://" + t;
-  }
-  return null;
-}
 
 async function openTableBySourceId(id: number) {
   try {
@@ -3963,65 +3948,6 @@ function basenameOf(path: string): string {
   return parts[parts.length - 1] || norm;
 }
 
-interface AirtableUrlInfo {
-  baseId?: string;
-  tableId?: string;
-  viewId?: string;
-}
-
-/** Airtable の URL から Base ID (app...), Table ID (tbl...), View ID (viw...) を解析抽出する。 */
-function parseAirtableUrl(urlText: string): AirtableUrlInfo | null {
-  if (!urlText || !urlText.includes("airtable.com")) return null;
-  const baseMatch = urlText.match(/\b(app[a-zA-Z0-9]{11,17})\b/);
-  const tableMatch = urlText.match(/\b(tbl[a-zA-Z0-9]{11,17})\b/);
-  const viewMatch = urlText.match(/\b(viw[a-zA-Z0-9]{11,17})\b/);
-  if (!baseMatch && !tableMatch && !viewMatch) return null;
-  return {
-    baseId: baseMatch ? baseMatch[1] : undefined,
-    tableId: tableMatch ? tableMatch[1] : undefined,
-    viewId: viewMatch ? viewMatch[1] : undefined,
-  };
-}
-
-/** Google スプレッドシート URL からスプレッドシート ID を抽出する。 */
-function parseGoogleSheetsUrl(urlText: string): { spreadsheetId?: string } | null {
-  if (!urlText || !urlText.includes("docs.google.com/spreadsheets")) return null;
-  const m = urlText.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-  if (!m) return null;
-  return { spreadsheetId: m[1] };
-}
-
-/** Notion データベース URL から 32桁の database_id を抽出・正規化する。 */
-function parseNotionUrl(urlText: string): { databaseId?: string } | null {
-  if (!urlText || (!urlText.includes("notion.so") && !urlText.includes("notion.site"))) return null;
-  const m = urlText.match(/([0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/);
-  if (!m) return null;
-  const clean = m[1].replace(/-/g, "").toLowerCase();
-  return { databaseId: clean };
-}
-
-/** SharePoint URL から site_url, list_name, library_name を解析分解する。 */
-function parseSharePointUrl(urlText: string): { siteUrl?: string; listName?: string; libraryName?: string } | null {
-  if (!urlText || !urlText.includes("sharepoint.com")) return null;
-  const siteMatch = urlText.match(/(https:\/\/[a-zA-Z0-9.-]+\.sharepoint\.com\/(?:sites|teams)\/[^/?#]+)/i);
-  const siteUrl = siteMatch ? siteMatch[1] : undefined;
-
-  let listName: string | undefined;
-  const listMatch = urlText.match(/\/Lists\/([^/?#]+)/i);
-  if (listMatch) {
-    try { listName = decodeURIComponent(listMatch[1]); } catch { listName = listMatch[1]; }
-  }
-
-  let libraryName: string | undefined;
-  const libMatch = urlText.match(/\/sites\/[^/]+\/([^/?#]+)\/(?:Forms|AllItems)/i);
-  if (libMatch && libMatch[1] !== "Lists") {
-    try { libraryName = decodeURIComponent(libMatch[1]); } catch { libraryName = libMatch[1]; }
-  }
-
-  if (!siteUrl && !listName && !libraryName) return null;
-  return { siteUrl, listName, libraryName };
-}
-
 /** URL貼り付け等で Base/Table/View の ID が確定した直後、可能なら名前(キャプション)も
  * Airtable API から解決して base_name/table_name/view_name を自動入力する。
  * トークン未入力・未解錠・API失敗時は静かに諦める（ID自体は既に埋まっているため実害はない）。 */
@@ -5007,70 +4933,6 @@ function getTargetExcelPath(): string {
   const pathEl = (document.getElementById("fd-path") || document.getElementById("pf-path")) as HTMLInputElement | null;
   const raw = pathEl?.value || String(hiddenSharedValues["path"] ?? "") || (editingId !== null ? sources.find((s) => s.id === editingId)?.parent : "") || "";
   return normalizePath(raw);
-}
-
-function colLetterOf(colIdx: number): string {
-  let s = "";
-  let n = colIdx + 1;
-  while (n > 0) {
-    const rem = (n - 1) % 26;
-    s = String.fromCharCode(65 + rem) + s;
-    n = Math.floor((n - 1) / 26);
-  }
-  return s;
-}
-
-function colLetterToIdx(colStr: string): number {
-  const s = colStr.trim().toUpperCase();
-  if (!/^[A-Z]+$/.test(s)) return -1;
-  let acc = 0;
-  for (let i = 0; i < s.length; i++) {
-    acc = acc * 26 + (s.charCodeAt(i) - 64);
-  }
-  return acc - 1;
-}
-
-function parseColumnSelection(text: string): Set<number> {
-  const selected = new Set<number>();
-  if (!text) return selected;
-  const parts = text.split(/[,;\s]+/);
-  for (const part of parts) {
-    const trimmed = part.trim().toUpperCase();
-    if (!trimmed) continue;
-    if (trimmed.includes(":")) {
-      const [startStr, endStr] = trimmed.split(":");
-      const startIdx = colLetterToIdx(startStr);
-      const endIdx = colLetterToIdx(endStr);
-      if (startIdx !== -1 && endIdx !== -1) {
-        const min = Math.min(startIdx, endIdx);
-        const max = Math.max(startIdx, endIdx);
-        for (let i = min; i <= max; i++) selected.add(i);
-      }
-    } else {
-      const idx = colLetterToIdx(trimmed);
-      if (idx !== -1) selected.add(idx);
-    }
-  }
-  return selected;
-}
-
-function formatSelectedColumns(selectedCols: Set<number>): string {
-  const cols = Array.from(selectedCols).sort((a, b) => a - b);
-  if (cols.length === 0) return "";
-  const ranges: string[] = [];
-  let start = cols[0];
-  let end = cols[0];
-  for (let i = 1; i < cols.length; i++) {
-    if (cols[i] === end + 1) {
-      end = cols[i];
-    } else {
-      ranges.push(start === end ? colLetterOf(start) : `${colLetterOf(start)}:${colLetterOf(end)}`);
-      start = cols[i];
-      end = cols[i];
-    }
-  }
-  ranges.push(start === end ? colLetterOf(start) : `${colLetterOf(start)}:${colLetterOf(end)}`);
-  return ranges.join(", ");
 }
 
 // ---- Excel シート名ピッカー ----
