@@ -12,7 +12,7 @@ Airtable の **Personal Access Token**（個人用アクセストークン）を
 
 ## 手順
 
-1. 入力欄の横の **🔑 取得…** を押して [Personal access tokens](https://airtable.com/create/tokens) を開きます。
+1. [Personal access tokens](https://airtable.com/create/tokens) を開きます。
 2. **Create new token** を押します。
    ![alt text](image.png)
 3. 、名前（例: `EveryDB`）を入力します。
@@ -33,11 +33,18 @@ Airtable の **Personal Access Token**（個人用アクセストークン）を
 - `viwZZZZZZZZ` … ビュー ID（任意）
   ![alt text](image-4.png)
 
+## EveryDB での安全な登録方法
+
+秘密の Personal Access Token は接続設定に直接保存しません。
+
+1. **設定** → **🔑 保存済みトークンの管理…** を開き、種別 **Airtable** のプロファイルを新規作成します。
+2. 任意のラベルと、手順 7 でコピーした `pat...` トークンを入力して保存します。
+3. Airtable 接続の追加・編集画面でトークン欄の **選択…** を押し、保存したプロファイルを選びます。
 ## EveryDB 側の入力項目
 
 | 項目                   | 入力する値                | 備考                                         |
 | :--------------------- | :------------------------ | :------------------------------------------- |
-| Personal Access Token  | 手順 5 の `pat...`        | Windows DPAPI により保護されます             |
+| 保存済みトークンプロファイル | 手順 7 の `pat...` を含む Airtable プロファイル | 接続側では **選択…** で参照します |
 | Base ID                | `app...`                  |                                              |
 | テーブル ID または名前 | `tbl...` またはテーブル名 |                                              |
 | ビュー(任意)           | `viw...` またはビュー名   | 指定するとそのビューの絞り込み・並び順で取得 |
