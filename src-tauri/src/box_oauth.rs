@@ -118,9 +118,18 @@ fn wait_for_callback(
     expected_state: &str,
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<String> {
+    wait_for_callback_with_timeout(listener, expected_state, cancel, AUTHORIZE_TIMEOUT)
+}
+
+fn wait_for_callback_with_timeout(
+    listener: TcpListener,
+    expected_state: &str,
+    cancel: &std::sync::atomic::AtomicBool,
+    timeout: Duration,
+) -> Result<String> {
     use std::sync::atomic::Ordering;
     listener.set_nonblocking(true)?;
-    let deadline = Instant::now() + AUTHORIZE_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
@@ -324,5 +333,70 @@ mod tests {
             REDIRECT_URI,
             format!("http://localhost:{REDIRECT_PORT}{REDIRECT_PATH}")
         );
+    }
+    fn callback_result(request_target: &str, expected_state: &str) -> Result<String> {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let target = request_target.to_string();
+        let sender = std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(address).unwrap();
+            let request =
+                format!("GET {target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+            stream.write_all(request.as_bytes()).unwrap();
+        });
+        let (stream, _) = listener.accept().unwrap();
+        let result = handle_callback_connection(stream, expected_state)
+            .expect("callback must be recognized");
+        sender.join().unwrap();
+        result
+    }
+
+    #[test]
+    fn callback_requires_matching_state_and_surfaces_provider_errors() {
+        assert_eq!(
+            callback_result("/box-callback?code=issued&state=expected", "expected").unwrap(),
+            "issued"
+        );
+        assert!(
+            callback_result("/box-callback?code=issued&state=other", "expected")
+                .unwrap_err()
+                .to_string()
+                .contains("state が一致")
+        );
+        assert!(
+            callback_result("/box-callback?error=access_denied", "expected")
+                .unwrap_err()
+                .to_string()
+                .contains("access_denied")
+        );
+    }
+
+    #[test]
+    fn callback_wait_honors_cancel_and_timeout_without_external_services() {
+        use std::sync::atomic::AtomicBool;
+
+        let cancelled_listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let cancelled = AtomicBool::new(true);
+        assert!(wait_for_callback_with_timeout(
+            cancelled_listener,
+            "state",
+            &cancelled,
+            Duration::ZERO
+        )
+        .unwrap_err()
+        .to_string()
+        .contains(CANCELLED_MESSAGE));
+
+        let timed_out_listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let active = AtomicBool::new(false);
+        assert!(wait_for_callback_with_timeout(
+            timed_out_listener,
+            "state",
+            &active,
+            Duration::ZERO
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("タイムアウト"));
     }
 }
