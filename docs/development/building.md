@@ -15,10 +15,10 @@ npm ci
 ## フロントエンドの確認
 
 ```powershell
-npm run check
+npm run check:all
 ```
 
-`check` は TypeScript 型検査、Vitest、Viteの本番ビルドを実行します。
+`check:all` はフロントエンド・公開文書・Rustのオフライン品質ゲートをまとめて実行します。
 
 ## Tauri開発起動
 

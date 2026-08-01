@@ -3,12 +3,10 @@
 ## 通常の自動検証
 
 ```powershell
-npm run check
-cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
-cargo test --manifest-path src-tauri/Cargo.toml --lib
-cargo build --manifest-path src-tauri/Cargo.toml --bins
+npm run check:all
 ```
+
+`check:all` は TypeScript型検査、Vitest、公開文書検査、本番フロントビルド、Rustのformat、Clippy、ライブラリテスト、バイナリビルドを順に実行します。外部サービスの認証情報やWindows Helloは使用しません。
 
 ## ライブテスト
 

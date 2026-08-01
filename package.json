@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "docs:check": "node scripts/check-docs.mjs",
-    "check": "npm run typecheck && npm run test && npm run docs:check && npm run build"
+    "check": "npm run typecheck && npm run test && npm run docs:check && npm run build",
+    "check:all": "node scripts/check-all.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
