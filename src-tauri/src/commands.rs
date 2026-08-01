@@ -7,7 +7,7 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::model::{SearchResponse, SourceInfo};
-use crate::refresh::reload_one;
+use crate::refresh::{optimize_fts, reload_one_for_state};
 use crate::{db, secret};
 
 const UNLOCK_DURATION: Duration = Duration::from_secs(600); // 直近の Windows Hello 確認から 10 分は再要求しない
@@ -114,17 +114,15 @@ pub async fn add_source(
     name: String,
     config_json: String,
 ) -> Result<i64, String> {
-    let mut conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    // 秘密フィールド（Notion トークン等）は DPAPI で暗号化してから保存する（要件 §4-3-bis）。
-    let config_json = secret::protect_config(&type_, &config_json).map_err(err_to_string)?;
-    let id = db::insert_source(&conn, &type_, &name, &config_json).map_err(err_to_string)?;
-    // 追加直後に一度取得しておく（失敗してもソース自体は残り、status=error になる）。
-    let _ = reload_one(&mut conn, id);
-    // 取得完了後に FTS5 インデックスを最適化（断片化解消による高速化）
-    let _ = conn.execute(
-        "INSERT INTO records_fts(records_fts) VALUES('optimize')",
-        [],
-    );
+    let id = {
+        let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+        // 秘密フィールド（Notion トークン等）は DPAPI で暗号化してから保存する（要件 §4-3-bis）。
+        let config_json = secret::protect_config(&type_, &config_json).map_err(err_to_string)?;
+        db::insert_source(&conn, &type_, &name, &config_json).map_err(err_to_string)?
+    };
+    // 追加直後に一度取得しておく。外部I/O中はDBロックを保持しない。
+    let _ = reload_one_for_state(&state, id);
+    optimize_fts(&state);
     Ok(id)
 }
 
@@ -166,18 +164,16 @@ pub async fn add_source_from_sibling(
     config_json: String,
     shared_keys: Vec<String>,
 ) -> Result<i64, String> {
-    let mut conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    let (_, sibling_json) = db::get_source_config(&conn, sibling_id).map_err(err_to_string)?;
-    let merged = fill_shared_from_sibling(&config_json, &sibling_json, &shared_keys)?;
-    // 既に `dpapi:` 付きの値は protect_config が二重暗号化しないので、そのまま渡してよい。
-    let protected = secret::protect_config(&type_, &merged).map_err(err_to_string)?;
-    let id = db::insert_source(&conn, &type_, &name, &protected).map_err(err_to_string)?;
-    let _ = reload_one(&mut conn, id);
-    // 取得完了後に FTS5 インデックスを最適化
-    let _ = conn.execute(
-        "INSERT INTO records_fts(records_fts) VALUES('optimize')",
-        [],
-    );
+    let id = {
+        let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+        let (_, sibling_json) = db::get_source_config(&conn, sibling_id).map_err(err_to_string)?;
+        let merged = fill_shared_from_sibling(&config_json, &sibling_json, &shared_keys)?;
+        // 既に `dpapi:` 付きの値は protect_config が二重暗号化しないので、そのまま渡してよい。
+        let protected = secret::protect_config(&type_, &merged).map_err(err_to_string)?;
+        db::insert_source(&conn, &type_, &name, &protected).map_err(err_to_string)?
+    };
+    let _ = reload_one_for_state(&state, id);
+    optimize_fts(&state);
     Ok(id)
 }
 
@@ -224,18 +220,16 @@ pub async fn update_source(
     name: String,
     config_json: String,
 ) -> Result<(), String> {
-    let mut conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    let (type_, old_config_json) = db::get_source_config(&conn, id).map_err(err_to_string)?;
-    let merged = secret::merge_preserving_placeholder(&type_, &old_config_json, &config_json)
-        .map_err(err_to_string)?;
-    let protected = secret::protect_config(&type_, &merged).map_err(err_to_string)?;
-    db::update_source(&conn, id, &name, &protected).map_err(err_to_string)?;
-    let _ = reload_one(&mut conn, id);
-    // 更新・再取得完了後に FTS5 インデックスを最適化
-    let _ = conn.execute(
-        "INSERT INTO records_fts(records_fts) VALUES('optimize')",
-        [],
-    );
+    {
+        let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+        let (type_, old_config_json) = db::get_source_config(&conn, id).map_err(err_to_string)?;
+        let merged = secret::merge_preserving_placeholder(&type_, &old_config_json, &config_json)
+            .map_err(err_to_string)?;
+        let protected = secret::protect_config(&type_, &merged).map_err(err_to_string)?;
+        db::update_source(&conn, id, &name, &protected).map_err(err_to_string)?;
+    }
+    let _ = reload_one_for_state(&state, id);
+    optimize_fts(&state);
     Ok(())
 }
 
@@ -714,24 +708,20 @@ pub fn set_refresh_interval(
 
 #[tauri::command]
 pub fn reload_sources(state: State<'_, AppState>, source_ids: Vec<i64>) -> Result<(), String> {
-    let mut conn = state.db.lock().map_err(|_| "lock poisoned")?;
     let ids = if source_ids.is_empty() {
+        let conn = state.db.lock().map_err(|_| "lock poisoned")?;
         db::list_sources(&conn)
             .map_err(err_to_string)?
             .into_iter()
-            .map(|s| s.id)
+            .map(|source| source.id)
             .collect()
     } else {
         source_ids
     };
     for id in ids {
-        let _ = reload_one(&mut conn, id); // 個別失敗は status に記録し、続行
+        let _ = reload_one_for_state(&state, id); // 個別失敗は status に記録し、続行
     }
-    // 一括リロード完了時に FTS5 インデックスを最適化
-    let _ = conn.execute(
-        "INSERT INTO records_fts(records_fts) VALUES('optimize')",
-        [],
-    );
+    optimize_fts(&state);
     Ok(())
 }
 

@@ -40,22 +40,63 @@ pub fn reload_one(conn: &mut Connection, id: i64) -> anyhow::Result<()> {
     }
 }
 
-/// 指定 id 群を再取得し、完了後にフロントへ通知する。個別失敗は status に記録して続行。
-pub fn reload_ids(app: &AppHandle, ids: &[i64]) {
-    {
-        let state = app.state::<AppState>();
-        let mut conn = match state.db.lock() {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-        for &id in ids {
-            let _ = reload_one(&mut conn, id);
+/// AppState経由で1ソースを再取得する。DBロックは設定取得・結果保存の短時間だけ保持し、
+/// connector.fetch() によるファイル/ネットワークI/Oは必ずロック外で実行する。
+pub fn reload_one_for_state(state: &AppState, id: i64) -> anyhow::Result<()> {
+    let connector = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("lock poisoned"))?;
+        let prepared = (|| -> anyhow::Result<Box<dyn connectors::Connector>> {
+            let (type_, cfg) = db::get_source_config(&conn, id)?;
+            let resolved_cfg = credentials::resolve_credentials(&conn, &cfg)?;
+            connectors::build_connector(&type_, &resolved_cfg)
+        })();
+        match prepared {
+            Ok(connector) => connector,
+            Err(error) => {
+                let _ = db::set_status(&conn, id, "error", Some(&error.to_string()));
+                return Err(error);
+            }
         }
-        // リロード完了時に FTS5 インデックスを最適化（断片化解消による高速化）
+    };
+
+    let fetched = connector.fetch();
+    let mut conn = state
+        .db
+        .lock()
+        .map_err(|_| anyhow::anyhow!("lock poisoned"))?;
+    match fetched {
+        Ok(records) => {
+            db::replace_source_records(&mut conn, id, &records)?;
+            db::set_status(&conn, id, "ok", None)?;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = db::set_status(&conn, id, "error", Some(&error.to_string()));
+            Err(error)
+        }
+    }
+}
+
+/// FTS最適化を呼び出し元の更新単位ごとに1回だけ行う。
+pub fn optimize_fts(state: &AppState) {
+    if let Ok(conn) = state.db.lock() {
         let _ = conn.execute(
             "INSERT INTO records_fts(records_fts) VALUES('optimize')",
             [],
         );
+    }
+}
+/// 指定 id 群を再取得し、完了後にフロントへ通知する。個別失敗は status に記録して続行。
+pub fn reload_ids(app: &AppHandle, ids: &[i64]) {
+    {
+        let state = app.state::<AppState>();
+        for &id in ids {
+            let _ = reload_one_for_state(&state, id);
+        }
+        optimize_fts(&state);
     }
     let _ = app.emit("sources-updated", ());
 }
