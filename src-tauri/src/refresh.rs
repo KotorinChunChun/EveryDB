@@ -43,6 +43,10 @@ pub fn reload_one(conn: &mut Connection, id: i64) -> anyhow::Result<()> {
 /// AppState経由で1ソースを再取得する。DBロックは設定取得・結果保存の短時間だけ保持し、
 /// connector.fetch() によるファイル/ネットワークI/Oは必ずロック外で実行する。
 pub fn reload_one_for_state(state: &AppState, id: i64) -> anyhow::Result<()> {
+    let _reload_guard = match state.try_begin_reload(id) {
+        Some(guard) => guard,
+        None => return Ok(()), // 同じsourceの更新中。既存の処理を待たせず重複取得を避ける。
+    };
     let connector = {
         let conn = state
             .db

@@ -1,5 +1,6 @@
 //! Tauriコマンドが共有するアプリケーション状態。
 
+use std::collections::HashSet;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -14,6 +15,8 @@ pub struct AppState {
     unlocked_until: Mutex<Option<Instant>>,
     /// 実行中の Box OAuth 認可待ちの取消フラグ（同時に1件だけ想定。§7-19）。
     pub(crate) box_oauth_cancel: Mutex<Option<Arc<AtomicBool>>>,
+    /// 同一sourceに対する重複reloadを抑止するための実行中ID。
+    reloading_source_ids: Mutex<HashSet<i64>>,
 }
 
 impl AppState {
@@ -22,6 +25,7 @@ impl AppState {
             db: Mutex::new(conn),
             unlocked_until: Mutex::new(None),
             box_oauth_cancel: Mutex::new(None),
+            reloading_source_ids: Mutex::new(HashSet::new()),
         }
     }
 
@@ -32,9 +36,51 @@ impl AppState {
             .unwrap_or(false)
     }
 
+    /// sourceが未実行ならreload枠を確保する。戻り値をdropすると必ず枠を解放する。
+    pub(crate) fn try_begin_reload(&self, source_id: i64) -> Option<ReloadGuard<'_>> {
+        let mut ids = self.reloading_source_ids.lock().ok()?;
+        if !ids.insert(source_id) {
+            return None;
+        }
+        Some(ReloadGuard {
+            state: self,
+            source_id,
+        })
+    }
+
     pub(crate) fn unlock(&self) {
         if let Ok(mut g) = self.unlocked_until.lock() {
             *g = Some(Instant::now() + UNLOCK_DURATION);
         }
+    }
+}
+
+pub(crate) struct ReloadGuard<'a> {
+    state: &'a AppState,
+    source_id: i64,
+}
+
+impl Drop for ReloadGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut ids) = self.state.reloading_source_ids.lock() {
+            ids.remove(&self.source_id);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reload_guard_suppresses_only_the_same_source_until_released() {
+        let state = AppState::new(Connection::open_in_memory().unwrap());
+        let first = state
+            .try_begin_reload(10)
+            .expect("first reload must acquire the guard");
+        assert!(state.try_begin_reload(10).is_none());
+        assert!(state.try_begin_reload(11).is_some());
+        drop(first);
+        assert!(state.try_begin_reload(10).is_some());
     }
 }
