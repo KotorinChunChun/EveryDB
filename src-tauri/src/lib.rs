@@ -1,6 +1,7 @@
 pub mod app_state;
 pub mod box_oauth;
 pub mod browse;
+pub mod browse_commands;
 mod commands;
 pub mod connectors;
 pub mod credentials;
@@ -132,23 +133,23 @@ pub fn run() {
             commands::preview_source_fields,
             commands::preview_source_fields_by_id,
             commands::add_source_from_sibling,
-            commands::browse_notion_databases,
-            commands::browse_notion_databases_for_source,
-            commands::browse_airtable_bases,
-            commands::browse_airtable_bases_for_source,
-            commands::browse_airtable_tables,
-            commands::browse_airtable_tables_for_source,
-            commands::browse_graph_site_resources_for_source,
-            commands::browse_graph_sites,
-            commands::browse_graph_teams,
-            commands::browse_graph_team_site_url,
-            commands::browse_graph_site_resources,
-            commands::browse_excel_sheets,
-            commands::browse_excel_tables,
-            commands::browse_excel_grid,
-            commands::browse_sqlite_tables,
-            commands::browse_accdb_tables,
-            commands::browse_browser_profiles,
+            browse_commands::browse_notion_databases,
+            browse_commands::browse_notion_databases_for_source,
+            browse_commands::browse_airtable_bases,
+            browse_commands::browse_airtable_bases_for_source,
+            browse_commands::browse_airtable_tables,
+            browse_commands::browse_airtable_tables_for_source,
+            browse_commands::browse_graph_site_resources_for_source,
+            browse_commands::browse_graph_sites,
+            browse_commands::browse_graph_teams,
+            browse_commands::browse_graph_team_site_url,
+            browse_commands::browse_graph_site_resources,
+            browse_commands::browse_excel_sheets,
+            browse_commands::browse_excel_tables,
+            browse_commands::browse_excel_grid,
+            browse_commands::browse_sqlite_tables,
+            browse_commands::browse_accdb_tables,
+            browse_commands::browse_browser_profiles,
             commands::list_credentials,
             commands::add_credential,
             commands::update_credential,
