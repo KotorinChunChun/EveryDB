@@ -7,7 +7,10 @@ use std::io::Read;
 use crate::graph::GraphClient;
 use crate::model::Record;
 #[cfg(test)]
-use cloud::{airtable_value_to_string, ical_unescape, ical_unfold, parse_ical_datetime};
+use cloud::{
+    airtable_value_to_string, ical_unescape, ical_unfold, notion_page_to_record,
+    notion_prop_to_string, parse_ical_datetime,
+};
 
 mod common;
 use common::{make_record, make_record_with_row, CommonCfg};
@@ -19,7 +22,7 @@ use local::{
 mod cloud;
 mod database;
 mod public_data;
-use cloud::{AirtableConnector, IcalConnector};
+use cloud::{AirtableConnector, IcalConnector, NotionConnector};
 use database::{MysqlConnector, PostgresConnector};
 
 use public_data::{
@@ -1601,224 +1604,6 @@ mod tests {
         );
         println!("Airtable から {} 件取得", recs.len());
         assert!(!recs.is_empty());
-    }
-}
-
-// ---- Notion データベース（要件 M6 / REST + インテグレーショントークン）----
-#[derive(Deserialize)]
-struct NotionConnector {
-    token: String,
-    database_id: String,
-    #[serde(flatten)]
-    common: CommonCfg,
-}
-
-const NOTION_VERSION: &str = "2022-06-28";
-
-/// Notion のプロパティ値 1 個を表示用文字列へ変換する（型ごとに分岐）。
-fn notion_prop_to_string(p: &Value) -> String {
-    let t = p.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    let rich = |arr: Option<&Value>| -> String {
-        arr.and_then(|a| a.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|x| x.get("plain_text").and_then(|v| v.as_str()))
-                    .collect::<Vec<_>>()
-                    .join("")
-            })
-            .unwrap_or_default()
-    };
-    match t {
-        "title" | "rich_text" => rich(p.get(t)),
-        "number" => match p.get("number") {
-            Some(Value::Number(n)) => n.to_string(),
-            _ => String::new(),
-        },
-        "select" | "status" => p
-            .get(t)
-            .and_then(|s| s.get("name"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        "multi_select" => p
-            .get("multi_select")
-            .and_then(|a| a.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|x| x.get("name").and_then(|v| v.as_str()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            })
-            .unwrap_or_default(),
-        "date" => {
-            let d = p.get("date");
-            let start = d
-                .and_then(|x| x.get("start"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let end = d.and_then(|x| x.get("end")).and_then(|v| v.as_str());
-            match end {
-                Some(e) if !e.is_empty() => format!("{start} ~ {e}"),
-                _ => start.to_string(),
-            }
-        }
-        "checkbox" => match p.get("checkbox").and_then(|v| v.as_bool()) {
-            Some(true) => "✓".to_string(),
-            _ => String::new(),
-        },
-        "url" | "email" | "phone_number" | "created_time" | "last_edited_time" => {
-            p.get(t).and_then(|v| v.as_str()).unwrap_or("").to_string()
-        }
-        "people" => p
-            .get("people")
-            .and_then(|a| a.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|x| x.get("name").and_then(|v| v.as_str()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            })
-            .unwrap_or_default(),
-        "files" => p
-            .get("files")
-            .and_then(|a| a.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|x| x.get("name").and_then(|v| v.as_str()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            })
-            .unwrap_or_default(),
-        "formula" => {
-            let f = p.get("formula");
-            let ft = f
-                .and_then(|x| x.get("type"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            match ft {
-                "string" => f
-                    .and_then(|x| x.get("string"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                "number" => f
-                    .and_then(|x| x.get("number"))
-                    .map(|v| v.to_string())
-                    .unwrap_or_default(),
-                "boolean" => match f.and_then(|x| x.get("boolean")).and_then(|v| v.as_bool()) {
-                    Some(true) => "✓".to_string(),
-                    _ => String::new(),
-                },
-                "date" => f
-                    .and_then(|x| x.get("date"))
-                    .and_then(|x| x.get("start"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                _ => String::new(),
-            }
-        }
-        "relation" => {
-            let n = p
-                .get("relation")
-                .and_then(|a| a.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
-            if n > 0 {
-                format!("{n} 件")
-            } else {
-                String::new()
-            }
-        }
-        "unique_id" => {
-            let num = p.get("unique_id").and_then(|x| x.get("number"));
-            let prefix = p
-                .get("unique_id")
-                .and_then(|x| x.get("prefix"))
-                .and_then(|v| v.as_str());
-            match (prefix, num) {
-                (Some(pre), Some(n)) => format!("{pre}-{n}"),
-                (None, Some(n)) => n.to_string(),
-                _ => String::new(),
-            }
-        }
-        _ => String::new(),
-    }
-}
-
-/// Notion のページ 1 件（properties + url）を共通 Record へ正規化する。
-fn notion_page_to_record(page: &Value, common: &CommonCfg) -> Record {
-    let page_url = page.get("url").and_then(|v| v.as_str()).unwrap_or("");
-    let props = page.get("properties").and_then(|v| v.as_object());
-    let mut pairs: Vec<(String, String)> = Vec::new();
-    if let Some(props) = props {
-        for (name, p) in props {
-            pairs.push((name.clone(), notion_prop_to_string(p)));
-        }
-    }
-    let mut rec = make_record(pairs, page_url, common);
-    // label 未指定なら title 型プロパティを主見出しにする（Notion 特有）。
-    if common.label_column.is_none() {
-        if let Some(props) = props {
-            for (_name, p) in props {
-                if p.get("type").and_then(|v| v.as_str()) == Some("title") {
-                    rec.label = Some(notion_prop_to_string(p));
-                    break;
-                }
-            }
-        }
-    }
-    rec
-}
-
-impl Connector for NotionConnector {
-    fn fetch(&self) -> Result<Vec<Record>> {
-        let url = format!(
-            "https://api.notion.com/v1/databases/{}/query",
-            self.database_id
-        );
-        let mut out = Vec::new();
-        let mut start_cursor: Option<String> = None;
-
-        loop {
-            let mut body = serde_json::json!({ "page_size": 100 });
-            if let Some(c) = &start_cursor {
-                body["start_cursor"] = Value::String(c.clone());
-            }
-            let resp = ureq::post(&url)
-                .set("Authorization", &format!("Bearer {}", self.token))
-                .set("Notion-Version", NOTION_VERSION)
-                .set("Content-Type", "application/json")
-                .send_json(body);
-
-            let value: Value = match resp {
-                Ok(r) => r.into_json()?,
-                Err(ureq::Error::Status(code, r)) => {
-                    let msg = r.into_string().unwrap_or_default();
-                    return Err(anyhow!("Notion API エラー {code}: {msg}"));
-                }
-                Err(e) => return Err(anyhow!("Notion への接続に失敗: {e}")),
-            };
-
-            if let Some(results) = value.get("results").and_then(|v| v.as_array()) {
-                for page in results {
-                    out.push(notion_page_to_record(page, &self.common));
-                }
-            }
-
-            let has_more = value
-                .get("has_more")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            start_cursor = value
-                .get("next_cursor")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            if !has_more || start_cursor.is_none() {
-                break;
-            }
-        }
-        Ok(out)
     }
 }
 
