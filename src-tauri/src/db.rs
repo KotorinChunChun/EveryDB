@@ -60,28 +60,12 @@ mod tests {
         (conn, sid)
     }
 
+    const LEGACY_CACHE_V1_FIXTURE: &str = include_str!("../tests/fixtures/legacy_cache_v1.sql");
+
     fn create_legacy_fixture(path: &Path) {
         let conn = Connection::open(path).unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE sources (
-                id INTEGER PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL,
-                config_json TEXT NOT NULL, refresh_interval INTEGER NOT NULL DEFAULT 3600,
-                status TEXT, last_success_at TEXT, last_error TEXT
-            );
-            CREATE TABLE records (
-                id INTEGER PRIMARY KEY, source_id INTEGER NOT NULL, label TEXT,
-                open_ref TEXT, fields_json TEXT NOT NULL, search_text TEXT NOT NULL
-            );
-            INSERT INTO sources(id, type, name, config_json, refresh_interval)
-              VALUES(7, 'csv', '移行前ソース', '{"path":"C:\\legacy.csv"}', 900);
-            INSERT INTO records(source_id, label, open_ref, fields_json, search_text)
-              VALUES(7, '移行前レコード', 'file:///C:/legacy.csv', '{"name":"移行前"}', '移行前');
-            "#,
-        )
-        .unwrap();
+        conn.execute_batch(LEGACY_CACHE_V1_FIXTURE).unwrap();
     }
-
     fn temporary_database_path(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -96,22 +80,7 @@ mod tests {
     #[test]
     fn migrates_legacy_fixture_without_losing_sources_or_records() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE sources (
-                id INTEGER PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL,
-                config_json TEXT NOT NULL, refresh_interval INTEGER NOT NULL DEFAULT 3600,
-                status TEXT, last_success_at TEXT, last_error TEXT
-            );
-            CREATE TABLE records (
-                id INTEGER PRIMARY KEY, source_id INTEGER NOT NULL, label TEXT,
-                open_ref TEXT, fields_json TEXT NOT NULL, search_text TEXT NOT NULL
-            );
-            INSERT INTO sources(id, type, name, config_json) VALUES(7, 'csv', '移行前ソース', '{"path":"C:\\legacy.csv"}');
-            INSERT INTO records(source_id, label, fields_json, search_text) VALUES(7, '移行前レコード', '{"name":"移行前"}', '移行前');
-            "#,
-        )
-        .unwrap();
+        conn.execute_batch(LEGACY_CACHE_V1_FIXTURE).unwrap();
 
         init_schema(&conn).unwrap();
 
