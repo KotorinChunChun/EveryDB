@@ -2,9 +2,11 @@
 
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::common::{make_record, CommonCfg};
 use super::Connector;
+use crate::connectors::urlencoding_light;
 use crate::model::Record;
 // ---- Google カレンダー / iCal（公開 .ics URL。認証不要）----
 pub(crate) fn ical_unescape(s: &str) -> String {
@@ -122,6 +124,109 @@ impl Connector for IcalConnector {
                         map.insert(key, value);
                     }
                 }
+            }
+        }
+        Ok(out)
+    }
+}
+
+// ---- Airtable（REST API + Personal Access Token）----
+pub(crate) fn airtable_value_to_string(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Array(a) => a
+            .iter()
+            .map(|item| match item {
+                Value::String(s) => s.clone(),
+                Value::Object(o) => o
+                    .get("filename")
+                    .or_else(|| o.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                other => airtable_value_to_string(other),
+            })
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(", "),
+        _ => String::new(),
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct AirtableConnector {
+    token: String,
+    base_id: String,
+    /// テーブルの ID(tbl...) または名前。
+    table: String,
+    /// ビュー ID/名前（任意。指定するとそのビューの絞り込み/並び順が反映される）。
+    #[serde(default)]
+    view: Option<String>,
+    #[serde(flatten)]
+    common: CommonCfg,
+}
+
+impl Connector for AirtableConnector {
+    fn fetch(&self) -> Result<Vec<Record>> {
+        let mut out = Vec::new();
+        let mut offset: Option<String> = None;
+        loop {
+            let mut url = format!(
+                "https://api.airtable.com/v0/{}/{}?pageSize=100",
+                urlencoding_light(&self.base_id),
+                urlencoding_light(&self.table)
+            );
+            if let Some(v) = &self.view {
+                url.push_str(&format!("&view={}", urlencoding_light(v)));
+            }
+            if let Some(o) = &offset {
+                url.push_str(&format!("&offset={}", urlencoding_light(o)));
+            }
+            let resp = ureq::get(&url)
+                .set("Authorization", &format!("Bearer {}", self.token))
+                .call();
+            let body: Value = match resp {
+                Ok(r) => r.into_json()?,
+                Err(ureq::Error::Status(code, r)) => {
+                    return Err(anyhow!(
+                        "Airtable API エラー {code}: {}",
+                        r.into_string().unwrap_or_default()
+                    ))
+                }
+                Err(e) => return Err(anyhow!("Airtable への接続に失敗: {e}")),
+            };
+            if let Some(records) = body.get("records").and_then(|v| v.as_array()) {
+                for rec in records {
+                    let id = rec
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let mut pairs: Vec<(String, String)> = rec
+                        .get("fields")
+                        .and_then(|v| v.as_object())
+                        .map(|o| {
+                            o.iter()
+                                .map(|(k, v)| (k.clone(), airtable_value_to_string(v)))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    pairs.push(("レコードID".to_string(), id.clone()));
+                    let open_ref = format!(
+                        "https://airtable.com/{}/{}/{}",
+                        self.base_id, self.table, id
+                    );
+                    out.push(make_record(pairs, &open_ref, &self.common));
+                }
+            }
+            offset = body
+                .get("offset")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            if offset.is_none() {
+                break;
             }
         }
         Ok(out)
