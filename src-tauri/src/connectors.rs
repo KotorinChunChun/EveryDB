@@ -22,7 +22,9 @@ use local::{
 mod cloud;
 mod database;
 mod public_data;
-use cloud::{AirtableConnector, GoogleSheetsConnector, IcalConnector, NotionConnector};
+use cloud::{
+    AirtableConnector, BoxConnector, GoogleSheetsConnector, IcalConnector, NotionConnector,
+};
 use database::{MysqlConnector, PostgresConnector};
 
 use public_data::{
@@ -2752,132 +2754,5 @@ impl BrowserDownloadsConnector {
             out.push(make_record(pairs, &dest_path, &self.common));
         }
         Ok(out)
-    }
-}
-
-// ---- Box（OAuth 2.0。要件: クラウドストレージ系。§7-17 個人プランは Client Credentials
-//      Grant が使えないため、access_token は commands::credentials::resolve_credentials 側で
-//      Box にログイン済みの refresh_token から解決済みのものがここに渡ってくる）----
-#[derive(Deserialize)]
-struct BoxConnector {
-    access_token: String,
-    /// 走査開始フォルダ ID（省略時はルート "0"）。
-    #[serde(default = "default_box_folder")]
-    folder_id: String,
-    #[serde(flatten)]
-    common: CommonCfg,
-}
-fn default_box_folder() -> String {
-    "0".to_string()
-}
-
-impl Connector for BoxConnector {
-    fn fetch(&self) -> Result<Vec<Record>> {
-        let mut out = Vec::new();
-        self.walk_box_folder(&self.access_token, &self.folder_id, "", &mut out)?;
-        Ok(out)
-    }
-}
-
-impl BoxConnector {
-    fn walk_box_folder(
-        &self,
-        token: &str,
-        folder_id: &str,
-        path: &str,
-        out: &mut Vec<Record>,
-    ) -> Result<()> {
-        let mut offset = 0u32;
-        loop {
-            let url = format!(
-                "https://api.box.com/2.0/folders/{folder_id}/items?fields=name,type,size,modified_at,path_collection&limit=100&offset={offset}"
-            );
-            let resp = ureq::get(&url)
-                .set("Authorization", &format!("Bearer {token}"))
-                .call();
-            let body: Value = match resp {
-                Ok(r) => r.into_json()?,
-                Err(ureq::Error::Status(code, r)) => {
-                    return Err(anyhow!(
-                        "Box API {code}: {}",
-                        r.into_string().unwrap_or_default()
-                    ))
-                }
-                Err(e) => return Err(anyhow!("Box への接続に失敗: {e}")),
-            };
-            let entries = body
-                .get("entries")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-            if entries.is_empty() {
-                break;
-            }
-            for entry in &entries {
-                let name = entry
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let item_type = entry.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                let id = entry
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let size = entry
-                    .get("size")
-                    .map(json_scalar_to_string)
-                    .unwrap_or_default();
-                let modified = entry
-                    .get("modified_at")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let web_url = if item_type == "folder" {
-                    format!("https://app.box.com/folder/{id}")
-                } else {
-                    format!("https://app.box.com/file/{id}")
-                };
-                let pairs = vec![
-                    ("名前".to_string(), name.clone()),
-                    (
-                        "種類".to_string(),
-                        if item_type == "folder" {
-                            "フォルダ"
-                        } else {
-                            "ファイル"
-                        }
-                        .to_string(),
-                    ),
-                    ("サイズ".to_string(), size),
-                    ("更新日時".to_string(), modified),
-                    ("パス".to_string(), path.to_string()),
-                ];
-                let mut rec = make_record(pairs, &web_url, &self.common);
-                if self.common.label_column.is_none() {
-                    rec.label = Some(name.clone());
-                }
-                out.push(rec);
-
-                if item_type == "folder" {
-                    let new_path = if path.is_empty() {
-                        name.clone()
-                    } else {
-                        format!("{path}/{name}")
-                    };
-                    self.walk_box_folder(token, &id, &new_path, out)?;
-                }
-            }
-            let total = body
-                .get("total_count")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32;
-            offset += entries.len() as u32;
-            if offset >= total {
-                break;
-            }
-        }
-        Ok(())
     }
 }
