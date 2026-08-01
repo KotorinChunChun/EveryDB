@@ -4,8 +4,10 @@ import {
   buildGridColumns,
   buildSourceFieldIndex,
   gridCellText,
+  gridColumnWidth,
   nextSortState,
   sortedGridRows,
+  resizedGridColumnWidth,
   toRawFieldNames,
 } from "./data";
 
@@ -14,6 +16,13 @@ function row(id: number, name: string, fields: Record<string, string>, label: st
 }
 
 describe("grid data helpers", () => {
+  it("uses system column defaults and clamps resized widths", () => {
+    expect(gridColumnWidth("#", {}, 200)).toBe(50);
+    expect(gridColumnWidth("元行", {}, 200)).toBe(55);
+    expect(gridColumnWidth("氏名", { 氏名: 280 }, 200)).toBe(280);
+    expect(resizedGridColumnWidth(80, -100)).toBe(40);
+    expect(resizedGridColumnWidth(80, 20)).toBe(100);
+  });
   it("keeps configured field order and appends newly seen fields", () => {
     const rows = [row(1, "A", { name: "one", age: "10" }), row(2, "B", { city: "Tokyo", name: "two" })];
     expect(buildGridColumns(rows, ["city", "missing", "name"])).toEqual([

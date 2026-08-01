@@ -35,9 +35,11 @@ import {
   buildGridColumns,
   buildSourceFieldIndex,
   gridCellText,
+  gridColumnWidth,
   nextSortState,
   PINNED_GRID_COLUMNS as PINNED_COLUMNS,
   sortedGridRows,
+  resizedGridColumnWidth,
   sortHintFor as gridSortHint,
   toRawFieldNames,
 } from "./features/grid/data";
@@ -1162,11 +1164,8 @@ document.addEventListener("click", (ev) => {
 // 列幅（列名 -> px）。未設定の列は DEFAULT_COL_W を使う。検索のたびに columns は再構築されるが
 // 列名をキーにしているため、同名列の幅はセッション中は保持される。
 const columnWidths: Record<string, number> = {};
-const MIN_COL_W = 40;
 function colWidth(name: string): number {
-  if (name === "#") return columnWidths[name] ?? 50;
-  if (name === "元行") return columnWidths[name] ?? 55;
-  return columnWidths[name] ?? COL_W;
+  return gridColumnWidth(name, columnWidths, COL_W);
 }
 function totalGridWidth(): number {
   return columns.reduce((sum, c) => sum + colWidth(c), 0);
@@ -1180,7 +1179,7 @@ function startColumnResize(ev: MouseEvent, colName: string, handle: HTMLElement)
   handle.classList.add("dragging");
   document.body.style.cursor = "col-resize";
   function onMove(e: MouseEvent) {
-    columnWidths[colName] = Math.max(MIN_COL_W, startW + (e.clientX - startX));
+    columnWidths[colName] = resizedGridColumnWidth(startW, e.clientX - startX);
     renderHead();
     renderRows();
   }

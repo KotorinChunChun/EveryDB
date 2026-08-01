@@ -2,6 +2,19 @@ import type { Row } from "../../shared/types";
 
 export const PINNED_GRID_COLUMNS = new Set(["#", "テーブル", "元行", "見出し"]);
 export type SortState = { column: string; dir: "asc" | "desc" } | null;
+export const MIN_GRID_COLUMN_WIDTH = 40;
+
+/** 保存済み幅または列種別ごとの既定幅を返す。 */
+export function gridColumnWidth(name: string, widths: Readonly<Record<string, number>>, defaultWidth: number): number {
+  if (name === "#") return widths[name] ?? 50;
+  if (name === "元行") return widths[name] ?? 55;
+  return widths[name] ?? defaultWidth;
+}
+
+/** ドラッグ開始時の幅とポインタ移動量から、下限を守った列幅を計算する。 */
+export function resizedGridColumnWidth(startWidth: number, deltaX: number, minWidth = MIN_GRID_COLUMN_WIDTH): number {
+  return Math.max(minWidth, startWidth + deltaX);
+}
 
 const sortCollator = new Intl.Collator("ja", { numeric: true, sensitivity: "base" });
 
