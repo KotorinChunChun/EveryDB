@@ -14,60 +14,7 @@ import {
   STORAGE_KEY_SELECTED_SOURCES,
 } from "./shared/storage";
 import { getCellUrl, parseAirtableUrl, parseGoogleSheetsUrl, parseNotionUrl, parseSharePointUrl } from "./shared/urls";
-
-// ==== 型 ====
-interface SourceInfo {
-  id: number;
-  type_: string;
-  name: string;
-  refresh_interval: number;
-  status: string | null;
-  last_success_at: string | null;
-  last_error: string | null;
-  record_count: number;
-  parent: string;
-}
-interface Row {
-  source_id: number;
-  source_name: string;
-  label: string | null;
-  open_ref: string | null;
-  row_number?: number | null;
-  fields: Record<string, string>;
-}
-interface SearchResponse {
-  seq: number;
-  rows: Row[];
-  truncated: boolean;
-}
-interface WinAuthStatus {
-  available: boolean;
-  unlocked: boolean;
-}
-interface SourceDetail {
-  type_: string;
-  name: string;
-  refresh_interval: number;
-  config: Record<string, unknown>;
-  unlocked: boolean;
-  has_secret: boolean;
-  /** フィールドキー → リンク中の保存済みトークンの id/ラベル（該当なしのキーは含まれない）。 */
-  linked_credentials: Record<string, { id: number; label: string }>;
-}
-
-/** 保存済みトークンのスコープ。関連フィールドをひとまとめにする単位（sharedKeysFor と同じ発想）。 */
-type CredentialScope = "notion" | "airtable" | "graph" | "box" | "postgres" | "mysql";
-interface CredentialUsage {
-  source_id: number;
-  source_name: string;
-}
-interface CredentialSummary {
-  id: number;
-  scope: string;
-  label: string;
-  created_at: string;
-  used_by: CredentialUsage[];
-}
+import type { CredentialScope, CredentialSummary, Row, SearchResponse, SourceDetail, SourceInfo, WinAuthStatus } from "./shared/types";
 
 // ==== 状態 ====
 let sources: SourceInfo[] = [];
