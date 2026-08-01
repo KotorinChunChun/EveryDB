@@ -12,6 +12,7 @@ pub mod model;
 pub mod opener;
 pub mod refresh;
 pub mod search_commands;
+pub mod search_service;
 pub mod secret;
 pub mod settings;
 pub mod source_commands;
