@@ -16,7 +16,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 const REDIRECT_PORT: u16 = 58913;
 const REDIRECT_PATH: &str = "/box-callback";
@@ -25,14 +25,12 @@ const AUTHORIZE_TIMEOUT: Duration = Duration::from_secs(180);
 /// 登録してもらう redirect_uri（トークン管理画面のヘルプ文言・手順書と一致させること）。
 pub const REDIRECT_URI: &str = "http://localhost:58913/box-callback";
 
-/// 簡易な CSRF 対策用のランダム文字列。ローカルループバックのみで完結する単発フローのため
-/// 暗号強度は不要（他プロセスから同じポートへ横取りされない限り漏れようがない）。
-fn random_state() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("{nanos:x}{:x}", std::process::id())
+/// OAuth 2.0 の CSRF state。OSの暗号学的乱数から256-bitを生成し、URLに安全な16進文字列へする。
+fn random_state() -> Result<String> {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes)
+        .map_err(|error| anyhow!("OAuth stateの乱数生成に失敗しました: {error}"))?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 /// 固定ポートのループバックへバインドする。使用中の場合は分かりやすいエラーを返す。
@@ -240,7 +238,7 @@ pub fn authorize_interactive(
 ) -> Result<(String, String)> {
     use tauri_plugin_opener::OpenerExt;
     let listener = bind_loopback()?;
-    let state = random_state();
+    let state = random_state()?;
     let url = authorize_url(client_id, REDIRECT_URI, &state);
     app.opener()
         .open_url(url, None::<&str>)
@@ -293,6 +291,15 @@ pub fn client_credentials_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn random_state_is_url_safe_and_unpredictable() {
+        let first = random_state().unwrap();
+        let second = random_state().unwrap();
+        assert_eq!(first.len(), 64);
+        assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+    }
 
     #[test]
     fn authorize_url_encodes_and_includes_required_params() {

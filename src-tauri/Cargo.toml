@@ -48,6 +48,7 @@ native-tls = "0.2"
 mysql = "28.0.0"
 zip = { version = "4.2.0", default-features = false, features = ["deflate"] }
 scraper = "0.27.0"
+getrandom = "0.3"
 
 [dev-dependencies]
 rust_xlsxwriter = "0.79"
