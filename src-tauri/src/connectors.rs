@@ -647,8 +647,8 @@ fn read_autofilter_ref(path: &str, sheet_name: &str) -> Option<((u32, u32), (u32
                 if id == rid {
                     if let Some(target) = extract_xml_attr(line, "Target") {
                         // Target は "worksheets/sheet1.xml" のような相対パス
-                        let full = if target.starts_with('/') {
-                            target[1..].to_string()
+                        let full = if let Some(stripped) = target.strip_prefix('/') {
+                            stripped.to_string()
                         } else {
                             format!("xl/{target}")
                         };

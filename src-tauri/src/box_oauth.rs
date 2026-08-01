@@ -197,7 +197,7 @@ fn handle_callback_connection(
     };
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.as_bytes().len(),
+        body.len(),
         body
     );
     let _ = stream.write_all(response.as_bytes());
