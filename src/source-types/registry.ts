@@ -6,6 +6,7 @@ export type SourceCategory = "local" | "microsoft" | "cloud" | "database" | "pub
 
 export interface SourceTypeMetadata {
   id: string;
+  label: string;
   category: SourceCategory;
   parentKind: ParentKind;
   guide: string;

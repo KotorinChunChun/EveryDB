@@ -10,6 +10,11 @@ describe("source type forms", () => {
     expect(new Set(formIds).size).toBe(formIds.length);
     expect([...formIds].sort()).toEqual([...manifestIds].sort());
     expect(TYPE_DEFS.every((definition) => definition.label.trim().length > 0)).toBe(true);
+    expect(
+      TYPE_DEFS.every((definition) =>
+        definition.label === SOURCE_TYPE_METADATA.find((metadata) => metadata.id === definition.value)!.label,
+      ),
+    ).toBe(true);
   });
 
   it("keeps credential fields aligned with manifest credential scopes", () => {

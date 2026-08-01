@@ -1,20 +1,45 @@
 # データソース一覧と接続手順
 
-| 区分 | 種別 | 主な設定・認証 | 手順書 |
-| --- | --- | --- | --- |
-| ローカル | CSV / SQLite / Access / Excel / フォルダ / IME | ファイルまたはフォルダのパス、必要に応じてテーブル・シート・範囲 | [ローカルファイル](guides/local-files.md) |
-| ローカル | ブラウザ履歴 / ブックマーク / ダウンロード履歴 | ブラウザ種別、検出したプロファイルまたはDBファイルのパス | [ローカルファイル](guides/local-files.md) |
-| Microsoft 365 | Entra ID / Teams / SharePoint / Intune / ライセンス / Outlook / OneDrive / Planner | テナントID、クライアントID、クライアントシークレット、対象サイト・ユーザー等 | [Microsoft 365](guides/microsoft365.md) |
-| クラウド | Notion | Integration Token、データベースID | [Notion](guides/notion.md) |
-| クラウド | Airtable | Personal Access Token、Base/Table/View | [Airtable](guides/airtable.md) |
-| クラウド | Google スプレッドシート | サービスアカウント鍵ファイル、スプレッドシートID、範囲 | [Google Sheets](guides/google-sheets.md) |
-| クラウド | iCal | 公開 `.ics` URL | [iCal](guides/ical.md) |
-| クラウド | Box | OAuth 2.0 または Client Credentials、フォルダID | [Box](guides/box.md) |
-| DB | PostgreSQL | ホスト、DB、テーブル、ユーザー、パスワード、SSL設定 | [PostgreSQL](guides/postgresql.md) |
-| DB | MySQL | ホスト、DB、テーブル、ユーザー、パスワード、TLS設定 | [MySQL](guides/mysql.md) |
-| 公開データ | 郵便番号 / 法人番号 | 自動ダウンロード、または手動で取得したzip/csv | [政府公開データ](guides/gov-data.md) |
-| Web | Webページ / JSON API | URL、HTML表・CSSセレクタ・JSON APIのいずれかの設定 | [Webページ](guides/web-page.md) |
-| 公開データ | PokéAPI | 設定不要 | [PokéAPI](guides/pokeapi.md) |
+この一覧は `shared/source-types.json` を正本としており、文書検査で画面に表示する全種別と同期を確認します。
+
+<!-- source-catalog:start -->
+| 区分 | データソース | 接続手順 |
+| --- | --- | --- |
+| ローカル | CSV ファイル（`csv`） | [local-files](guides/local-files.md) |
+| ローカル | SQLite データベース（`sqlite`） | [local-files](guides/local-files.md) |
+| ローカル | Access (accdb / mdb)（`accdb`） | [local-files](guides/local-files.md) |
+| ローカル | Excel: テーブル(ListObject)（`excel_table`） | [local-files](guides/local-files.md) |
+| ローカル | Excel: シート(セル範囲)（`excel_range`） | [local-files](guides/local-files.md) |
+| ローカル | Excel: シート名一覧（`excel_sheets`） | [local-files](guides/local-files.md) |
+| ローカル | フォルダのファイル一覧（`folder`） | [local-files](guides/local-files.md) |
+| ローカル | IME辞書: Microsoft IME（`ime_msime`） | [local-files](guides/local-files.md) |
+| ローカル | IME辞書: Google 日本語入力（`ime_google`） | [local-files](guides/local-files.md) |
+| クラウド | Notion データベース（`notion`） | [notion](guides/notion.md) |
+| Microsoft 365 | EntraID ユーザー一覧（`graph_entra_users`） | [microsoft365](guides/microsoft365.md) |
+| Microsoft 365 | EntraID グループ一覧（`graph_entra_groups`） | [microsoft365](guides/microsoft365.md) |
+| Microsoft 365 | Teams チーム一覧（`graph_teams`） | [microsoft365](guides/microsoft365.md) |
+| Microsoft 365 | SharePoint リスト（`graph_sharepoint_list`） | [microsoft365](guides/microsoft365.md) |
+| Microsoft 365 | SharePoint ドキュメントライブラリ（`graph_sharepoint_library`） | [microsoft365](guides/microsoft365.md) |
+| Microsoft 365 | EntraID デバイス一覧（`graph_entra_devices`） | [microsoft365](guides/microsoft365.md) |
+| Microsoft 365 | Intune デバイス一覧（`graph_intune_devices`） | [microsoft365](guides/microsoft365.md) |
+| Microsoft 365 | Microsoft 365 ライセンス一覧（`graph_licenses`） | [microsoft365](guides/microsoft365.md) |
+| Microsoft 365 | Outlook 予定表（`graph_calendar`） | [microsoft365](guides/microsoft365.md) |
+| Microsoft 365 | OneDrive（`graph_onedrive`） | [microsoft365](guides/microsoft365.md) |
+| Microsoft 365 | Teams タスク & Planner（`graph_planner`） | [microsoft365](guides/microsoft365.md) |
+| ローカル | ブラウザ: 閲覧履歴（`browser_history`） | [local-files](guides/local-files.md) |
+| ローカル | ブラウザ: ブックマーク（`browser_bookmarks`） | [local-files](guides/local-files.md) |
+| ローカル | ブラウザ: ダウンロード履歴（`browser_downloads`） | [local-files](guides/local-files.md) |
+| クラウド | Google スプレッドシート（`google_sheets`） | [google-sheets](guides/google-sheets.md) |
+| クラウド | Google カレンダー / iCal (.ics)（`ical_calendar`） | [ical](guides/ical.md) |
+| クラウド | Airtable（`airtable`） | [airtable](guides/airtable.md) |
+| データベース | PostgreSQL（`postgres`） | [postgresql](guides/postgresql.md) |
+| データベース | MySQL（`mysql`） | [mysql](guides/mysql.md) |
+| クラウド | Box (ファイル一覧)（`box_files`） | [box](guides/box.md) |
+| 公開データ | 郵便番号データベース(日本郵便)（`postal_code`） | [gov-data](guides/gov-data.md) |
+| 公開データ | 法人番号 全件データ(国税庁)（`corporate_number`） | [gov-data](guides/gov-data.md) |
+| Web | WEBサイト(HTML表 / CSSセレクタ / JSON API)（`web_page`） | [web-page](guides/web-page.md) |
+| 公開データ | PokéAPI (ポケモン)（`pokeapi`） | [pokeapi](guides/pokeapi.md) |
+<!-- source-catalog:end -->
 
 ## 検証レベル
 
