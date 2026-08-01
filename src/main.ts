@@ -46,6 +46,7 @@ import { scrollTopToRevealRow, visibleRowRange } from "./features/grid/viewport"
 import { normalizeRowLimit, presetSourceIds, shouldApplySearchResponse } from "./features/search/state";
 import { renderHistoryPanel, renderPresetPanel } from "./features/search/panels";
 import type { SearchPreset } from "./features/search/panels";
+import { createSearchScheduler } from "./features/search/debounce";
 
 // ==== 状態 ====
 let sources: SourceInfo[] = [];
@@ -1019,11 +1020,8 @@ parentCtxMenu.addEventListener("click", async (ev) => {
 // ============================================================
 // 検索（debounce + seq 競合対策 + 履歴）
 // ============================================================
-let debounceTimer: number | undefined;
-function scheduleSearch() {
-  clearTimeout(debounceTimer);
-  debounceTimer = window.setTimeout(runSearch, 150);
-}
+const searchScheduler = createSearchScheduler(() => { void runSearch(); });
+function scheduleSearch() { searchScheduler.schedule(); }
 
 function currentRowLimit(): number {
   return normalizeRowLimit($<HTMLInputElement>("row-limit").value);
