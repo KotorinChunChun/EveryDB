@@ -4,7 +4,7 @@
 
 1. `shared/source-types.json` へ表示名、カテゴリ、親種別、credentialスコープ、手順書を追加します。
 2. `src/source-types/forms.ts` のフォーム定義へ入力項目を追加します。
-3. `src-tauri/src/connectors.rs` にconnectorとfactory分岐を追加します。
+3. `src-tauri/src/connectors/` の該当責務module（未分割部分は `connectors.rs`）にconnectorを追加し、factory分岐を更新します。
 4. 秘密フィールドがある場合は `secret.rs` と `credentials.rs` の保護・スコープ対応を追加します。
 5. 親グルーピング、browse、テーブルを開く導線、ガイドを確認します。
 6. `npm run docs:check`、フォーム/registryテスト、可能ならモックテストを追加します。
