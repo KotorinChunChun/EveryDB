@@ -10,6 +10,10 @@ describe("URL helpers", () => {
     expect(getCellUrl("www.example.com")).toBe("https://www.example.com");
     expect(getCellUrl("notion://www.notion.so/page")).toBe("notion://www.notion.so/page");
     expect(getCellUrl("javascript:alert(1)")).toBeNull();
+    expect(getCellUrl("https:example.com")).toBeNull();
+    expect(getCellUrl("file:C:/tmp/report.xlsx")).toBeNull();
+    expect(getCellUrl("mailto:")).toBeNull();
+    expect(getCellUrl("mailto:user@example.com")).toBe("mailto:user@example.com");
   });
 
   it("extracts IDs from service URLs", () => {

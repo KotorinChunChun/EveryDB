@@ -4,14 +4,17 @@ export interface AirtableUrlInfo {
   viewId?: string;
 }
 
-/** セル内容から安全に opener へ渡せるURLだけを返す。 */
+/**
+ * セル内容から opener へ渡せる URL だけを返す。
+ * Rust 側の `open_ref` と同じく、authority を要する scheme は `://`、
+ * mailto は空白を含まない宛先を必須にする。未知・不完全な scheme は返さない。
+ */
 export function getCellUrl(text: string): string | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
-  if (/^(https?|file|notion|ftp|mailto|teams|obsidian):/i.test(trimmed)) {
-    return trimmed;
-  }
-  return /^www\./i.test(trimmed) ? `https://${trimmed}` : null;
+  if (/^(https?|file|notion|ftp|teams|obsidian):\/\/\S+$/i.test(trimmed)) return trimmed;
+  if (/^mailto:[^\s]+$/i.test(trimmed)) return trimmed;
+  return /^www\.\S+$/i.test(trimmed) ? `https://${trimmed}` : null;
 }
 
 export function parseAirtableUrl(urlText: string): AirtableUrlInfo | null {
