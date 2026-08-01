@@ -3,7 +3,7 @@ pub use crate::app_state::AppState;
 use tauri::State;
 
 use crate::model::SourceInfo;
-use crate::refresh::{optimize_fts, reload_one_for_state};
+use crate::refresh::{optimize_fts, reload_many_for_state, reload_one_for_state, ReloadSummary};
 use crate::{db, secret};
 
 fn err_to_string<E: std::fmt::Display>(e: E) -> String {
@@ -231,8 +231,13 @@ pub fn set_refresh_interval(
     db::set_refresh_interval(&conn, id, seconds).map_err(err_to_string)
 }
 
+/// 指定ソースを再取得し、個別成功・失敗・重複取消を件数とエラー付きで返す。
+/// source_idsが空なら全ソースを対象にする。
 #[tauri::command]
-pub fn reload_sources(state: State<'_, AppState>, source_ids: Vec<i64>) -> Result<(), String> {
+pub fn reload_sources(
+    state: State<'_, AppState>,
+    source_ids: Vec<i64>,
+) -> Result<ReloadSummary, String> {
     let ids = if source_ids.is_empty() {
         let conn = state.db.lock().map_err(|_| "lock poisoned")?;
         db::list_sources(&conn)
@@ -243,11 +248,7 @@ pub fn reload_sources(state: State<'_, AppState>, source_ids: Vec<i64>) -> Resul
     } else {
         source_ids
     };
-    for id in ids {
-        let _ = reload_one_for_state(&state, id); // 個別失敗は status に記録し、続行
-    }
-    optimize_fts(&state);
-    Ok(())
+    Ok(reload_many_for_state(&state, &ids))
 }
 
 #[cfg(test)]

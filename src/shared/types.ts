@@ -59,3 +59,18 @@ export interface CredentialSummary {
   created_at: string;
   used_by: CredentialUsage[];
 }
+export type ReloadOutcome = "success" | "failed" | "cancelled";
+
+export interface ReloadSourceResult {
+  source_id: number;
+  outcome: ReloadOutcome;
+  record_count: number | null;
+  error: string | null;
+}
+
+export interface ReloadSummary {
+  successful: number;
+  failed: number;
+  cancelled: number;
+  results: ReloadSourceResult[];
+}

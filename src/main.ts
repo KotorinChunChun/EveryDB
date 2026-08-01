@@ -14,7 +14,7 @@ import {
   STORAGE_KEY_SELECTED_SOURCES,
 } from "./shared/storage";
 import { getCellUrl, parseAirtableUrl, parseGoogleSheetsUrl, parseNotionUrl, parseSharePointUrl } from "./shared/urls";
-import type { CredentialScope, CredentialSummary, Row, SearchResponse, SourceDetail, SourceInfo, WinAuthStatus } from "./shared/types";
+import type { CredentialScope, CredentialSummary, ReloadSummary, Row, SearchResponse, SourceDetail, SourceInfo, WinAuthStatus } from "./shared/types";
 import { guideNameForType, parentKindForType, representativeTypeForCredentialScope as representativeTypeForScope } from "./source-types/registry";
 import type { ParentKind } from "./source-types/registry";
 import { ENTRA_APPS_URL, NOTION_INTEGRATIONS_URL, TYPE_DEFS } from "./source-types/forms";
@@ -150,6 +150,12 @@ async function loadSources() {
 async function refreshSidebar() {
   sources = await invoke<SourceInfo[]>("list_sources");
   renderSources();
+}
+
+function reloadSummaryMessage(summary: ReloadSummary): string {
+  const counts = `成功 ${summary.successful} 件、失敗 ${summary.failed} 件、取消 ${summary.cancelled} 件`;
+  const firstFailure = summary.results.find((result) => result.outcome === "failed")?.error;
+  return firstFailure ? `リロード完了: ${counts}。${firstFailure}` : `リロード完了: ${counts}`;
 }
 
 let dragSrcId: number | null = null;
@@ -606,7 +612,8 @@ function renderSources() {
       ev.stopPropagation();
       resultInfo.textContent = "リロード中…";
       try {
-        await invoke("reload_sources", { sourceIds: children.map((c) => c.id) });
+        const summary = await invoke<ReloadSummary>("reload_sources", { sourceIds: children.map((c) => c.id) });
+        resultInfo.textContent = reloadSummaryMessage(summary);
       } catch (e) {
         resultInfo.textContent = "リロード失敗: " + String(e);
       }
@@ -655,7 +662,8 @@ function renderSources() {
         makeManageButton("⟳", "配下のテーブルをすべて再読込", async () => {
           resultInfo.textContent = "リロード中…";
           try {
-            await invoke("reload_sources", { sourceIds: children.map((c) => c.id) });
+            const summary = await invoke<ReloadSummary>("reload_sources", { sourceIds: children.map((c) => c.id) });
+        resultInfo.textContent = reloadSummaryMessage(summary);
           } catch (e) {
             resultInfo.textContent = "リロード失敗: " + String(e);
           }
@@ -735,7 +743,8 @@ function renderSources() {
 async function reloadOne(id: number) {
   resultInfo.textContent = "リロード中…";
   try {
-    await invoke("reload_sources", { sourceIds: [id] });
+    const summary = await invoke<ReloadSummary>("reload_sources", { sourceIds: [id] });
+    resultInfo.textContent = reloadSummaryMessage(summary);
   } catch (e) {
     resultInfo.textContent = "リロード失敗: " + String(e);
   }
@@ -1030,7 +1039,8 @@ parentCtxMenu.addEventListener("click", async (ev) => {
     case "reload": {
       resultInfo.textContent = "リロード中…";
       try {
-        await invoke("reload_sources", { sourceIds: children.map((c) => c.id) });
+        const summary = await invoke<ReloadSummary>("reload_sources", { sourceIds: children.map((c) => c.id) });
+        resultInfo.textContent = reloadSummaryMessage(summary);
       } catch (e) {
         resultInfo.textContent = "リロード失敗: " + String(e);
       }
@@ -3227,7 +3237,8 @@ async function reloadAllSources() {
   status.hidden = false;
   resultInfo.textContent = "リロード中…（完了まで操作をお待ちください）";
   try {
-    await invoke("reload_sources", { sourceIds: [] });
+    const summary = await invoke<ReloadSummary>("reload_sources", { sourceIds: [] });
+    resultInfo.textContent = reloadSummaryMessage(summary);
   } catch (e) {
     resultInfo.textContent = "リロード失敗: " + String(e);
   }

@@ -8,6 +8,66 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::app_state::AppState;
 use crate::{connectors, credentials, db};
 
+/// 1ソースのリロード結果。既に同一sourceを更新中の場合は、重複実行せず取消扱いにする。
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReloadOneOutcome {
+    Success { record_count: usize },
+    Cancelled,
+}
+
+/// IPC・トレイ・schedulerで共通利用する、ソース単位のリロード結果。
+#[derive(serde::Serialize)]
+pub struct ReloadSourceResult {
+    pub source_id: i64,
+    /// `success` / `failed` / `cancelled`
+    pub outcome: &'static str,
+    pub record_count: Option<usize>,
+    pub error: Option<String>,
+}
+
+/// まとめてリロードした結果。個別の失敗は全体失敗にせず、呼び出し元へ明示的に返す。
+#[derive(Default, serde::Serialize)]
+pub struct ReloadSummary {
+    pub successful: usize,
+    pub failed: usize,
+    pub cancelled: usize,
+    pub results: Vec<ReloadSourceResult>,
+}
+
+impl ReloadSummary {
+    fn record(&mut self, source_id: i64, result: anyhow::Result<ReloadOneOutcome>) {
+        match result {
+            Ok(ReloadOneOutcome::Success { record_count }) => {
+                self.successful += 1;
+                self.results.push(ReloadSourceResult {
+                    source_id,
+                    outcome: "success",
+                    record_count: Some(record_count),
+                    error: None,
+                });
+            }
+            Ok(ReloadOneOutcome::Cancelled) => {
+                self.cancelled += 1;
+                self.results.push(ReloadSourceResult {
+                    source_id,
+                    outcome: "cancelled",
+                    record_count: None,
+                    error: Some("同じデータソースは既にリロード中です".to_string()),
+                });
+            }
+            Err(error) => {
+                self.failed += 1;
+                self.results.push(ReloadSourceResult {
+                    source_id,
+                    outcome: "failed",
+                    record_count: None,
+                    error: Some(error.to_string()),
+                });
+            }
+        }
+    }
+}
+
 /// 1 ソースを取得してスナップショット全置換し、ステータスを更新する（要件 §4-1）。
 pub fn reload_one(conn: &mut Connection, id: i64) -> anyhow::Result<()> {
     let (type_, cfg) = db::get_source_config(conn, id)?;
@@ -42,10 +102,10 @@ pub fn reload_one(conn: &mut Connection, id: i64) -> anyhow::Result<()> {
 
 /// AppState経由で1ソースを再取得する。DBロックは設定取得・結果保存の短時間だけ保持し、
 /// connector.fetch() によるファイル/ネットワークI/Oは必ずロック外で実行する。
-pub fn reload_one_for_state(state: &AppState, id: i64) -> anyhow::Result<()> {
+pub fn reload_one_for_state(state: &AppState, id: i64) -> anyhow::Result<ReloadOneOutcome> {
     let _reload_guard = match state.try_begin_reload(id) {
         Some(guard) => guard,
-        None => return Ok(()), // 同じsourceの更新中。既存の処理を待たせず重複取得を避ける。
+        None => return Ok(ReloadOneOutcome::Cancelled), // 同じsourceの更新中。既存の処理を待たせず重複取得を避ける。
     };
     let connector = {
         let conn = state
@@ -75,7 +135,9 @@ pub fn reload_one_for_state(state: &AppState, id: i64) -> anyhow::Result<()> {
         Ok(records) => {
             db::replace_source_records(&mut conn, id, &records)?;
             db::set_status(&conn, id, "ok", None)?;
-            Ok(())
+            Ok(ReloadOneOutcome::Success {
+                record_count: records.len(),
+            })
         }
         Err(error) => {
             let _ = db::set_status(&conn, id, "error", Some(&error.to_string()));
@@ -93,16 +155,25 @@ pub fn optimize_fts(state: &AppState) {
         );
     }
 }
-/// 指定 id 群を再取得し、完了後にフロントへ通知する。個別失敗は status に記録して続行。
-pub fn reload_ids(app: &AppHandle, ids: &[i64]) {
-    {
-        let state = app.state::<AppState>();
-        for &id in ids {
-            let _ = reload_one_for_state(&state, id);
-        }
-        optimize_fts(&state);
+/// 指定 id 群を再取得する。個別失敗はstatusへ記録したうえで、呼び出し元へ集計結果として返す。
+pub fn reload_many_for_state(state: &AppState, ids: &[i64]) -> ReloadSummary {
+    let mut summary = ReloadSummary::default();
+    for &id in ids {
+        summary.record(id, reload_one_for_state(state, id));
     }
+    optimize_fts(state);
+    summary
+}
+
+/// 指定 id 群を再取得し、完了後にフロントへ通知する。トレイ・schedulerは結果を表示しないが、
+/// 同じ集計契約を利用する。
+pub fn reload_ids(app: &AppHandle, ids: &[i64]) -> ReloadSummary {
+    let summary = {
+        let state = app.state::<AppState>();
+        reload_many_for_state(&state, ids)
+    };
     let _ = app.emit("sources-updated", ());
+    summary
 }
 
 /// 全ソースを今すぐ更新（トレイメニュー用）。
@@ -157,6 +228,29 @@ pub fn spawn_scheduler(app: AppHandle) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn reload_summary_keeps_success_failure_and_cancelled_details() {
+        let mut summary = ReloadSummary::default();
+        summary.record(1, Ok(ReloadOneOutcome::Success { record_count: 3 }));
+        summary.record(2, Ok(ReloadOneOutcome::Cancelled));
+        summary.record(3, Err(anyhow::anyhow!("connection refused")));
+
+        assert_eq!(
+            (summary.successful, summary.failed, summary.cancelled),
+            (1, 1, 1)
+        );
+        assert_eq!(summary.results[0].record_count, Some(3));
+        assert_eq!(summary.results[1].outcome, "cancelled");
+        assert_eq!(
+            summary.results[2].error.as_deref(),
+            Some("connection refused")
+        );
+
+        let json = serde_json::to_value(summary).unwrap();
+        assert_eq!(json["successful"], 1);
+        assert_eq!(json["results"][0]["outcome"], "success");
+        assert_eq!(json["results"][2]["error"], "connection refused");
+    }
     /// 取得前段（トークン解決）で失敗したときも status に error を残すこと。
     /// ここを素通りすると reload_ids が握り潰すため、Box の認可切れ等が UI に出なくなる。
     #[test]
