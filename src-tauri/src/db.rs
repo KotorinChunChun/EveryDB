@@ -308,9 +308,11 @@ fn source_parent(type_: &str, config_json: &str) -> String {
         }
     }
     if type_ == "box_files" {
-        if let Some(eid) = v.get("enterprise_id").and_then(|x| x.as_str()) {
-            if !eid.is_empty() {
-                return format!("Box ({eid})");
+        // box は Enterprise ID ではなく保存済みトークン（cred:<id>）単位でまとめる
+        // （§7-17: 個人プランは OAuth 2.0 のみ対応。Enterprise ID の概念自体が無い）。
+        if let Some(tok) = v.get("access_token").and_then(|x| x.as_str()) {
+            if let Some(id) = tok.strip_prefix("cred:") {
+                return format!("Box (トークン#{id})");
             }
         }
     }
@@ -665,7 +667,7 @@ mod tests {
         // Notion / Graph 非 SharePoint 系 → サービス単位でまとめる。
         assert_eq!(source_parent("notion", r#"{"token":"t","database_id":"d"}"#), "Notion");
         assert_eq!(source_parent("graph_entra_users", r#"{"tenant_id":"t"}"#), "Microsoft 365");
-        // PostgreSQL/MySQL → host+database が親キー。Box → enterprise_id が親キー。
+        // PostgreSQL/MySQL → host+database が親キー。Box → 保存済みトークン(cred:<id>)単位。
         assert_eq!(
             source_parent("postgres", r#"{"host":"db.example.com","database":"app","table":"t"}"#),
             "postgres://db.example.com/app"
@@ -675,8 +677,8 @@ mod tests {
             "mysql://localhost/shop"
         );
         assert_eq!(
-            source_parent("box_files", r#"{"client_id":"c","enterprise_id":"12345"}"#),
-            "Box (12345)"
+            source_parent("box_files", r#"{"access_token":"cred:7","folder_id":"0"}"#),
+            "Box (トークン#7)"
         );
         // Airtable → Base 単位（名称優先・次点 ID）でまとめる。
         assert_eq!(

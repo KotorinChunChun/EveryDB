@@ -35,7 +35,7 @@ fn secret_keys(type_: &str) -> &'static [&'static str] {
         "notion" => &["token"],
         "airtable" => &["token"],
         "postgres" | "mysql" => &["password"],
-        "box_files" => &["client_secret"],
+        "box_files" => &["access_token"],
         // Graph 系（graph_entra_users 等）はすべて client_secret を持つ。
         t if t.starts_with("graph") => &["client_secret"],
         _ => &[],

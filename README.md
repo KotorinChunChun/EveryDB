@@ -176,7 +176,7 @@
   - **Google カレンダー / iCal**（公開 .ics URL、認証不要）
   - **Airtable**（Personal Access Token）
   - **PostgreSQL / MySQL**（ホスト/DB/テーブル指定）
-  - **Box**（Client Credentials Grant、ファイル/フォルダ再帰一覧）
+  - **Box**（OAuth 2.0 ブラウザ認可、個人プランでも利用可、ファイル/フォルダ再帰一覧）
 
 ### 基盤（M1）
 - Tauri v2 + Rust + TypeScript の土台

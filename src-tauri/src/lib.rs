@@ -1,3 +1,4 @@
+pub mod box_oauth;
 pub mod browse;
 mod commands;
 pub mod connectors;
@@ -148,6 +149,8 @@ pub fn run() {
             commands::credential_usage,
             commands::credential_public_fields,
             commands::credential_secret_value,
+            commands::box_oauth_authorize,
+            commands::box_oauth_cancel,
             commands::autostart_status,
             commands::autostart_set,
             commands::set_zoom,

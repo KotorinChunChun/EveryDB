@@ -1,4 +1,5 @@
-use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
@@ -15,11 +16,13 @@ pub struct AppState {
     pub db: Mutex<Connection>,
     /// 直近の Windows Hello 確認の有効期限（None または過去時刻 = 未確認/期限切れ）。
     unlocked_until: Mutex<Option<Instant>>,
+    /// 実行中の Box OAuth 認可待ちの取消フラグ（同時に1件だけ想定。§7-19）。
+    box_oauth_cancel: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 impl AppState {
     pub fn new(conn: Connection) -> Self {
-        Self { db: Mutex::new(conn), unlocked_until: Mutex::new(None) }
+        Self { db: Mutex::new(conn), unlocked_until: Mutex::new(None), box_oauth_cancel: Mutex::new(None) }
     }
 
     pub fn is_unlocked(&self) -> bool {
@@ -323,6 +326,63 @@ pub fn credential_public_fields(state: State<'_, AppState>, id: i64) -> Result<s
 pub fn credential_secret_value(state: State<'_, AppState>, id: i64) -> Result<String, String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
     crate::credentials::resolve_secret_value(&conn, id).map_err(err_to_string)
+}
+
+/// Box の OAuth 2.0 認可（要件: 個人プランの Box は Client Credentials Grant を使えないため、
+/// 通常のブラウザ認可でユーザー自身のアカウントとして認証する）。
+/// システムブラウザを開き、ローカルのループバックで認可応答（コード）を受け取ってトークンに
+/// 交換するまでをこのコマンド1回で完結させる。ブロッキング処理（ブラウザでの操作待ち・最大3分）
+/// を含むため、必ず spawn_blocking で別スレッドに逃がす（同期のままだと UI が固まる。
+/// winauth_verify と同じ理由）。
+/// 待機中は `box_oauth_cancel` から取消できるよう、取消フラグを AppState に置いておく
+/// （要件: 間違えて別のプロファイルで開いたときのための取消ボタン。§7-19）。
+#[tauri::command]
+pub async fn box_oauth_authorize(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    client_id: String,
+    client_secret: String,
+) -> Result<serde_json::Value, String> {
+    let client_id = client_id.trim().to_string();
+    let client_secret = client_secret.trim().to_string();
+    if client_id.is_empty() || client_secret.is_empty() {
+        return Err("クライアントIDとクライアントシークレットを先に入力してください".to_string());
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut slot = state.box_oauth_cancel.lock().map_err(|_| "lock poisoned")?;
+        *slot = Some(cancel.clone());
+    }
+    let handle = app.clone();
+    let cancel_for_task = cancel.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        crate::box_oauth::authorize_interactive(&handle, &client_id, &client_secret, &cancel_for_task)
+    })
+    .await
+    .map_err(|e| format!("内部エラー: {e}"))?;
+    // 完了したので取消フラグの参照を掃除する（後から取消を押されても何も起きないようにする）。
+    if let Ok(mut slot) = state.box_oauth_cancel.lock() {
+        *slot = None;
+    }
+    let (_access_token, refresh_token) = result.map_err(err_to_string)?;
+    // リフレッシュトークンが無いと以後の自動更新ができない（保存しても「未認可」のままになる）。
+    // 黙って空を返すと成功したように見えてしまうため、ここで明確に失敗させる。
+    if refresh_token.is_empty() {
+        return Err("Box からリフレッシュトークンが返りませんでした。アプリの認証方式が「ユーザー認証(標準 OAuth 2.0)」になっているか確認してください".to_string());
+    }
+    Ok(serde_json::json!({ "refresh_token": refresh_token }))
+}
+
+/// 実行中の Box OAuth 認可待ちを取り消す（要件: 間違えて別のプロファイルで開いたときのための
+/// 取消ボタン。§7-19）。待っている処理が無ければ何もしない（二重押し等でエラーにはしない）。
+#[tauri::command]
+pub fn box_oauth_cancel(state: State<'_, AppState>) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    let slot = state.box_oauth_cancel.lock().map_err(|_| "lock poisoned")?;
+    if let Some(flag) = slot.as_ref() {
+        flag.store(true, Ordering::Relaxed);
+    }
+    Ok(())
 }
 
 // ---- ブラウズして追加（要件 §9-2）----

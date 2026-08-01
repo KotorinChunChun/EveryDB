@@ -3357,12 +3357,12 @@ impl Connector for MysqlConnector {
     }
 }
 
-// ---- Box（Client Credentials Grant。要件: クラウドストレージ系）----
+// ---- Box（OAuth 2.0。要件: クラウドストレージ系。§7-17 個人プランは Client Credentials
+//      Grant が使えないため、access_token は commands::credentials::resolve_credentials 側で
+//      Box にログイン済みの refresh_token から解決済みのものがここに渡ってくる）----
 #[derive(Deserialize)]
 struct BoxConnector {
-    client_id: String,
-    client_secret: String,
-    enterprise_id: String,
+    access_token: String,
     /// 走査開始フォルダ ID（省略時はルート "0"）。
     #[serde(default = "default_box_folder")]
     folder_id: String,
@@ -3373,27 +3373,10 @@ fn default_box_folder() -> String {
     "0".to_string()
 }
 
-fn box_access_token(client_id: &str, client_secret: &str, enterprise_id: &str) -> Result<String> {
-    let resp = ureq::post("https://api.box.com/oauth2/token").send_form(&[
-        ("grant_type", "client_credentials"),
-        ("client_id", client_id),
-        ("client_secret", client_secret),
-        ("box_subject_type", "enterprise"),
-        ("box_subject_id", enterprise_id),
-    ]);
-    let body: Value = match resp {
-        Ok(r) => r.into_json()?,
-        Err(ureq::Error::Status(code, r)) => return Err(anyhow!("Box トークン取得失敗 {code}: {}", r.into_string().unwrap_or_default())),
-        Err(e) => return Err(anyhow!("Box 認証エンドポイントへの接続に失敗: {e}")),
-    };
-    body.get("access_token").and_then(|v| v.as_str()).map(String::from).ok_or_else(|| anyhow!("access_token が返りませんでした"))
-}
-
 impl Connector for BoxConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let token = box_access_token(&self.client_id, &self.client_secret, &self.enterprise_id)?;
         let mut out = Vec::new();
-        self.walk_box_folder(&token, &self.folder_id, "", &mut out)?;
+        self.walk_box_folder(&self.access_token, &self.folder_id, "", &mut out)?;
         Ok(out)
     }
 }

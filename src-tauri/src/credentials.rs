@@ -15,14 +15,33 @@ use crate::secret;
 /// 対応スコープ（`sharedKeysFor` と同じ発想でフィールドをひとまとめにする単位）。
 pub const SCOPES: &[&str] = &["notion", "airtable", "graph", "box", "postgres", "mysql"];
 
-/// このスコープの中で、実際に `cred:<id>` の生きた参照になる唯一のフィールド。
+/// ソースの config_json 内で `cred:<id>` の生きた参照になる唯一のフィールド。
 /// それ以外のフィールド（tenant_id 等）は選択時に平文コピーされるだけで、置換には追随しない。
-fn secret_key_of_scope(scope: &str) -> Option<&'static str> {
+///
+/// box だけは特殊で、参照先は「credentials テーブルに保存された生の値」ではなく
+/// `resolve_credentials` がその場で取得し直す一時的なアクセストークンになる
+/// （Box は個人プランだと Client Credentials Grant が使えず、OAuth 2.0 のリフレッシュ
+/// トークンから毎回アクセストークンを再取得する必要があるため。§7-17）。
+fn source_ref_key_of_scope(scope: &str) -> Option<&'static str> {
     match scope {
         "notion" | "airtable" => Some("token"),
-        "graph" | "box" => Some("client_secret"),
+        "graph" => Some("client_secret"),
+        "box" => Some("access_token"),
         "postgres" | "mysql" => Some("password"),
         _ => None,
+    }
+}
+
+/// `credentials.fields_json` の中で暗号化保護すべきキー群（=ユーザーに平文で見せない値）。
+/// box は client_secret（アプリのシークレット）と refresh_token（ユーザー本人の認可情報）の
+/// 2つを持つ点が他スコープと異なる。
+fn protected_keys_of_scope(scope: &str) -> &'static [&'static str] {
+    match scope {
+        "notion" | "airtable" => &["token"],
+        "graph" => &["client_secret"],
+        "box" => &["client_secret", "refresh_token"],
+        "postgres" | "mysql" => &["password"],
+        _ => &[],
     }
 }
 
@@ -87,11 +106,7 @@ pub fn list_credentials(conn: &Connection, scope: &str) -> Result<Vec<Credential
 /// 新規保存。スコープの秘密フィールドだけ DPAPI 暗号化する。
 pub fn add_credential(conn: &Connection, scope: &str, label: &str, fields_json: &str) -> Result<i64> {
     validate_scope(scope)?;
-    let secret_key = secret_key_of_scope(scope);
-    let protected = match secret_key {
-        Some(k) => secret::protect_json_keys(&[k], fields_json)?,
-        None => fields_json.to_string(),
-    };
+    let protected = secret::protect_json_keys(protected_keys_of_scope(scope), fields_json)?;
     conn.execute(
         "INSERT INTO credentials(scope, label, fields_json) VALUES(?1, ?2, ?3)",
         params![scope, label, protected],
@@ -107,15 +122,9 @@ pub fn update_credential(conn: &Connection, id: i64, label: &str, fields_json: &
         [id],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
-    let secret_key = secret_key_of_scope(&scope);
-    let merged = match secret_key {
-        Some(k) => secret::merge_preserving_placeholder_keys(&[k], &old_fields_json, fields_json)?,
-        None => fields_json.to_string(),
-    };
-    let protected = match secret_key {
-        Some(k) => secret::protect_json_keys(&[k], &merged)?,
-        None => merged,
-    };
+    let keys = protected_keys_of_scope(&scope);
+    let merged = secret::merge_preserving_placeholder_keys(keys, &old_fields_json, fields_json)?;
+    let protected = secret::protect_json_keys(keys, &merged)?;
     conn.execute(
         "UPDATE credentials SET label = ?2, fields_json = ?3 WHERE id = ?1",
         params![id, label, protected],
@@ -150,7 +159,7 @@ pub fn find_usage(conn: &Connection, id: i64) -> Result<Vec<(i64, String)>> {
     let mut out = Vec::new();
     for (source_id, type_, name, config_json) in rows {
         let Some(scope) = scope_of_type(&type_) else { continue };
-        let Some(key) = secret_key_of_scope(scope) else { continue };
+        let Some(key) = source_ref_key_of_scope(scope) else { continue };
         let Ok(v) = serde_json::from_str::<Value>(&config_json) else { continue };
         if v.get(key).and_then(|x| x.as_str()) == Some(marker.as_str()) {
             out.push((source_id, name));
@@ -167,12 +176,12 @@ pub fn public_fields(conn: &Connection, id: i64) -> Result<(String, Map<String, 
         [id],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )?;
-    let secret_key = secret_key_of_scope(&scope);
+    let protected_keys = protected_keys_of_scope(&scope);
     let v: Value = serde_json::from_str(&fields_json)?;
     let mut out = Map::new();
     if let Some(obj) = v.as_object() {
         for (k, val) in obj {
-            if Some(k.as_str()) == secret_key {
+            if protected_keys.contains(&k.as_str()) {
                 continue; // 秘密フィールドは除外
             }
             out.insert(k.clone(), val.clone());
@@ -194,7 +203,13 @@ pub fn resolve_secret_value(conn: &Connection, id: i64) -> Result<String> {
         [id],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
-    let key = secret_key_of_scope(&scope).ok_or_else(|| anyhow!("秘密フィールドの無いスコープです: {scope}"))?;
+    // box は「コピー」の対象を client_secret（アプリ登録時に発行されたシークレット）とする。
+    // refresh_token はユーザー本人の認可情報そのものであり、また参照するたびにローテーション
+    // してしまうため、通常のコピー用途には向かない。
+    let key = match scope.as_str() {
+        "box" => "client_secret",
+        _ => source_ref_key_of_scope(&scope).ok_or_else(|| anyhow!("秘密フィールドの無いスコープです: {scope}"))?,
+    };
     let decrypted = secret::unprotect_config(&fields_json)?;
     let v: Value = serde_json::from_str(&decrypted)?;
     Ok(v.get(key).and_then(|x| x.as_str()).unwrap_or("").to_string())
@@ -257,9 +272,18 @@ pub fn resolve_credentials(conn: &Connection, config_json: &str) -> Result<Strin
         return Ok(config_json.to_string());
     }
     for (key, id) in refs {
-        let fields_json: String = conn
-            .query_row("SELECT fields_json FROM credentials WHERE id = ?1", [id], |r| r.get(0))
+        let (scope, fields_json): (String, String) = conn
+            .query_row("SELECT scope, fields_json FROM credentials WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))
             .map_err(|_| anyhow!("保存済みトークン(id={id})が見つかりません（削除された可能性があります）"))?;
+        if scope == "box" {
+            // box は credentials テーブルに「アクセストークン」自体を保持しない。個人プランは
+            // OAuth 2.0（保存してある refresh_token からその場で取得し直し、ローテーションされる
+            // 新しい refresh_token を保存し直す）、法人（Enterprise）プランは Client Credentials
+            // Grant（その場で毎回新規発行。保存し直しは不要）のどちらかで取得する（§7-17, §7-18）。
+            let access_token = box_access_token_for_credential(conn, id, &fields_json)?;
+            obj.insert(key, Value::String(access_token));
+            continue;
+        }
         let decrypted = secret::unprotect_config(&fields_json)?;
         let cred_v: Value = serde_json::from_str(&decrypted)?;
         if let Some(cred_obj) = cred_v.as_object() {
@@ -269,6 +293,43 @@ pub fn resolve_credentials(conn: &Connection, config_json: &str) -> Result<Strin
         }
     }
     Ok(serde_json::to_string(&v)?)
+}
+
+/// box: `auth_method`（"oauth" 既定 / "ccg"）に応じてアクセストークンを取得する。
+/// `protected_fields_json` は暗号化されたままの値でよい（内部で復号する）。
+fn box_access_token_for_credential(conn: &Connection, credential_id: i64, protected_fields_json: &str) -> Result<String> {
+    let decrypted = secret::unprotect_config(protected_fields_json)?;
+    let v: Value = serde_json::from_str(&decrypted)?;
+    let auth_method = v.get("auth_method").and_then(|x| x.as_str()).unwrap_or("oauth");
+    let client_id = v.get("client_id").and_then(|x| x.as_str()).filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("クライアントIDが未設定です"))?;
+    let client_secret = v.get("client_secret").and_then(|x| x.as_str()).filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("クライアントシークレットが未設定です"))?;
+
+    if auth_method == "ccg" {
+        // 法人（Enterprise）プラン: Client Credentials Grant。毎回その場でトークンを新規発行する
+        // だけで、保存し直す状態は無い（§7-18）。
+        let enterprise_id = v.get("enterprise_id").and_then(|x| x.as_str()).filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow!("Enterprise ID が未設定です"))?;
+        return crate::box_oauth::client_credentials_token(client_id, client_secret, enterprise_id);
+    }
+
+    // 個人プラン（既定）: OAuth 2.0。保存済み refresh_token からその場でアクセストークンを
+    // 取得し直し、Box がローテーションする新しい refresh_token を保存し直す（§7-17）。
+    let refresh_token = v.get("refresh_token").and_then(|x| x.as_str()).filter(|s| !s.is_empty()).ok_or_else(|| {
+        anyhow!("Box の認可が完了していません。トークン管理画面で「Box にログインして認可」を行ってください")
+    })?;
+    let (access_token, new_refresh_token) = crate::box_oauth::refresh(client_id, client_secret, refresh_token)?;
+    if !new_refresh_token.is_empty() {
+        let mut updated = v.clone();
+        if let Some(obj) = updated.as_object_mut() {
+            obj.insert("refresh_token".to_string(), Value::String(new_refresh_token));
+        }
+        let updated_json = serde_json::to_string(&updated)?;
+        let reprotected = secret::protect_json_keys(protected_keys_of_scope("box"), &updated_json)?;
+        conn.execute("UPDATE credentials SET fields_json = ?2 WHERE id = ?1", params![credential_id, reprotected])?;
+    }
+    Ok(access_token)
 }
 
 #[cfg(test)]
@@ -445,5 +506,40 @@ mod tests {
         let visible = serde_json::json!({ "token": "ntn_plain_secret" }).to_string();
         let out = remask_cred_refs(&conn, &visible, &visible).unwrap();
         assert_eq!(out, visible);
+    }
+
+    #[test]
+    fn add_credential_protects_both_secret_keys_for_box() {
+        // box は client_secret（アプリのシークレット）と refresh_token（ユーザー本人の認可情報）の
+        // 2つとも平文で残してはいけない（§7-17: 個人プランは OAuth 2.0 のみ対応）。
+        let conn = open_test_db();
+        let id = add_credential(&conn, "box", "個人アカウント", r#"{"client_id":"cid","client_secret":"csec","refresh_token":"rtok"}"#).unwrap();
+        let stored: String = conn.query_row("SELECT fields_json FROM credentials WHERE id = ?1", [id], |r| r.get(0)).unwrap();
+        let v: Value = serde_json::from_str(&stored).unwrap();
+        assert_eq!(v["client_id"], "cid"); // 非秘密フィールドは平文のまま
+        assert!(v["client_secret"].as_str().unwrap().starts_with("dpapi:"));
+        assert!(v["refresh_token"].as_str().unwrap().starts_with("dpapi:"));
+    }
+
+    #[test]
+    fn public_fields_excludes_both_protected_keys_for_box() {
+        let conn = open_test_db();
+        let id = add_credential(&conn, "box", "個人アカウント", r#"{"client_id":"cid","client_secret":"csec","refresh_token":"rtok"}"#).unwrap();
+        let (label, fields) = public_fields(&conn, id).unwrap();
+        assert_eq!(label, "個人アカウント");
+        assert_eq!(fields.get("client_id").and_then(|v| v.as_str()), Some("cid"));
+        assert!(fields.get("client_secret").is_none());
+        assert!(fields.get("refresh_token").is_none());
+    }
+
+    #[test]
+    fn resolve_credentials_for_box_fails_clearly_when_not_yet_authorized() {
+        // refresh_token が無い（＝トークン管理画面でまだ「Box にログインして認可」していない）
+        // 状態で使おうとしたときは、ネットワークへは出ずに分かりやすいエラーを返す。
+        let conn = open_test_db();
+        let id = add_credential(&conn, "box", "個人アカウント", r#"{"client_id":"cid","client_secret":"csec"}"#).unwrap();
+        let cfg = serde_json::json!({ "access_token": format!("cred:{id}"), "folder_id": "0" }).to_string();
+        let err = resolve_credentials(&conn, &cfg).unwrap_err();
+        assert!(err.to_string().contains("認可"), "未認可時のエラーメッセージであること: {err}");
     }
 }

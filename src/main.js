@@ -2099,6 +2099,15 @@ let cmEditingId = null;
 /** 保存ボタンの活性判定用に、フォームを表示した直後の値を保持する
  * （要件: 変更が無い場合は保存ボタンをグレーアウトし、変更がある場合のみ押せるようにする）。 */
 let cmFormBaseline = {};
+/** box: 個人プラン(OAuth 2.0)と法人/Enterpriseプラン(Client Credentials Grant)のどちらの
+ * 設定項目を出すか。トークン管理画面でスコープを box に切り替えた/選び直したときに更新する
+ * （要件: 両方の設定を選べるように残してほしい。§7-18）。 */
+let cmBoxAuthMethod = "oauth";
+/** 認証方式の切り替えで一時的に画面から消えるフィールドの値を、編集セッション中だけ覚えておく。
+ * これが無いと方式を往復したときに refresh_token（認可済みの印）や enterprise_id が空欄に戻り、
+ * そのまま保存すると「空に変更」と解釈されて既存の認可情報を消してしまう
+ * （update_credential が旧値を維持するのはプレースホルダーのときだけのため）。 */
+let cmHiddenFieldStash = {};
 /** そのスコープを構成するフィールド定義（トークン管理画面の追加/置換フォーム・ピッカーの
  * その場登録フォーム用の定義）。取得ページ等のリンクボタンは、接続画面側から一本化してここに集約した
  * （要件: 接続単位でのトークン入力を廃止し、取得導線もトークン管理画面へ移す）。 */
@@ -2117,15 +2126,38 @@ function credentialScopeFieldDefs(scope) {
                 { key: "client_id", label: "クライアントID", secret: false, helpUrl: ENTRA_APPS_URL },
                 { key: "client_secret", label: "クライアントシークレット(値)", secret: true, helpUrl: ENTRA_APPS_URL },
             ];
-        case "box":
-            return [
-                { key: "client_id", label: "クライアントID", secret: false, helpUrl: "https://app.box.com/developers/console" },
-                { key: "client_secret", label: "クライアントシークレット", secret: true, helpUrl: "https://app.box.com/developers/console" },
-                // Enterprise ID はアプリの認証情報ではなく組織情報なので、Developer Console ではなく
-                // Admin Console の「アカウントと請求」（Account & Billing）に表示される
-                // （要件: Enterprise ID の取得ページは API 用の Developer Console とは違うので調査して修正）。
-                { key: "enterprise_id", label: "Enterprise ID", secret: false, helpUrl: "https://app.box.com/master/settings/account" },
+        case "box": {
+            // 個人（無料）プランの Box は Client Credentials Grant（サーバー認証・Enterprise ID 必須）
+            // を利用できないため、通常の OAuth 2.0 ブラウザ認可で本人のアカウントとして認証する
+            // （要件: 個人プランでも使えるようにする。§7-17）。
+            // ただし法人（Enterprise）プランでは従来どおり CCG も選べるようにしてほしいとのことなので、
+            // 両方式を選択式で残す（要件: 両方の設定を選べるようにしてほしい。§7-18。デフォルトは個人用）。
+            const BOX_DEV_CONSOLE = "https://app.box.com/developers/console";
+            const common = [
+                {
+                    key: "auth_method", label: "認証方式", secret: false,
+                    selectOptions: [
+                        { value: "oauth", label: "個人プラン（OAuth 2.0 ブラウザ認可）" },
+                        { value: "ccg", label: "法人/Enterpriseプラン（Client Credentials Grant・要管理者承認）" },
+                    ],
+                },
+                { key: "client_id", label: "クライアントID", secret: false, helpUrl: BOX_DEV_CONSOLE },
+                { key: "client_secret", label: "クライアントシークレット", secret: true, helpUrl: BOX_DEV_CONSOLE },
             ];
+            if (cmBoxAuthMethod === "ccg") {
+                return [
+                    ...common,
+                    { key: "enterprise_id", label: "Enterprise ID", secret: false, helpUrl: "https://app.box.com/master/settings/account" },
+                ];
+            }
+            return [
+                ...common,
+                {
+                    key: "refresh_token", label: "Box アカウントの認可", secret: true,
+                    authorize: { buttonLabel: "🔗 Box にログインして認可…", usesFields: ["client_id", "client_secret"] },
+                },
+            ];
+        }
         case "postgres":
         case "mysql":
             return [
@@ -2163,12 +2195,136 @@ function renderCredentialFormFields(scope) {
     for (const f of credentialScopeFieldDefs(scope)) {
         const label = document.createElement("label");
         label.textContent = f.label;
+        const row = document.createElement("div");
+        row.className = "path-row";
+        if (f.selectOptions) {
+            // box の認証方式選択（要件: 個人プラン/法人プラン両方を選べるようにする。§7-18）。
+            // 選び直したら残りのフィールド一式（Enterprise ID or 認可ボタン）を丸ごと作り直す。
+            const select = document.createElement("select");
+            select.id = `cmf-${f.key}`;
+            for (const opt of f.selectOptions) {
+                const optEl = document.createElement("option");
+                optEl.value = opt.value;
+                optEl.textContent = opt.label;
+                select.appendChild(optEl);
+            }
+            select.value = cmBoxAuthMethod;
+            select.onchange = () => {
+                // いま画面にある値を退避領域へ積んでから作り直し、作り直した後に書き戻す。
+                // 退避領域は編集セッションを通じて保持するため、方式を何度往復しても値が失われない。
+                for (const [key, value] of Object.entries(currentCmFormValues())) {
+                    if (key === "label" || key === f.key || !value)
+                        continue;
+                    cmHiddenFieldStash[key] = value;
+                }
+                cmBoxAuthMethod = select.value === "ccg" ? "ccg" : "oauth";
+                renderCredentialFormFields(scope);
+                for (const [key, value] of Object.entries(cmHiddenFieldStash)) {
+                    const el = document.getElementById(`cmf-${key}`);
+                    if (el && !el.value) {
+                        el.value = value;
+                        el.dispatchEvent(new Event("input")); // 認可済み表示などの派生表示を更新する
+                    }
+                }
+                updateCmSaveButtonState();
+            };
+            row.appendChild(select);
+            label.appendChild(row);
+            container.appendChild(label);
+            continue;
+        }
         const input = document.createElement("input");
         input.type = f.secret ? "password" : "text";
         input.autocomplete = "off";
         input.id = `cmf-${f.key}`;
-        const row = document.createElement("div");
-        row.className = "path-row";
+        if (f.authorize) {
+            // 直接入力させず、OAuth 認可フローの結果だけを流し込む（値そのものは画面に出さない）。
+            input.hidden = true;
+            row.appendChild(input);
+            const status = document.createElement("span");
+            status.className = "credential-profile-chip";
+            const authBtn = document.createElement("button");
+            authBtn.type = "button";
+            authBtn.className = "btn browse-btn";
+            authBtn.textContent = f.authorize.buttonLabel;
+            // 間違えて別のプロファイルでブラウザを開いてしまった場合等のための取消ボタン
+            // （要件: 認可待ちをキャンセルできるようにしてほしい。§7-19）。待機中だけ表示する。
+            const cancelBtn = document.createElement("button");
+            cancelBtn.type = "button";
+            cancelBtn.className = "btn browse-btn";
+            cancelBtn.textContent = "取消";
+            cancelBtn.hidden = true;
+            cancelBtn.onclick = () => void invoke("box_oauth_cancel").catch(() => { });
+            const renderAuthStatus = () => {
+                // プレースホルダー（既存の認可情報を編集で触っていない状態）も「認可済み」扱いにする。
+                if (input.value) {
+                    status.textContent = "✅ 認可済み";
+                    status.classList.remove("unset");
+                }
+                else {
+                    status.textContent = "未認可";
+                    status.classList.add("unset");
+                }
+            };
+            authBtn.onclick = async () => {
+                const usedFields = {};
+                for (const key of f.authorize.usesFields) {
+                    const el = document.getElementById(`cmf-${key}`);
+                    usedFields[key] = el?.value.trim() ?? "";
+                }
+                // 既存プロファイルの編集中は秘密フィールドがプレースホルダー表示のままのことがある
+                // （未編集＝変更なしの意味）。その伏字を Box へそのまま送ると invalid_client になるため、
+                // 実際の値を取り直してから使う（要件外のバグ修正: 認可がクライアントシークレット不一致で
+                // 失敗する）。
+                if (usedFields["client_secret"] === SECRET_PLACEHOLDER && cmEditingId !== null) {
+                    const unlocked = await ensureUnlocked();
+                    if (!unlocked)
+                        return;
+                    try {
+                        usedFields["client_secret"] = await invoke("credential_secret_value", { id: cmEditingId });
+                    }
+                    catch (e) {
+                        alert("クライアントシークレットの取得に失敗しました: " + String(e));
+                        return;
+                    }
+                }
+                if (Object.values(usedFields).some((v) => !v)) {
+                    alert("先にクライアントID・クライアントシークレットを入力してください");
+                    return;
+                }
+                authBtn.disabled = true;
+                authBtn.textContent = "ブラウザで認可待ち…";
+                cancelBtn.hidden = false;
+                try {
+                    const res = await invoke("box_oauth_authorize", {
+                        clientId: usedFields["client_id"],
+                        clientSecret: usedFields["client_secret"],
+                    });
+                    input.value = res.refresh_token;
+                    renderAuthStatus();
+                    updateCmSaveButtonState();
+                }
+                catch (e) {
+                    // 取消ボタンによる中断はエラー扱いしない（ユーザー自身の操作なので）。
+                    if (!String(e).includes("キャンセルしました")) {
+                        alert("Box の認可に失敗しました: " + String(e));
+                    }
+                }
+                finally {
+                    authBtn.disabled = false;
+                    authBtn.textContent = f.authorize.buttonLabel;
+                    cancelBtn.hidden = true;
+                }
+            };
+            input.oninput = () => { renderAuthStatus(); updateCmSaveButtonState(); };
+            renderAuthStatus();
+            row.appendChild(status);
+            row.appendChild(authBtn);
+            row.appendChild(cancelBtn);
+            label.appendChild(row);
+            container.appendChild(label);
+            continue;
+        }
         row.appendChild(input);
         // 現在の値をコピーするボタン（要件: 再表示ではなくコピー。テナントID/クライアントID等の
         // 非秘密フィールドにも設置する）。編集対象が確定してから使う（＝新規作成フォームではまだ
@@ -2233,34 +2389,46 @@ function updateCmSaveButtonState() {
 }
 function resetCredentialForm() {
     cmEditingId = null;
+    cmHiddenFieldStash = {}; // 別プロファイルの値を持ち越さない
     $("cm-label").value = "";
     const scope = $("cm-scope").value;
+    if (scope === "box")
+        cmBoxAuthMethod = "oauth"; // 新規作成は個人プランを既定にする
     renderCredentialFormFields(scope);
     updateCredentialListSelection();
     captureCmFormBaseline();
 }
 async function startEditCredential(c) {
     cmEditingId = c.id;
+    cmHiddenFieldStash = {}; // 別プロファイルの値を持ち越さない
     $("cm-label").value = c.label;
     const scope = c.scope;
-    renderCredentialFormFields(scope);
-    updateCredentialListSelection();
     // 非秘密フィールドは現在の平文値を、秘密フィールドはプレースホルダーを表示する
     // （未編集のまま保存すれば merge_preserving_placeholder が既存値を維持する）。
+    let fields = {};
     try {
         const res = await invoke("credential_public_fields", { id: c.id });
-        for (const [k, v] of Object.entries(res.fields)) {
-            const el = document.getElementById(`cmf-${k}`);
-            if (el)
-                el.value = String(v);
-        }
+        fields = res.fields;
     }
     catch { /* noop */ }
+    // box は認証方式によって残りのフィールド構成が変わるため、フォームを組み立てる前に確定させる。
+    if (scope === "box")
+        cmBoxAuthMethod = fields["auth_method"] === "ccg" ? "ccg" : "oauth";
+    renderCredentialFormFields(scope);
+    updateCredentialListSelection();
+    for (const [k, v] of Object.entries(fields)) {
+        const el = document.getElementById(`cmf-${k}`);
+        if (el)
+            el.value = String(v);
+    }
     for (const f of credentialScopeFieldDefs(scope)) {
         if (f.secret) {
             const el = document.getElementById(`cmf-${f.key}`);
-            if (el)
+            if (el) {
                 el.value = SECRET_PLACEHOLDER;
+                // authorize フィールドは「認可済み」表示の更新をこのイベントで駆動している。
+                el.dispatchEvent(new Event("input"));
+            }
         }
         const copyBtn = document.getElementById(`cmf-copy-${f.key}`);
         if (copyBtn) {
@@ -3371,9 +3539,7 @@ const TYPE_DEFS = [
             { key: "ssl_accept_invalid_certs", label: "自己署名証明書を許可(社内サーバー向け)", kind: "checkbox", default: false },
         ] },
     { value: "box_files", label: "Box (ファイル一覧)", fields: [
-            { key: "client_id", label: "クライアントID", kind: "text", helpUrl: "https://app.box.com/developers/console" },
-            { key: "client_secret", label: "クライアントシークレット", kind: "password", helpUrl: "https://app.box.com/developers/console", credentialScope: "box", credentialBundleFields: ["client_id", "enterprise_id"] },
-            { key: "enterprise_id", label: "Enterprise ID", kind: "text" },
+            { key: "access_token", label: "使用するトークン", kind: "password", credentialScope: "box" },
             { key: "folder_id", label: "開始フォルダID(任意)", kind: "text", placeholder: "0 (ルート)", optional: true },
         ] },
     { value: "postal_code", label: "郵便番号データベース(日本郵便)", fields: [...GOV_DATA_SOURCE_FIELDS] },
@@ -3446,7 +3612,7 @@ function sharedKeysFor(kind) {
         case "graph365": return ["tenant_id", "client_id", "client_secret"];
         case "postgres": return ["host", "port", "database", "user", "password"];
         case "mysql": return ["host", "port", "database", "user", "password"];
-        case "box": return ["client_id", "client_secret", "enterprise_id"];
+        case "box": return ["access_token"];
         default: return [];
     }
 }
