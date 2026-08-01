@@ -21,6 +21,7 @@ import { guideNameForType, parentKindForType, representativeTypeForCredentialSco
 import type { ParentKind } from "./source-types/registry";
 import { ENTRA_APPS_URL, NOTION_INTEGRATIONS_URL, TYPE_DEFS } from "./source-types/forms";
 import type { FieldDef, TypeDef } from "./source-types/forms";
+import { parentLabel as formatParentLabel, shortTimestamp, sourceMatchesFilter as matchesSourceFilter, sourceTree, sourceTypeLabel } from "./features/sources/tree";
 
 // ==== 状態 ====
 let sources: SourceInfo[] = [];
@@ -300,13 +301,7 @@ async function loadParentLabels() {
 }
 
 function parentLabel(parent: string): string {
-  const override = parentLabelOverrides.get(parent);
-  if (override) return override;
-  if (/[\\/]/.test(parent)) {
-    const parts = parent.split(/[\\/]/).filter(Boolean);
-    return parts[parts.length - 1] || parent;
-  }
-  return parent;
+  return formatParentLabel(parent, parentLabelOverrides);
 }
 
 // ---- 管理モード（旧「データソース管理」ダイアログの置き換え）----
@@ -338,18 +333,6 @@ function setManageMode(on: boolean) {
 }
 
 manageToggleBtn.onclick = () => setManageMode(!manageMode);
-
-/** 種別キーを閲覧用ラベルへ（未知の種別はキーのまま）。 */
-function typeLabel(type_: string): string {
-  return TYPE_DEFS.find((t) => t.value === type_)?.label ?? type_;
-}
-
-/** 最終更新日時を「MM-DD HH:mm」に短縮する（元の値は title で出す）。 */
-function shortTimestamp(ts: string | null): string {
-  if (!ts) return "―";
-  const m = /(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(ts);
-  return m ? `${m[2]}-${m[3]} ${m[4]}:${m[5]}` : ts;
-}
 
 /** 管理モードの行アクション用の小さなアイコンボタン。 */
 function makeManageButton(text: string, title: string, onClick: () => void | Promise<void>, danger = false): HTMLButtonElement {
@@ -441,7 +424,7 @@ function makeSourceItem(s: SourceInfo): HTMLElement {
   if (manageMode) {
     const typeSpan = document.createElement("span");
     typeSpan.className = "m-type";
-    typeSpan.textContent = typeLabel(s.type_);
+    typeSpan.textContent = sourceTypeLabel(s.type_);
     typeSpan.title = s.type_;
 
     count.classList.add("m-count");
@@ -516,8 +499,7 @@ function makeSourceItem(s: SourceInfo): HTMLElement {
 
 /** 絞り込みボックスの条件に一致するか（テーブル名 / 接続先ラベルの部分一致）。 */
 function sourceMatchesFilter(s: SourceInfo): boolean {
-  const q = sourceFilter.trim().toLowerCase();
-  return !q || s.name.toLowerCase().includes(q) || parentLabel(s.parent).toLowerCase().includes(q);
+  return matchesSourceFilter(s, sourceFilter, parentLabelOverrides);
 }
 
 /** 現在サイドバーに表示されているテーブル（絞り込みが空なら全件）。全選択/全解除の対象。 */
@@ -531,28 +513,16 @@ function renderSources() {
   const q = sourceFilter.trim().toLowerCase();
   const match = sourceMatchesFilter;
 
-  // parent キーごとにグルーピング（出現順を維持）。parent="" は単独ノード。
-  const groups = new Map<string, SourceInfo[]>();
-  const standalone: SourceInfo[] = [];
-  for (const s of sources) {
-    if (!s.parent) { standalone.push(s); continue; }
-    if (!groups.has(s.parent)) groups.set(s.parent, []);
-    groups.get(s.parent)!.push(s);
-  }
-
-  // 出現順に、単独ノードとグループを混在させて描画する。
-  const emitted = new Set<string>();
-  for (const s of sources) {
-    if (!s.parent) {
-      if (match(s)) sourcesEl.appendChild(makeSourceItem(s));
+  // 親子グループ化と出現順の維持は features/sources の純粋関数へ委譲する。
+  for (const entry of sourceTree(sources)) {
+    if (entry.kind === "source") {
+      if (match(entry.source)) sourcesEl.appendChild(makeSourceItem(entry.source));
       continue;
     }
-    if (emitted.has(s.parent)) continue;
-    emitted.add(s.parent);
-    const children = groups.get(s.parent)!;
+    const children = entry.children;
+    const s = children[0];
     const visibleChildren = children.filter(match);
     if (visibleChildren.length === 0) continue;
-
     // 接続先ノード（tri-state チェックボックス + 開閉）。
     const selCount = children.filter((c) => selectedSourceIds.has(c.id)).length;
     const collapsed = collapsedParents.has(s.parent);
@@ -637,7 +607,7 @@ function renderSources() {
 
       const ptype = document.createElement("span");
       ptype.className = "m-type";
-      ptype.textContent = typeLabel(children[0].type_);
+      ptype.textContent = sourceTypeLabel(children[0].type_);
       ptype.title = `${children.length} 個のテーブル: ${children.map((c) => c.name).join(", ")}`;
 
       const ptotal = document.createElement("span");
@@ -2998,7 +2968,7 @@ async function loadParentTables() {
       }));
     } else if (kind === "graph365") {
       // API 取得ではなく、実装済みの種別のうち接続情報だけで使えるものを並べる。
-      parentTableItems = GRAPH_ONE_CLICK_TYPES.map((t) => ({ key: t, label: typeLabel(t), type_: t, extraConfig: {} }));
+      parentTableItems = GRAPH_ONE_CLICK_TYPES.map((t) => ({ key: t, label: sourceTypeLabel(t), type_: t, extraConfig: {} }));
     }
   } catch (e) {
     setPickerMessage(parentTablesList, `取得失敗: ${String(e)}`);
@@ -3064,7 +3034,7 @@ async function loadParentTables() {
     parentTablesList.appendChild(row);
   }
   if (kind === "graph365") {
-    const rest = GRAPH_PARAMETERIZED_TYPES.map(typeLabel).join(" / ");
+    const rest = GRAPH_PARAMETERIZED_TYPES.map(sourceTypeLabel).join(" / ");
     parentTablesHint.textContent += `\n※ ${rest} は対象ユーザーやグループ ID の指定が必要なため、この一覧からは追加できません。`;
   }
   updateParentTablesCount();
