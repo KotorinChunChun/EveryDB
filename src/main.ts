@@ -18,6 +18,8 @@ import {
 import { getCellUrl, parseAirtableUrl, parseGoogleSheetsUrl, parseNotionUrl, parseSharePointUrl } from "./shared/urls";
 import { isConfigIncomplete, withFieldVisibility } from "./features/source-editor/config-rules";
 import { deriveDefaultName } from "./features/source-editor/default-name";
+import { buildExportText, encodeExportText, EXPORT_FORMAT_INFO } from "./features/export/serialization";
+import type { ExportEncoding, ExportFormat } from "./features/export/serialization";
 import type { CredentialScope, CredentialSummary, ReloadSummary, Row, SearchResponse, SourceDetail, SourceInfo, WinAuthStatus } from "./shared/types";
 import { guideNameForType, parentKindForType, representativeTypeForCredentialScope as representativeTypeForScope } from "./source-types/registry";
 import type { ParentKind } from "./source-types/registry";
@@ -3040,54 +3042,6 @@ $<HTMLInputElement>("row-limit").addEventListener("change", () => {
 });
 
 // ---- 出力（現在の検索結果を TSV/CSV/JSON で保存。要件 v0.0.4: 出力ダイアログ化）----
-type ExportFormat = "tsv" | "csv" | "json";
-type ExportEncoding = "utf8bom" | "utf8" | "sjis";
-
-function tsvEscape(v: string): string {
-  // タブ・改行を空白に置換して 1 セル 1 値を保つ。
-  return v.replace(/[\t\r\n]+/g, " ");
-}
-/** RFC4180 ふう CSV エスケープ: カンマ・ダブルクオート・改行を含む値だけ引用符で囲む。 */
-function csvEscape(v: string): string {
-  if (/[,"\r\n]/.test(v)) {
-    return `"${v.replace(/"/g, '""')}"`;
-  }
-  return v;
-}
-
-function buildExportText(format: ExportFormat): string {
-  if (format === "json") {
-    const data = rows.map((r, rowIdx) => Object.fromEntries(columns.map((c, colIdx) => [c, cellText(r, colIdx, rowIdx)])));
-    return JSON.stringify(data, null, 2);
-  }
-  const escape = format === "csv" ? csvEscape : tsvEscape;
-  const sep = format === "csv" ? "," : "\t";
-  const header = columns.map(escape).join(sep);
-  const lines = rows.map((r, rowIdx) => columns.map((_, c) => escape(cellText(r, c, rowIdx))).join(sep));
-  return [header, ...lines].join("\r\n");
-}
-
-const EXPORT_FORMAT_INFO: Record<ExportFormat, { ext: string; filterName: string; extra: string[] }> = {
-  tsv: { ext: "tsv", filterName: "TSV", extra: ["txt"] },
-  csv: { ext: "csv", filterName: "CSV", extra: [] },
-  json: { ext: "json", filterName: "JSON", extra: [] },
-};
-
-/** テキストを指定の文字コードのバイト列にする。Shift_JIS はブラウザ標準では変換できないため Rust 側に委ねる。 */
-async function encodeForExport(text: string, encoding: ExportEncoding): Promise<Uint8Array> {
-  if (encoding === "sjis") {
-    return new Uint8Array(await invoke<number[]>("encode_shift_jis", { text }));
-  }
-  const body = new TextEncoder().encode(text);
-  if (encoding === "utf8bom") {
-    const withBom = new Uint8Array(body.length + 3);
-    withBom.set([0xef, 0xbb, 0xbf], 0);
-    withBom.set(body, 3);
-    return withBom;
-  }
-  return body;
-}
-
 function currentExportFormat(): ExportFormat {
   return (document.querySelector<HTMLInputElement>('input[name="export-format"]:checked')?.value as ExportFormat) ?? "tsv";
 }
@@ -3138,8 +3092,8 @@ $<HTMLButtonElement>("export-ok").onclick = async () => {
     okBtn.disabled = true;
     cancelBtn.disabled = true;
     statusEl.hidden = false;
-    const text = buildExportText(format);
-    const bytes = await encodeForExport(text, format === "json" ? "utf8" : encoding);
+    const text = buildExportText(format, columns, rows, cellText);
+    const bytes = await encodeExportText(text, format === "json" ? "utf8" : encoding, async (value) => new Uint8Array(await invoke<number[]>("encode_shift_jis", { text: value })));
     await writeFile(path, bytes);
     $<HTMLDialogElement>("export-dialog").close();
     resultInfo.textContent = `エクスポート完了: ${path}（${rows.length} 件）`;
