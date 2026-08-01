@@ -34,6 +34,7 @@ import {
   toRawFieldNames,
 } from "./features/grid/data";
 import type { SortState } from "./features/grid/data";
+import { scrollTopToRevealRow, visibleRowRange } from "./features/grid/viewport";
 
 // ==== 状態 ====
 let sources: SourceInfo[] = [];
@@ -1397,8 +1398,7 @@ function renderRows() {
   spacerEl.style.height = rows.length * ROW_H + "px";
   const scrollTop = viewportEl.scrollTop;
   const viewH = viewportEl.clientHeight;
-  const start = Math.max(0, Math.floor(scrollTop / ROW_H) - 5);
-  const end = Math.min(rows.length, Math.ceil((scrollTop + viewH) / ROW_H) + 5);
+  const { start, end } = visibleRowRange(rows.length, scrollTop, viewH, ROW_H);
 
   rowsEl.style.transform = `translateY(${start * ROW_H}px)`;
   rowsEl.innerHTML = "";
@@ -1446,13 +1446,7 @@ viewportEl.addEventListener("scroll", () => {
 window.addEventListener("resize", () => renderRows());
 
 function ensureRowVisible(row: number) {
-  const top = row * ROW_H;
-  const bottom = top + ROW_H;
-  if (top < viewportEl.scrollTop) {
-    viewportEl.scrollTop = top;
-  } else if (bottom > viewportEl.scrollTop + viewportEl.clientHeight) {
-    viewportEl.scrollTop = bottom - viewportEl.clientHeight;
-  }
+  viewportEl.scrollTop = scrollTopToRevealRow(row, viewportEl.scrollTop, viewportEl.clientHeight, ROW_H);
 }
 
 // ============================================================
