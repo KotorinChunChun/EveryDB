@@ -16,6 +16,7 @@ import {
   STORAGE_KEY_SELECTED_SOURCES,
 } from "./shared/storage";
 import { getCellUrl, parseAirtableUrl, parseGoogleSheetsUrl, parseNotionUrl, parseSharePointUrl } from "./shared/urls";
+import { isConfigIncomplete, withFieldVisibility } from "./features/source-editor/config-rules";
 import { deriveDefaultName } from "./features/source-editor/default-name";
 import type { CredentialScope, CredentialSummary, ReloadSummary, Row, SearchResponse, SourceDetail, SourceInfo, WinAuthStatus } from "./shared/types";
 import { guideNameForType, parentKindForType, representativeTypeForCredentialScope as representativeTypeForScope } from "./source-types/registry";
@@ -1510,14 +1511,13 @@ $<HTMLButtonElement>("column-map-save").onclick = async () => {
       cfg.column_aliases = aliases;
 
       if (newField) {
-        let disp = cfg.display_columns as string[] | undefined;
-        if (disp === undefined) {
-          if (!visible) disp = r.fields.filter((f) => f !== newField);
-        } else {
-          disp = disp.filter((f) => f !== newField);
-          if (visible) disp.push(newField);
-        }
-        if (disp !== undefined) cfg.display_columns = disp;
+        const displayColumns = withFieldVisibility(
+          cfg.display_columns as string[] | undefined,
+          r.fields,
+          newField,
+          visible,
+        );
+        if (displayColumns !== undefined) cfg.display_columns = displayColumns;
       }
 
       await invoke("update_source", { id: r.sourceId, name: r.detail.name, configJson: JSON.stringify(cfg) });
@@ -3820,24 +3820,7 @@ function buildConfigFromFields(): { config: Record<string, unknown>; missingText
     if (f.optional && (f.kind === "text" || f.kind === "password") && String(v).trim() === "") continue;
     config[f.key] = v;
   }
-  const missingText = def.fields.some((f) => (f.kind === "text" || f.kind === "password") && !f.optional && !String(config[f.key] ?? "").trim());
-  // excel_range: 手動指定時のセル参照バリデーション
-  if (typeSel.value === "excel_range" || typeSel.value === "excel_cell") {
-    const cellPattern = /^[A-Za-z]{1,3}[1-9][0-9]*$/;
-    if (config["start_mode"] === "manual") {
-      const sc = String(config["start_cell"] ?? "").trim();
-      if (!sc || !cellPattern.test(sc)) {
-        return { config, missingText: true }; // 不正なセル参照として必須未入力扱い
-      }
-    }
-    if (config["end_mode"] === "manual") {
-      const ec = String(config["end_cell"] ?? "").trim();
-      if (!ec || !cellPattern.test(ec)) {
-        return { config, missingText: true };
-      }
-    }
-  }
-  return { config, missingText };
+  return { config, missingText: isConfigIncomplete(typeSel.value, def.fields, config) };
 }
 
 // ---- フィールド役割エディタ（要件 §9-3）----
