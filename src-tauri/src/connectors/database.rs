@@ -56,8 +56,8 @@ fn pg_quote(v: &str) -> String {
     format!("'{escaped}'")
 }
 
-impl Connector for PostgresConnector {
-    fn fetch(&self) -> Result<Vec<Record>> {
+impl PostgresConnector {
+    fn schema_name(&self) -> Result<&str> {
         let schema = self.schema.as_deref().unwrap_or("public");
         if !is_safe_sql_ident(&self.table) || !is_safe_sql_ident(schema) {
             return Err(anyhow!(
@@ -66,6 +66,10 @@ impl Connector for PostgresConnector {
                 self.table
             ));
         }
+        Ok(schema)
+    }
+
+    fn connect(&self) -> Result<postgres::Client> {
         let port = self.port.as_ref().map(|p| p.to_u16(5432)).unwrap_or(5432);
         // 値は必ずクォート＋エスケープする。素の format! だと空白入りパスワード等で
         // キーワード/値の区切りが壊れ、後続に別パラメータ（host= 等）を注入されうる。
@@ -84,9 +88,15 @@ impl Connector for PostgresConnector {
             .danger_accept_invalid_certs(self.ssl_accept_invalid_certs.unwrap_or(false))
             .build()
             .map_err(|e| anyhow!("TLS の初期化に失敗: {e}"))?;
-        let mut client =
-            postgres::Client::connect(&conn_str, postgres_native_tls::MakeTlsConnector::new(tls))
-                .map_err(|e| anyhow!("PostgreSQL への接続に失敗: {e}"))?;
+        postgres::Client::connect(&conn_str, postgres_native_tls::MakeTlsConnector::new(tls))
+            .map_err(|e| anyhow!("PostgreSQL への接続に失敗: {e}"))
+    }
+}
+
+impl Connector for PostgresConnector {
+    fn fetch(&self) -> Result<Vec<Record>> {
+        let schema = self.schema_name()?;
+        let mut client = self.connect()?;
         // row_to_json で行ごと JSON 化して受け取ることで、列の型ごとの分岐が不要になる。
         let sql = format!(
             "SELECT row_to_json(t) FROM \"{schema}\".\"{}\" t LIMIT 20000",
@@ -107,6 +117,20 @@ impl Connector for PostgresConnector {
             }
         }
         Ok(out)
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        let schema = self.schema_name()?;
+        let mut client = self.connect()?;
+        let sql = format!("SELECT * FROM \"{schema}\".\"{}\" LIMIT 0", self.table);
+        let statement = client
+            .prepare(&sql)
+            .map_err(|e| anyhow!("列情報の取得に失敗: {e}"))?;
+        Ok(statement
+            .columns()
+            .iter()
+            .map(|column| column.name().to_string())
+            .collect())
     }
 }
 
@@ -159,12 +183,8 @@ fn mysql_value_to_string(v: &mysql::Value) -> String {
     }
 }
 
-impl Connector for MysqlConnector {
-    fn fetch(&self) -> Result<Vec<Record>> {
-        use mysql::prelude::Queryable;
-        if !is_safe_sql_ident(&self.table) {
-            return Err(anyhow!("不正なテーブル名: {}", self.table));
-        }
+impl MysqlConnector {
+    fn options(&self) -> Result<mysql::OptsBuilder> {
         let port = self.port.as_ref().map(|p| p.to_u16(3306)).unwrap_or(3306);
         let url = format!(
             "mysql://{}:{}@{}:{}/{}",
@@ -185,7 +205,18 @@ impl Connector for MysqlConnector {
                 ),
             ));
         }
-        let pool = mysql::Pool::new(opts).map_err(|e| anyhow!("MySQL への接続に失敗: {e}"))?;
+        Ok(opts)
+    }
+}
+
+impl Connector for MysqlConnector {
+    fn fetch(&self) -> Result<Vec<Record>> {
+        use mysql::prelude::Queryable;
+        if !is_safe_sql_ident(&self.table) {
+            return Err(anyhow!("不正なテーブル名: {}", self.table));
+        }
+        let pool =
+            mysql::Pool::new(self.options()?).map_err(|e| anyhow!("MySQL への接続に失敗: {e}"))?;
         let mut conn = pool
             .get_conn()
             .map_err(|e| anyhow!("MySQL 接続の確立に失敗: {e}"))?;
@@ -212,5 +243,46 @@ impl Connector for MysqlConnector {
             out.push(make_record(pairs, "", &self.common));
         }
         Ok(out)
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        use mysql::prelude::Queryable;
+        if !is_safe_sql_ident(&self.table) {
+            return Err(anyhow!("不正なテーブル名: {}", self.table));
+        }
+        let pool =
+            mysql::Pool::new(self.options()?).map_err(|e| anyhow!("MySQL への接続に失敗: {e}"))?;
+        let mut conn = pool
+            .get_conn()
+            .map_err(|e| anyhow!("MySQL 接続の確立に失敗: {e}"))?;
+        let sql = format!("SELECT * FROM `{}` LIMIT 0", self.table);
+        let result = conn
+            .query_iter(&sql)
+            .map_err(|e| anyhow!("列情報の取得に失敗: {e}"))?;
+        Ok(result
+            .columns()
+            .as_ref()
+            .iter()
+            .map(|column| column.name_str().to_string())
+            .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_safe_sql_ident, pg_quote};
+
+    #[test]
+    fn sql_identifier_allowlist_rejects_injection_characters() {
+        assert!(is_safe_sql_ident("valid_123"));
+        assert!(!is_safe_sql_ident(""));
+        assert!(!is_safe_sql_ident("users; DROP TABLE users"));
+        assert!(!is_safe_sql_ident("schema.table"));
+    }
+
+    #[test]
+    fn postgres_connection_values_are_quoted() {
+        assert_eq!(pg_quote("pass word"), "'pass word'");
+        assert_eq!(pg_quote("a'b\\c"), r"'a\'b\\c'");
     }
 }
