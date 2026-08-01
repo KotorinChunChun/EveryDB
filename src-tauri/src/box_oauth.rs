@@ -28,7 +28,10 @@ pub const REDIRECT_URI: &str = "http://localhost:58913/box-callback";
 /// 簡易な CSRF 対策用のランダム文字列。ローカルループバックのみで完結する単発フローのため
 /// 暗号強度は不要（他プロセスから同じポートへ横取りされない限り漏れようがない）。
 fn random_state() -> String {
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
     format!("{nanos:x}{:x}", std::process::id())
 }
 
@@ -43,7 +46,9 @@ fn urlencode(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
             _ => out.push_str(&format!("%{b:02X}")),
         }
     }
@@ -110,7 +115,11 @@ pub const CANCELLED_MESSAGE: &str = "Box の認可をキャンセルしました
 /// （メインスレッドで待つとアプリがフリーズする。既存の Windows Hello 実装と同じ注意点）。
 /// `cancel` が true になったら（要件: 別プロファイルで誤って開いた等の理由での取消。§7-19）、
 /// タイムアウトを待たずに即座に諦める。
-fn wait_for_callback(listener: TcpListener, expected_state: &str, cancel: &std::sync::atomic::AtomicBool) -> Result<String> {
+fn wait_for_callback(
+    listener: TcpListener,
+    expected_state: &str,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<String> {
     use std::sync::atomic::Ordering;
     listener.set_nonblocking(true)?;
     let deadline = Instant::now() + AUTHORIZE_TIMEOUT;
@@ -128,7 +137,9 @@ fn wait_for_callback(listener: TcpListener, expected_state: &str, cancel: &std::
                     return Err(anyhow!("{CANCELLED_MESSAGE}"));
                 }
                 if Instant::now() >= deadline {
-                    return Err(anyhow!("認可がタイムアウトしました。3分以内にブラウザでの操作を完了してください"));
+                    return Err(anyhow!(
+                        "認可がタイムアウトしました。3分以内にブラウザでの操作を完了してください"
+                    ));
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }
@@ -139,7 +150,10 @@ fn wait_for_callback(listener: TcpListener, expected_state: &str, cancel: &std::
 
 /// 受理した1接続を処理する。認可コールバックとして扱えない接続（データを送ってこない
 /// プリコネクト、`/favicon.ico` 等）では `None` を返し、呼び出し側に待機を続けさせる。
-fn handle_callback_connection(mut stream: TcpStream, expected_state: &str) -> Option<Result<String>> {
+fn handle_callback_connection(
+    mut stream: TcpStream,
+    expected_state: &str,
+) -> Option<Result<String>> {
     stream.set_nonblocking(false).ok()?;
     // データを送ってこない接続で無期限にブロックしないよう読み取り制限時間を設ける
     // （ここで固まると取消ボタンも効かなくなる）。
@@ -163,7 +177,9 @@ fn handle_callback_connection(mut stream: TcpStream, expected_state: &str) -> Op
 
     let result = match (params.get("code"), params.get("state")) {
         (Some(code), Some(state)) if state == expected_state => Ok(code.clone()),
-        (Some(_), Some(_)) => Err(anyhow!("認可応答の state が一致しません（別セッションの応答の可能性があります）")),
+        (Some(_), Some(_)) => Err(anyhow!(
+            "認可応答の state が一致しません（別セッションの応答の可能性があります）"
+        )),
         _ => {
             let err = params
                 .get("error_description")
@@ -193,7 +209,10 @@ fn token_request(form: &[(&str, &str)]) -> Result<(String, String)> {
     let body: Value = match resp {
         Ok(r) => r.into_json()?,
         Err(ureq::Error::Status(code, r)) => {
-            return Err(anyhow!("Box トークン取得失敗 {code}: {}", r.into_string().unwrap_or_default()));
+            return Err(anyhow!(
+                "Box トークン取得失敗 {code}: {}",
+                r.into_string().unwrap_or_default()
+            ));
         }
         Err(e) => return Err(anyhow!("Box 認証エンドポイントへの接続に失敗: {e}")),
     };
@@ -202,7 +221,11 @@ fn token_request(form: &[(&str, &str)]) -> Result<(String, String)> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow!("access_token が返りませんでした"))?
         .to_string();
-    let refresh_token = body.get("refresh_token").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let refresh_token = body
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
     Ok((access_token, refresh_token))
 }
 
@@ -219,7 +242,9 @@ pub fn authorize_interactive(
     let listener = bind_loopback()?;
     let state = random_state();
     let url = authorize_url(client_id, REDIRECT_URI, &state);
-    app.opener().open_url(url, None::<&str>).map_err(|e| anyhow!("ブラウザを開けませんでした: {e}"))?;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| anyhow!("ブラウザを開けませんでした: {e}"))?;
     let code = wait_for_callback(listener, &state, cancel)?;
     token_request(&[
         ("grant_type", "authorization_code"),
@@ -233,7 +258,11 @@ pub fn authorize_interactive(
 /// リフレッシュトークンからアクセストークンを再取得する（OAuth 2.0）。Box はリフレッシュの
 /// たびに refresh_token 自体もローテーションする（旧トークンは失効する）ため、戻り値の
 /// 新しい refresh_token を呼び出し側で必ず保存し直すこと。
-pub fn refresh(client_id: &str, client_secret: &str, refresh_token: &str) -> Result<(String, String)> {
+pub fn refresh(
+    client_id: &str,
+    client_secret: &str,
+    refresh_token: &str,
+) -> Result<(String, String)> {
     token_request(&[
         ("grant_type", "refresh_token"),
         ("refresh_token", refresh_token),
@@ -246,7 +275,11 @@ pub fn refresh(client_id: &str, client_secret: &str, refresh_token: &str) -> Res
 /// サービスアカウントのアクセストークンを取得する（§7-18: 法人用の選択肢として残す）。
 /// CCG のアクセストークンは毎回その場で新規発行されるだけで、refresh_token のような
 /// ローテーション管理は不要。
-pub fn client_credentials_token(client_id: &str, client_secret: &str, enterprise_id: &str) -> Result<String> {
+pub fn client_credentials_token(
+    client_id: &str,
+    client_secret: &str,
+    enterprise_id: &str,
+) -> Result<String> {
     let (access_token, _refresh_token) = token_request(&[
         ("grant_type", "client_credentials"),
         ("client_id", client_id),
@@ -280,6 +313,9 @@ mod tests {
 
     #[test]
     fn redirect_uri_matches_the_fixed_port() {
-        assert_eq!(REDIRECT_URI, format!("http://localhost:{REDIRECT_PORT}{REDIRECT_PATH}"));
+        assert_eq!(
+            REDIRECT_URI,
+            format!("http://localhost:{REDIRECT_PORT}{REDIRECT_PATH}")
+        );
     }
 }

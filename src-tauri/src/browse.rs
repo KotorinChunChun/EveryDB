@@ -45,13 +45,20 @@ pub fn notion_list_databases(token: &str) -> Result<Vec<NotionDbEntry>> {
         let value: Value = match resp {
             Ok(r) => r.into_json()?,
             Err(ureq::Error::Status(code, r)) => {
-                return Err(anyhow!("Notion API エラー {code}: {}", r.into_string().unwrap_or_default()))
+                return Err(anyhow!(
+                    "Notion API エラー {code}: {}",
+                    r.into_string().unwrap_or_default()
+                ))
             }
             Err(e) => return Err(anyhow!("Notion への接続に失敗: {e}")),
         };
         if let Some(results) = value.get("results").and_then(|v| v.as_array()) {
             for db in results {
-                let id = db.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let id = db
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let title = db
                     .get("title")
                     .and_then(|v| v.as_array())
@@ -66,8 +73,14 @@ pub fn notion_list_databases(token: &str) -> Result<Vec<NotionDbEntry>> {
                 out.push(NotionDbEntry { id, title });
             }
         }
-        let has_more = value.get("has_more").and_then(|v| v.as_bool()).unwrap_or(false);
-        start_cursor = value.get("next_cursor").and_then(|v| v.as_str()).map(String::from);
+        let has_more = value
+            .get("has_more")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        start_cursor = value
+            .get("next_cursor")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         if !has_more || start_cursor.is_none() {
             break;
         }
@@ -114,21 +127,43 @@ pub fn airtable_list_bases(token: &str) -> Result<Vec<AirtableBaseEntry>> {
         let value: Value = match resp {
             Ok(r) => r.into_json()?,
             Err(ureq::Error::Status(code, r)) => {
-                return Err(anyhow!("Airtable API エラー {code}: {}", r.into_string().unwrap_or_default()))
+                return Err(anyhow!(
+                    "Airtable API エラー {code}: {}",
+                    r.into_string().unwrap_or_default()
+                ))
             }
             Err(e) => return Err(anyhow!("Airtable への接続に失敗: {e}")),
         };
         if let Some(bases) = value.get("bases").and_then(|v| v.as_array()) {
             for b in bases {
-                let id = b.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let name = b.get("name").and_then(|v| v.as_str()).unwrap_or("(無題 Base)").to_string();
-                let permission_level = b.get("permissionLevel").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let id = b
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let name = b
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("(無題 Base)")
+                    .to_string();
+                let permission_level = b
+                    .get("permissionLevel")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 if !id.is_empty() {
-                    out.push(AirtableBaseEntry { id, name, permission_level });
+                    out.push(AirtableBaseEntry {
+                        id,
+                        name,
+                        permission_level,
+                    });
                 }
             }
         }
-        offset = value.get("offset").and_then(|v| v.as_str()).map(String::from);
+        offset = value
+            .get("offset")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         if offset.is_none() {
             break;
         }
@@ -146,31 +181,67 @@ pub fn airtable_list_tables(token: &str, base_id: &str) -> Result<Vec<AirtableTa
     let value: Value = match resp {
         Ok(r) => r.into_json()?,
         Err(ureq::Error::Status(code, r)) => {
-            return Err(anyhow!("Airtable API エラー {code}: {}", r.into_string().unwrap_or_default()))
+            return Err(anyhow!(
+                "Airtable API エラー {code}: {}",
+                r.into_string().unwrap_or_default()
+            ))
         }
         Err(e) => return Err(anyhow!("Airtable への接続に失敗: {e}")),
     };
     let mut out = Vec::new();
     if let Some(tables) = value.get("tables").and_then(|v| v.as_array()) {
         for t in tables {
-            let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("(無題テーブル)").to_string();
-            let primary_field_id = t.get("primaryFieldId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let id = t
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let name = t
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(無題テーブル)")
+                .to_string();
+            let primary_field_id = t
+                .get("primaryFieldId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             if id.is_empty() {
                 continue;
             }
             let mut views = Vec::new();
             if let Some(views_arr) = t.get("views").and_then(|v| v.as_array()) {
                 for v in views_arr {
-                    let vid = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                    let vname = v.get("name").and_then(|x| x.as_str()).unwrap_or("(無題ビュー)").to_string();
-                    let vtype = v.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let vid = v
+                        .get("id")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let vname = v
+                        .get("name")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("(無題ビュー)")
+                        .to_string();
+                    let vtype = v
+                        .get("type")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     if !vid.is_empty() {
-                        views.push(AirtableViewEntry { id: vid, name: vname, type_: vtype });
+                        views.push(AirtableViewEntry {
+                            id: vid,
+                            name: vname,
+                            type_: vtype,
+                        });
                     }
                 }
             }
-            out.push(AirtableTableEntry { id, name, primary_field_id, views });
+            out.push(AirtableTableEntry {
+                id,
+                name,
+                primary_field_id,
+                views,
+            });
         }
     }
     Ok(out)
@@ -185,14 +256,22 @@ pub struct SiteEntry {
 
 pub fn graph_list_sites(auth: &GraphAuthArgs) -> Result<Vec<SiteEntry>> {
     let client = graph_client(auth)?;
-    let url = "https://graph.microsoft.com/v1.0/sites?search=*&$select=id,displayName,webUrl&$top=200";
+    let url =
+        "https://graph.microsoft.com/v1.0/sites?search=*&$select=id,displayName,webUrl&$top=200";
     Ok(client
         .get_all(url)?
         .iter()
         .filter_map(|s| {
             let web_url = s.get("webUrl").and_then(|v| v.as_str())?.to_string();
-            let display_name = s.get("displayName").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            Some(SiteEntry { web_url, display_name })
+            let display_name = s
+                .get("displayName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(SiteEntry {
+                web_url,
+                display_name,
+            })
         })
         .collect())
 }
@@ -212,8 +291,15 @@ pub fn graph_list_teams(auth: &GraphAuthArgs) -> Result<Vec<TeamEntry>> {
         .iter()
         .filter_map(|t| {
             let group_id = t.get("id").and_then(|v| v.as_str())?.to_string();
-            let display_name = t.get("displayName").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            Some(TeamEntry { group_id, display_name })
+            let display_name = t
+                .get("displayName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(TeamEntry {
+                group_id,
+                display_name,
+            })
         })
         .collect())
 }
@@ -238,7 +324,10 @@ pub struct SiteResourceEntry {
     pub kind: String,
 }
 
-pub fn graph_list_site_resources(auth: &GraphAuthArgs, site_url: &str) -> Result<Vec<SiteResourceEntry>> {
+pub fn graph_list_site_resources(
+    auth: &GraphAuthArgs,
+    site_url: &str,
+) -> Result<Vec<SiteResourceEntry>> {
     let client = graph_client(auth)?;
     let sid = crate::graph::site_id(&client, site_url)?;
     let lists = client.get(&format!(
@@ -247,17 +336,32 @@ pub fn graph_list_site_resources(auth: &GraphAuthArgs, site_url: &str) -> Result
     let mut out = Vec::new();
     if let Some(arr) = lists.get("value").and_then(|v| v.as_array()) {
         for l in arr {
-            let template = l.get("list").and_then(|x| x.get("template")).and_then(|v| v.as_str()).unwrap_or("");
+            let template = l
+                .get("list")
+                .and_then(|x| x.get("template"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             // 非表示システムリストは除外(拡張機能一覧・分類法隠しリスト等)。
-            if matches!(template, "webTemplateExtensionsList" | "" ) {
+            if matches!(template, "webTemplateExtensionsList" | "") {
                 continue;
             }
-            let display_name = l.get("displayName").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let display_name = l
+                .get("displayName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             if display_name.is_empty() {
                 continue;
             }
-            let kind = if template == "documentLibrary" { "library" } else { "list" };
-            out.push(SiteResourceEntry { display_name, kind: kind.to_string() });
+            let kind = if template == "documentLibrary" {
+                "library"
+            } else {
+                "list"
+            };
+            out.push(SiteResourceEntry {
+                display_name,
+                kind: kind.to_string(),
+            });
         }
     }
     Ok(out)
@@ -273,8 +377,9 @@ pub fn list_excel_sheets(path: &str) -> Result<Vec<String>> {
 
 /// ブック内の Excel テーブル(ListObject)名一覧。xlsx/xlsm 形式が必要。
 pub fn list_excel_tables(path: &str) -> Result<Vec<String>> {
-    let mut wb: calamine::Xlsx<_> = calamine::open_workbook(path)
-        .map_err(|e| anyhow!("Excel テーブル(ListObject)の読み込みには xlsx/xlsm 形式が必要です: {e}"))?;
+    let mut wb: calamine::Xlsx<_> = calamine::open_workbook(path).map_err(|e| {
+        anyhow!("Excel テーブル(ListObject)の読み込みには xlsx/xlsm 形式が必要です: {e}")
+    })?;
     wb.load_tables()?;
     Ok(wb.table_names().into_iter().cloned().collect())
 }
@@ -290,21 +395,31 @@ pub struct ExcelGridPreview {
 /// - "top": 先頭行・先頭列からの 10x10
 /// - "bottom_left" / "bottom": 最終行の先頭列からの 10x10
 /// - "bottom_right": 最終行の最終列からの 10x10
-pub fn preview_excel_grid(path: &str, sheet: &str, max_rows: usize, max_cols: usize, mode: &str) -> Result<ExcelGridPreview> {
+pub fn preview_excel_grid(
+    path: &str,
+    sheet: &str,
+    max_rows: usize,
+    max_cols: usize,
+    mode: &str,
+) -> Result<ExcelGridPreview> {
     use calamine::Reader;
     let mut wb = calamine::open_workbook_auto(path)?;
     let range = wb.worksheet_range(sheet)?;
     let end_pos = range.end().unwrap_or((0, 0));
-    
+
     let start_row = if mode == "bottom" || mode == "bottom_left" || mode == "bottom_right" {
-        end_pos.0.saturating_sub((max_rows as u32).saturating_sub(1))
+        end_pos
+            .0
+            .saturating_sub((max_rows as u32).saturating_sub(1))
     } else {
         0
     };
     let end_row = start_row + (max_rows as u32).saturating_sub(1);
 
     let start_col = if mode == "bottom_right" {
-        end_pos.1.saturating_sub((max_cols as u32).saturating_sub(1))
+        end_pos
+            .1
+            .saturating_sub((max_cols as u32).saturating_sub(1))
     } else {
         0
     };
@@ -314,7 +429,10 @@ pub fn preview_excel_grid(path: &str, sheet: &str, max_rows: usize, max_cols: us
         let mut row_vals = Vec::new();
         for c in 0..max_cols as u32 {
             let col_idx = start_col + c;
-            let val = range.get_value((r, col_idx)).map(crate::connectors::cell_to_string).unwrap_or_default();
+            let val = range
+                .get_value((r, col_idx))
+                .map(crate::connectors::cell_to_string)
+                .unwrap_or_default();
             row_vals.push(val);
         }
         out.push(row_vals);
@@ -334,7 +452,10 @@ pub fn list_sqlite_tables(path: &str) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
     )?;
-    let names = stmt.query_map([], |r| r.get::<_, String>(0))?.filter_map(|r| r.ok()).collect();
+    let names = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .filter_map(|r| r.ok())
+        .collect();
     Ok(names)
 }
 
@@ -348,7 +469,9 @@ pub fn list_accdb_tables(path: &str) -> Result<Vec<String>> {
     // TablesRow(既定の tables())は narrow(ANSI) バインドのため日本語テーブル名が文字化けする。
     // preallocate + into_tables_cursor の生カーソルを使い、AccessConnector と同じ
     // get_wide_text(UTF-16) で取得することで Unicode 安全にする。
-    let stmt = conn.preallocate().map_err(|e| anyhow!("ODBC ステートメント確保に失敗: {e}"))?;
+    let stmt = conn
+        .preallocate()
+        .map_err(|e| anyhow!("ODBC ステートメント確保に失敗: {e}"))?;
     let mut cursor = stmt
         .into_tables_cursor("", "", "", "TABLE")
         .map_err(|e| anyhow!("テーブル一覧の取得に失敗: {e}"))?;
@@ -361,7 +484,9 @@ pub fn list_accdb_tables(path: &str) -> Result<Vec<String>> {
         if !not_null {
             continue;
         }
-        let name = String::from_utf16_lossy(&buf).trim_end_matches('\u{0}').to_string();
+        let name = String::from_utf16_lossy(&buf)
+            .trim_end_matches('\u{0}')
+            .to_string();
         // Access の内部システムテーブル(MSys*)は除外。
         if !name.starts_with("MSys") {
             out.push(name);
@@ -389,7 +514,8 @@ pub fn browse_browser_profiles(browser: &str, target: &str) -> Result<Vec<Browse
 }
 
 fn chromium_user_data_dir(browser: &str) -> Result<std::path::PathBuf> {
-    let local = std::env::var("LOCALAPPDATA").map_err(|_| anyhow!("環境変数 LOCALAPPDATA が取得できません"))?;
+    let local = std::env::var("LOCALAPPDATA")
+        .map_err(|_| anyhow!("環境変数 LOCALAPPDATA が取得できません"))?;
     let sub = match browser {
         "chrome" => r"Google\Chrome\User Data",
         "edge" => r"Microsoft\Edge\User Data",
@@ -402,7 +528,9 @@ fn chromium_user_data_dir(browser: &str) -> Result<std::path::PathBuf> {
 
 /// `Local State`（User Data 直下の JSON）からプロファイルフォルダ名 → 表示名の対応を読む。
 /// 取得できなくても致命的ではない（フォルダ名をそのまま表示名にフォールバックする）。
-fn read_chromium_profile_names(user_data: &std::path::Path) -> std::collections::HashMap<String, String> {
+fn read_chromium_profile_names(
+    user_data: &std::path::Path,
+) -> std::collections::HashMap<String, String> {
     match std::fs::read_to_string(user_data.join("Local State")) {
         Ok(text) => parse_local_state_profile_names(&text),
         Err(_) => std::collections::HashMap::new(),
@@ -413,7 +541,11 @@ fn read_chromium_profile_names(user_data: &std::path::Path) -> std::collections:
 fn parse_local_state_profile_names(text: &str) -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
     if let Ok(v) = serde_json::from_str::<Value>(text) {
-        if let Some(cache) = v.get("profile").and_then(|p| p.get("info_cache")).and_then(|c| c.as_object()) {
+        if let Some(cache) = v
+            .get("profile")
+            .and_then(|p| p.get("info_cache"))
+            .and_then(|c| c.as_object())
+        {
             for (dir, info) in cache {
                 if let Some(name) = info.get("name").and_then(|n| n.as_str()) {
                     map.insert(dir.clone(), name.to_string());
@@ -432,10 +564,16 @@ fn chromium_profiles(browser: &str, target: &str) -> Result<Vec<BrowserProfileEn
             user_data.display()
         ));
     }
-    let target_file = if target == "bookmarks" { "Bookmarks" } else { "History" };
+    let target_file = if target == "bookmarks" {
+        "Bookmarks"
+    } else {
+        "History"
+    };
     let names = read_chromium_profile_names(&user_data);
     let mut out = Vec::new();
-    for entry in std::fs::read_dir(&user_data).map_err(|e| anyhow!("{} の読み込みに失敗: {e}", user_data.display()))? {
+    for entry in std::fs::read_dir(&user_data)
+        .map_err(|e| anyhow!("{} の読み込みに失敗: {e}", user_data.display()))?
+    {
         let entry = entry?;
         if !entry.file_type()?.is_dir() {
             continue;
@@ -443,14 +581,26 @@ fn chromium_profiles(browser: &str, target: &str) -> Result<Vec<BrowserProfileEn
         let dir_name = entry.file_name().to_string_lossy().to_string();
         let file_path = entry.path().join(target_file);
         if file_path.is_file() {
-            let display_name = names.get(&dir_name).cloned().unwrap_or_else(|| dir_name.clone());
-            let label = if display_name == dir_name { dir_name.clone() } else { format!("{display_name} ({dir_name})") };
-            out.push(BrowserProfileEntry { label, path: file_path.to_string_lossy().to_string() });
+            let display_name = names
+                .get(&dir_name)
+                .cloned()
+                .unwrap_or_else(|| dir_name.clone());
+            let label = if display_name == dir_name {
+                dir_name.clone()
+            } else {
+                format!("{display_name} ({dir_name})")
+            };
+            out.push(BrowserProfileEntry {
+                label,
+                path: file_path.to_string_lossy().to_string(),
+            });
         }
     }
     out.sort_by(|a, b| a.label.cmp(&b.label));
     if out.is_empty() {
-        return Err(anyhow!("{target_file} を含むプロファイルが見つかりませんでした"));
+        return Err(anyhow!(
+            "{target_file} を含むプロファイルが見つかりませんでした"
+        ));
     }
     Ok(out)
 }
@@ -470,8 +620,15 @@ fn parse_profiles_ini(text: &str) -> Vec<IniProfile> {
     let mut name: Option<String> = None;
     let mut path: Option<String> = None;
     let mut is_relative = true;
-    let flush = |name: &Option<String>, path: &Option<String>, is_relative: bool, out: &mut Vec<IniProfile>| {
-        out.push(IniProfile { name: name.clone(), path: path.clone(), is_relative });
+    let flush = |name: &Option<String>,
+                 path: &Option<String>,
+                 is_relative: bool,
+                 out: &mut Vec<IniProfile>| {
+        out.push(IniProfile {
+            name: name.clone(),
+            path: path.clone(),
+            is_relative,
+        });
     };
     for line in text.lines() {
         let line = line.trim();
@@ -504,14 +661,19 @@ fn parse_profiles_ini(text: &str) -> Vec<IniProfile> {
 }
 
 fn firefox_profiles() -> Result<Vec<BrowserProfileEntry>> {
-    let appdata = std::env::var("APPDATA").map_err(|_| anyhow!("環境変数 APPDATA が取得できません"))?;
+    let appdata =
+        std::env::var("APPDATA").map_err(|_| anyhow!("環境変数 APPDATA が取得できません"))?;
     let ff_root = std::path::Path::new(&appdata).join(r"Mozilla\Firefox");
     let mut out = Vec::new();
 
     if let Ok(text) = std::fs::read_to_string(ff_root.join("profiles.ini")) {
         for profile in parse_profiles_ini(&text) {
             let Some(p) = &profile.path else { continue };
-            let full = if profile.is_relative { ff_root.join(p) } else { std::path::PathBuf::from(p) };
+            let full = if profile.is_relative {
+                ff_root.join(p)
+            } else {
+                std::path::PathBuf::from(p)
+            };
             let places = full.join("places.sqlite");
             if places.is_file() {
                 out.push(BrowserProfileEntry {
@@ -553,7 +715,12 @@ mod tests {
     use std::path::Path;
 
     fn sample(name: &str) -> String {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("samples").join(name).to_string_lossy().into_owned()
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("samples")
+            .join(name)
+            .to_string_lossy()
+            .into_owned()
     }
 
     #[test]
@@ -576,10 +743,10 @@ mod tests {
         assert_eq!(grid_top.rows.len(), 5);
         assert_eq!(grid_top.rows[0].len(), 5);
 
-        let grid_bottom = preview_excel_grid(&sample("employees.xlsx"), "社員", 5, 5, "bottom").unwrap();
+        let grid_bottom =
+            preview_excel_grid(&sample("employees.xlsx"), "社員", 5, 5, "bottom").unwrap();
         assert_eq!(grid_bottom.rows.len(), 5);
     }
-
 
     #[test]
     fn list_sqlite_tables_excludes_sqlite_internal() {
@@ -678,7 +845,10 @@ Path=D:\\FirefoxData\\other
         let profiles = parse_profiles_ini(ini);
         assert_eq!(profiles.len(), 2);
         assert_eq!(profiles[0].name.as_deref(), Some("既定プロファイル"));
-        assert_eq!(profiles[0].path.as_deref(), Some("xxxxxxxx.default-release"));
+        assert_eq!(
+            profiles[0].path.as_deref(),
+            Some("xxxxxxxx.default-release")
+        );
         assert!(profiles[0].is_relative);
         assert_eq!(profiles[1].name.as_deref(), Some("別プロファイル"));
         assert!(!profiles[1].is_relative);

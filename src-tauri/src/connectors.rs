@@ -50,7 +50,11 @@ fn normalize_path_in_config(config_json: &str) -> Result<String> {
             }
         }
     }
-    if changed { Ok(serde_json::to_string(&v)?) } else { Ok(config_json.to_string()) }
+    if changed {
+        Ok(serde_json::to_string(&v)?)
+    } else {
+        Ok(config_json.to_string())
+    }
 }
 
 /// 種別 + config_json からコネクタを生成するファクトリ。
@@ -68,20 +72,36 @@ pub fn build_connector(type_: &str, config_json: &str) -> Result<Box<dyn Connect
         "excel_range" | "excel_cell" => Ok(Box::new(from_str::<ExcelRangeConnector>(config_json)?)),
         "excel_sheets" => Ok(Box::new(from_str::<ExcelSheetsConnector>(config_json)?)),
         "folder" => Ok(Box::new(from_str::<FolderConnector>(config_json)?)),
-        "ime_msime" => Ok(Box::new(ImeConnector::new(from_str::<ImeCfg>(config_json)?, ImeFlavor::MsIme))),
-        "ime_google" => Ok(Box::new(ImeConnector::new(from_str::<ImeCfg>(config_json)?, ImeFlavor::Google))),
+        "ime_msime" => Ok(Box::new(ImeConnector::new(
+            from_str::<ImeCfg>(config_json)?,
+            ImeFlavor::MsIme,
+        ))),
+        "ime_google" => Ok(Box::new(ImeConnector::new(
+            from_str::<ImeCfg>(config_json)?,
+            ImeFlavor::Google,
+        ))),
         "accdb" => Ok(Box::new(from_str::<AccessConnector>(config_json)?)),
         "notion" => Ok(Box::new(from_str::<NotionConnector>(config_json)?)),
         "graph_entra_users" => Ok(Box::new(from_str::<GraphUsersConnector>(config_json)?)),
         "graph_entra_groups" => Ok(Box::new(from_str::<GraphGroupsConnector>(config_json)?)),
         "graph_teams" => Ok(Box::new(from_str::<GraphTeamsConnector>(config_json)?)),
-        "graph_sharepoint_list" => Ok(Box::new(from_str::<GraphSharePointListConnector>(config_json)?)),
-        "graph_sharepoint_library" => Ok(Box::new(from_str::<GraphSharePointLibraryConnector>(config_json)?)),
+        "graph_sharepoint_list" => Ok(Box::new(from_str::<GraphSharePointListConnector>(
+            config_json,
+        )?)),
+        "graph_sharepoint_library" => Ok(Box::new(from_str::<GraphSharePointLibraryConnector>(
+            config_json,
+        )?)),
         "browser_history" => Ok(Box::new(from_str::<BrowserHistoryConnector>(config_json)?)),
-        "browser_bookmarks" => Ok(Box::new(from_str::<BrowserBookmarksConnector>(config_json)?)),
-        "browser_downloads" => Ok(Box::new(from_str::<BrowserDownloadsConnector>(config_json)?)),
+        "browser_bookmarks" => Ok(Box::new(from_str::<BrowserBookmarksConnector>(
+            config_json,
+        )?)),
+        "browser_downloads" => Ok(Box::new(from_str::<BrowserDownloadsConnector>(
+            config_json,
+        )?)),
         "graph_entra_devices" => Ok(Box::new(from_str::<GraphDevicesConnector>(config_json)?)),
-        "graph_intune_devices" => Ok(Box::new(from_str::<GraphIntuneDevicesConnector>(config_json)?)),
+        "graph_intune_devices" => Ok(Box::new(from_str::<GraphIntuneDevicesConnector>(
+            config_json,
+        )?)),
         "graph_licenses" => Ok(Box::new(from_str::<GraphLicensesConnector>(config_json)?)),
         "graph_calendar" => Ok(Box::new(from_str::<GraphCalendarConnector>(config_json)?)),
         "graph_onedrive" => Ok(Box::new(from_str::<GraphOneDriveConnector>(config_json)?)),
@@ -123,7 +143,12 @@ struct CommonCfg {
     column_order: Option<Vec<String>>,
 }
 
-fn make_record_with_row(pairs: Vec<(String, String)>, default_open_ref: &str, cfg: &CommonCfg, row_number: Option<i64>) -> Record {
+fn make_record_with_row(
+    pairs: Vec<(String, String)>,
+    default_open_ref: &str,
+    cfg: &CommonCfg,
+    row_number: Option<i64>,
+) -> Record {
     // label / open_ref / 検索テキストは「表示 ON/OFF」の影響を受けない、元の全フィールドから計算する
     // （検索対象列は searchable_columns で別軸に制御するため。要件 §9-3）。
     let find = |col: &str| pairs.iter().find(|(k, _)| k == col).map(|(_, v)| v.clone());
@@ -143,7 +168,11 @@ fn make_record_with_row(pairs: Vec<(String, String)>, default_open_ref: &str, cf
             .map(|(_, v)| v.as_str())
             .collect::<Vec<_>>()
             .join(" "),
-        None => pairs.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>().join(" "),
+        None => pairs
+            .iter()
+            .map(|(_, v)| v.as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
     };
 
     // 表示対象の絞り込み(display_columns) + 表示順(column_order) を適用する順序で pairs を並べ替えてから
@@ -166,14 +195,29 @@ fn make_record_with_row(pairs: Vec<(String, String)>, default_open_ref: &str, cf
 
     let mut fields = Map::new();
     for (k, v) in ordered_pairs {
-        let show = cfg.display_columns.as_ref().map(|cols| cols.contains(k)).unwrap_or(true);
+        let show = cfg
+            .display_columns
+            .as_ref()
+            .map(|cols| cols.contains(k))
+            .unwrap_or(true);
         if !show {
             continue;
         }
-        let key = cfg.column_aliases.as_ref().and_then(|m| m.get(k)).cloned().unwrap_or_else(|| k.clone());
+        let key = cfg
+            .column_aliases
+            .as_ref()
+            .and_then(|m| m.get(k))
+            .cloned()
+            .unwrap_or_else(|| k.clone());
         fields.insert(key, Value::String(v.clone()));
     }
-    Record { label, open_ref, row_number, fields, search_text }
+    Record {
+        label,
+        open_ref,
+        row_number,
+        fields,
+        search_text,
+    }
 }
 
 fn make_record(pairs: Vec<(String, String)>, default_open_ref: &str, cfg: &CommonCfg) -> Record {
@@ -182,8 +226,14 @@ fn make_record(pairs: Vec<(String, String)>, default_open_ref: &str, cfg: &Commo
 
 /// フィールド役割設定(display/searchable/label/open_ref/alias)を取り除いた素の config で
 /// fetch し、返ってきた全レコードのフィールド名を出現順・重複無しで返す(プレビュー用。要件 §9-3)。
-const ROLE_KEYS: &[&str] =
-    &["display_columns", "column_aliases", "searchable_columns", "label_column", "open_ref_column", "column_order"];
+const ROLE_KEYS: &[&str] = &[
+    "display_columns",
+    "column_aliases",
+    "searchable_columns",
+    "label_column",
+    "open_ref_column",
+    "column_order",
+];
 
 pub fn raw_field_names(type_: &str, config_json: &str) -> Result<Vec<String>> {
     let mut v: Value = serde_json::from_str(config_json)?;
@@ -232,12 +282,18 @@ impl Connector for CsvConnector {
         }
 
         let start = (self.skip_rows_top as usize).min(all.len());
-        let end = all.len().saturating_sub(self.skip_rows_bottom as usize).max(start);
+        let end = all
+            .len()
+            .saturating_sub(self.skip_rows_bottom as usize)
+            .max(start);
         let mut iter = all[start..end].iter();
 
         let headers: Vec<String> = if self.has_header {
             match iter.next() {
-                Some(first) => first.iter().map(|s| s.trim_start_matches('\u{feff}').to_string()).collect(),
+                Some(first) => first
+                    .iter()
+                    .map(|s| s.trim_start_matches('\u{feff}').to_string())
+                    .collect(),
                 None => return Ok(Vec::new()),
             }
         } else {
@@ -252,11 +308,19 @@ impl Connector for CsvConnector {
                 .iter()
                 .enumerate()
                 .map(|(i, v)| {
-                    let name = headers.get(i).cloned().unwrap_or_else(|| format!("col{}", i + 1));
+                    let name = headers
+                        .get(i)
+                        .cloned()
+                        .unwrap_or_else(|| format!("col{}", i + 1));
                     (name, v.to_string())
                 })
                 .collect();
-            out.push(make_record_with_row(pairs, &self.path, &self.common, Some(row_idx)));
+            out.push(make_record_with_row(
+                pairs,
+                &self.path,
+                &self.common,
+                Some(row_idx),
+            ));
         }
         Ok(out)
     }
@@ -311,7 +375,12 @@ impl Connector for SqliteConnector {
             let pairs: Vec<(String, String)> = (0..ncol)
                 .map(|i| (col_names[i].clone(), value_ref_to_string(r.get_ref(i))))
                 .collect();
-            out.push(make_record_with_row(pairs, &self.path, &self.common, Some(row_idx)));
+            out.push(make_record_with_row(
+                pairs,
+                &self.path,
+                &self.common,
+                Some(row_idx),
+            ));
         }
         Ok(out)
     }
@@ -367,7 +436,9 @@ pub(crate) fn cell_to_string(d: &calamine::Data) -> String {
 /// "B2" のような A1 表記を 0 始まりの (row, col) に変換。
 fn parse_a1(cell: &str) -> Result<(u32, u32)> {
     let cell = cell.trim();
-    let split = cell.find(|c: char| c.is_ascii_digit()).ok_or_else(|| anyhow!("不正なセル指定: {cell}"))?;
+    let split = cell
+        .find(|c: char| c.is_ascii_digit())
+        .ok_or_else(|| anyhow!("不正なセル指定: {cell}"))?;
     let (letters, digits) = cell.split_at(split);
     if letters.is_empty() || digits.is_empty() {
         return Err(anyhow!("不正なセル指定: {cell}"));
@@ -421,7 +492,11 @@ impl Connector for ExcelTableConnector {
             for (idx, row) in table.data().rows().enumerate() {
                 let pairs: Vec<(String, String)> = (0..headers.len())
                     .map(|i| {
-                        let name = if headers[i].is_empty() { format!("col{}", i + 1) } else { headers[i].clone() };
+                        let name = if headers[i].is_empty() {
+                            format!("col{}", i + 1)
+                        } else {
+                            headers[i].clone()
+                        };
                         let val = row.get(i).map(cell_to_string).unwrap_or_default();
                         (name, val)
                     })
@@ -430,7 +505,12 @@ impl Connector for ExcelTableConnector {
                     continue;
                 }
                 let row_num = base_row + (idx as i64);
-                out.push(make_record_with_row(pairs, &self.path, &self.common, Some(row_num)));
+                out.push(make_record_with_row(
+                    pairs,
+                    &self.path,
+                    &self.common,
+                    Some(row_num),
+                ));
             }
             return Ok(out);
         }
@@ -618,18 +698,32 @@ fn is_cell_non_empty(v: &calamine::Data) -> bool {
 
 /// calamine::Range からデータが存在する先頭行（行, 列）を特定する。
 /// `ref_cols` が指定されている場合はそのいずれかの列のみを調べ、なければ全列を走査する。
-fn detect_start_cell(range: &calamine::Range<calamine::Data>, ref_cols: &[u32]) -> Option<(u32, u32)> {
-    let (start, end) = (range.start().unwrap_or((0, 0)), range.end().unwrap_or((0, 0)));
+fn detect_start_cell(
+    range: &calamine::Range<calamine::Data>,
+    ref_cols: &[u32],
+) -> Option<(u32, u32)> {
+    let (start, end) = (
+        range.start().unwrap_or((0, 0)),
+        range.end().unwrap_or((0, 0)),
+    );
 
     if !ref_cols.is_empty() {
         for r in start.0..=end.0 {
             let has_val = ref_cols.iter().any(|&col| {
-                range.get_value((r, col)).map(is_cell_non_empty).unwrap_or(false)
+                range
+                    .get_value((r, col))
+                    .map(is_cell_non_empty)
+                    .unwrap_or(false)
             });
             if has_val {
-                let min_col = (start.1..=end.1).find(|&c| {
-                    range.get_value((r, c)).map(is_cell_non_empty).unwrap_or(false)
-                }).unwrap_or(start.1);
+                let min_col = (start.1..=end.1)
+                    .find(|&c| {
+                        range
+                            .get_value((r, c))
+                            .map(is_cell_non_empty)
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(start.1);
                 return Some((r, min_col));
             }
         }
@@ -650,14 +744,23 @@ fn detect_start_cell(range: &calamine::Range<calamine::Data>, ref_cols: &[u32]) 
 
 /// calamine::Range からデータが存在する末尾行（行, 列）を特定する。
 /// `ref_cols` が指定されている場合はそのいずれかの列のみを調べ、なければ全列を走査する。
-fn detect_end_cell(range: &calamine::Range<calamine::Data>, ref_cols: &[u32]) -> Option<(u32, u32)> {
-    let (start, end) = (range.start().unwrap_or((0, 0)), range.end().unwrap_or((0, 0)));
+fn detect_end_cell(
+    range: &calamine::Range<calamine::Data>,
+    ref_cols: &[u32],
+) -> Option<(u32, u32)> {
+    let (start, end) = (
+        range.start().unwrap_or((0, 0)),
+        range.end().unwrap_or((0, 0)),
+    );
 
     if !ref_cols.is_empty() {
         // ref_cols 指定時: 下から上に走査し、いずれかの指定列に非空セルがある最初の行を探す
         for r in (start.0..=end.0).rev() {
             let has_val = ref_cols.iter().any(|&col| {
-                range.get_value((r, col)).map(is_cell_non_empty).unwrap_or(false)
+                range
+                    .get_value((r, col))
+                    .map(is_cell_non_empty)
+                    .unwrap_or(false)
             });
             if has_val {
                 return Some((r, end.1));
@@ -674,7 +777,9 @@ fn detect_end_cell(range: &calamine::Range<calamine::Data>, ref_cols: &[u32]) ->
                 if let Some(v) = range.get_value((r, c)) {
                     if is_cell_non_empty(v) {
                         found_in_row = true;
-                        if c > max_c { max_c = c; }
+                        if c > max_c {
+                            max_c = c;
+                        }
                     }
                 }
             }
@@ -691,7 +796,9 @@ fn parse_ref_columns(s: &str) -> Result<Vec<u32>> {
     let mut cols = Vec::new();
     for part in s.split(',') {
         let part = part.trim();
-        if part.is_empty() { continue; }
+        if part.is_empty() {
+            continue;
+        }
         if let Some((start_str, end_str)) = part.split_once(':') {
             let c1 = parse_col_letter(start_str.trim())?;
             let c2 = parse_col_letter(end_str.trim())?;
@@ -764,14 +871,21 @@ struct ExcelRangeConnector {
     common: CommonCfg,
 }
 
-fn default_auto() -> String { "auto".to_string() }
+fn default_auto() -> String {
+    "auto".to_string()
+}
 
 impl Connector for ExcelRangeConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
         use calamine::Reader;
 
         // --- 後方互換: 旧 range/cell フィールドが設定されている場合はそちらを優先 ---
-        if let Some(spec) = self.range.as_deref().or(self.cell.as_deref()).filter(|s| !s.is_empty()) {
+        if let Some(spec) = self
+            .range
+            .as_deref()
+            .or(self.cell.as_deref())
+            .filter(|s| !s.is_empty())
+        {
             // 旧フォーマットのまま動作させる（start_mode/end_mode が既定 "auto" のまま来る場合もある）
             if self.start_cell.is_none() && self.end_cell.is_none() {
                 let ((r1, c1), (r2, c2)) = parse_a1_range(spec)?;
@@ -786,12 +900,18 @@ impl Connector for ExcelRangeConnector {
         let range = wb.worksheet_range(&self.sheet)?;
 
         // ref_column を列番号リストへ変換
-        let start_ref_str = self.start_ref_column.as_deref().or(self.ref_column.as_deref());
+        let start_ref_str = self
+            .start_ref_column
+            .as_deref()
+            .or(self.ref_column.as_deref());
         let start_ref_cols = match start_ref_str {
             Some(s) if !s.is_empty() => parse_ref_columns(s)?,
             _ => Vec::new(),
         };
-        let end_ref_str = self.end_ref_column.as_deref().or(self.ref_column.as_deref());
+        let end_ref_str = self
+            .end_ref_column
+            .as_deref()
+            .or(self.ref_column.as_deref());
         let end_ref_cols = match end_ref_str {
             Some(s) if !s.is_empty() => parse_ref_columns(s)?,
             _ => Vec::new(),
@@ -803,7 +923,9 @@ impl Connector for ExcelRangeConnector {
         // 先頭セルの決定
         let (r1, c1) = match self.start_mode.as_str() {
             "manual" => {
-                let cell_str = self.start_cell.as_deref()
+                let cell_str = self
+                    .start_cell
+                    .as_deref()
                     .filter(|s| !s.is_empty())
                     .ok_or_else(|| anyhow!("先頭セルが手動指定ですが、値が入力されていません"))?;
                 parse_a1(cell_str)?
@@ -829,7 +951,9 @@ impl Connector for ExcelRangeConnector {
         // 末尾セルの決定
         let (r2, c2) = match self.end_mode.as_str() {
             "manual" => {
-                let cell_str = self.end_cell.as_deref()
+                let cell_str = self
+                    .end_cell
+                    .as_deref()
                     .filter(|s| !s.is_empty())
                     .ok_or_else(|| anyhow!("末尾セルが手動指定ですが、値が入力されていません"))?;
                 parse_a1(cell_str)?
@@ -863,17 +987,31 @@ impl Connector for ExcelRangeConnector {
         use calamine::Reader;
 
         // 後方互換: 旧 range/cell フィールド
-        if let Some(spec) = self.range.as_deref().or(self.cell.as_deref()).filter(|s| !s.is_empty()) {
+        if let Some(spec) = self
+            .range
+            .as_deref()
+            .or(self.cell.as_deref())
+            .filter(|s| !s.is_empty())
+        {
             if self.start_cell.is_none() && self.end_cell.is_none() {
                 let ((r1, c1), (_r2, c2)) = parse_a1_range(spec)?;
                 let mut wb = calamine::open_workbook_auto(&self.path)?;
                 let range = wb.worksheet_range(&self.sheet)?;
-                let cell_at = |r: u32, c: u32| range.get_value((r, c)).map(cell_to_string).unwrap_or_default();
+                let cell_at = |r: u32, c: u32| {
+                    range
+                        .get_value((r, c))
+                        .map(cell_to_string)
+                        .unwrap_or_default()
+                };
                 if self.has_header {
                     return Ok((c1..=c2)
                         .map(|c| {
                             let h = cell_at(r1, c);
-                            if h.is_empty() { col_to_letters(c) } else { h }
+                            if h.is_empty() {
+                                col_to_letters(c)
+                            } else {
+                                h
+                            }
                         })
                         .collect());
                 } else {
@@ -885,7 +1023,10 @@ impl Connector for ExcelRangeConnector {
         let mut wb = calamine::open_workbook_auto(&self.path)?;
         let range = wb.worksheet_range(&self.sheet)?;
 
-        let start_ref_str = self.start_ref_column.as_deref().or(self.ref_column.as_deref());
+        let start_ref_str = self
+            .start_ref_column
+            .as_deref()
+            .or(self.ref_column.as_deref());
         let start_ref_cols = match start_ref_str {
             Some(s) if !s.is_empty() => parse_ref_columns(s)?,
             _ => Vec::new(),
@@ -895,7 +1036,9 @@ impl Connector for ExcelRangeConnector {
 
         let (r1, c1) = match self.start_mode.as_str() {
             "manual" => {
-                let cell_str = self.start_cell.as_deref()
+                let cell_str = self
+                    .start_cell
+                    .as_deref()
                     .filter(|s| !s.is_empty())
                     .ok_or_else(|| anyhow!("先頭セルが手動指定ですが、値が入力されていません"))?;
                 parse_a1(cell_str)?
@@ -917,7 +1060,9 @@ impl Connector for ExcelRangeConnector {
         let c2 = match self.end_mode.as_str() {
             "manual" => {
                 if let Some(cell_str) = self.end_cell.as_deref().filter(|s| !s.is_empty()) {
-                    parse_a1(cell_str).map(|(_, c)| c).unwrap_or_else(|_| range.end().map(|x| x.1).unwrap_or(c1))
+                    parse_a1(cell_str)
+                        .map(|(_, c)| c)
+                        .unwrap_or_else(|_| range.end().map(|x| x.1).unwrap_or(c1))
                 } else {
                     range.end().map(|x| x.1).unwrap_or(c1)
                 }
@@ -926,7 +1071,12 @@ impl Connector for ExcelRangeConnector {
         };
 
         let c2 = c1.max(c2);
-        let cell_at = |r: u32, c: u32| range.get_value((r, c)).map(cell_to_string).unwrap_or_default();
+        let cell_at = |r: u32, c: u32| {
+            range
+                .get_value((r, c))
+                .map(cell_to_string)
+                .unwrap_or_default()
+        };
 
         if self.has_header {
             let mut seen = std::collections::HashSet::new();
@@ -951,15 +1101,31 @@ impl Connector for ExcelRangeConnector {
 
 impl ExcelRangeConnector {
     /// 決定した範囲からレコードを読み取る共通処理。
-    fn read_range(&self, range: &calamine::Range<calamine::Data>, r1: u32, c1: u32, r2: u32, c2: u32) -> Result<Vec<Record>> {
-        let cell_at = |r: u32, c: u32| range.get_value((r, c)).map(cell_to_string).unwrap_or_default();
+    fn read_range(
+        &self,
+        range: &calamine::Range<calamine::Data>,
+        r1: u32,
+        c1: u32,
+        r2: u32,
+        c2: u32,
+    ) -> Result<Vec<Record>> {
+        let cell_at = |r: u32, c: u32| {
+            range
+                .get_value((r, c))
+                .map(cell_to_string)
+                .unwrap_or_default()
+        };
 
         // ヘッダー行の決定。
         let (header_row, data_start) = if self.has_header && r2 > r1 {
             let headers: Vec<String> = (c1..=c2)
                 .map(|c| {
                     let h = cell_at(r1, c);
-                    if h.is_empty() { col_to_letters(c) } else { h }
+                    if h.is_empty() {
+                        col_to_letters(c)
+                    } else {
+                        h
+                    }
                 })
                 .collect();
             (headers, r1 + 1)
@@ -978,7 +1144,12 @@ impl ExcelRangeConnector {
                 continue;
             }
             let row_num = (r + 1) as i64;
-            out.push(make_record_with_row(pairs, &self.path, &self.common, Some(row_num)));
+            out.push(make_record_with_row(
+                pairs,
+                &self.path,
+                &self.common,
+                Some(row_num),
+            ));
         }
         Ok(out)
     }
@@ -1018,24 +1189,37 @@ struct FolderConnector {
 impl Connector for FolderConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
         let max_depth = if self.recursive { usize::MAX } else { 1 };
-        let exts: Option<Vec<String>> = self
-            .extensions
-            .as_ref()
-            .map(|v| v.iter().map(|e| e.trim_start_matches('.').to_lowercase()).collect());
+        let exts: Option<Vec<String>> = self.extensions.as_ref().map(|v| {
+            v.iter()
+                .map(|e| e.trim_start_matches('.').to_lowercase())
+                .collect()
+        });
 
         let mut out = Vec::new();
-        for entry in walkdir::WalkDir::new(&self.path).max_depth(max_depth).into_iter().flatten() {
+        for entry in walkdir::WalkDir::new(&self.path)
+            .max_depth(max_depth)
+            .into_iter()
+            .flatten()
+        {
             if !entry.file_type().is_file() {
                 continue;
             }
             let p = entry.path();
-            let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+            let ext = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
             if let Some(ref filter) = exts {
                 if !filter.contains(&ext) {
                     continue;
                 }
             }
-            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            let name = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
             let full = p.to_string_lossy().into_owned();
             let (size, modified) = match entry.metadata() {
                 Ok(m) => {
@@ -1057,7 +1241,10 @@ impl Connector for FolderConnector {
                 ("更新日時".to_string(), modified),
             ];
             // open_ref = ファイルの実パス。
-            let cfg = CommonCfg { open_ref_column: Some("パス".to_string()), ..Default::default() };
+            let cfg = CommonCfg {
+                open_ref_column: Some("パス".to_string()),
+                ..Default::default()
+            };
             out.push(make_record(pairs, &full, &cfg));
         }
         Ok(out)
@@ -1153,40 +1340,54 @@ query {
             .set("Content-Type", "application/json")
             .send_json(body)?;
         let json_res: Value = res.into_json()?;
-        
-        let list = json_res["data"]["pokemon_v2_pokemon"].as_array().ok_or_else(|| anyhow!("PokeAPI: no data array"))?;
-        
+
+        let list = json_res["data"]["pokemon_v2_pokemon"]
+            .as_array()
+            .ok_or_else(|| anyhow!("PokeAPI: no data array"))?;
+
         let mut out = Vec::new();
         for p in list {
             let id = p["id"].as_i64().unwrap_or(0);
-            
+
             // 和名
             let ja_name = p["pokemon_v2_pokemonspecy"]["pokemon_v2_pokemonspeciesnames"]
                 .as_array()
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj["name"].as_str())
                 .unwrap_or_else(|| p["name"].as_str().unwrap_or(""));
-                
+
             // タイプ
-            let types_arr = p["pokemon_v2_pokemontypes"].as_array().map(|arr| {
-                arr.iter().filter_map(|t| {
-                    t["pokemon_v2_type"]["pokemon_v2_typenames"]
-                        .as_array()
-                        .and_then(|names| names.first())
-                        .and_then(|obj| obj["name"].as_str())
-                }).collect::<Vec<_>>().join(", ")
-            }).unwrap_or_default();
-            
+            let types_arr = p["pokemon_v2_pokemontypes"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|t| {
+                            t["pokemon_v2_type"]["pokemon_v2_typenames"]
+                                .as_array()
+                                .and_then(|names| names.first())
+                                .and_then(|obj| obj["name"].as_str())
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+
             // とくせい
-            let abilities_arr = p["pokemon_v2_pokemonabilities"].as_array().map(|arr| {
-                arr.iter().filter_map(|a| {
-                    a["pokemon_v2_ability"]["pokemon_v2_abilitynames"]
-                        .as_array()
-                        .and_then(|names| names.first())
-                        .and_then(|obj| obj["name"].as_str())
-                }).collect::<Vec<_>>().join(", ")
-            }).unwrap_or_default();
-            
+            let abilities_arr = p["pokemon_v2_pokemonabilities"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|a| {
+                            a["pokemon_v2_ability"]["pokemon_v2_abilitynames"]
+                                .as_array()
+                                .and_then(|names| names.first())
+                                .and_then(|obj| obj["name"].as_str())
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+
             // 種族値
             let stats = p["pokemon_v2_pokemonstats"].as_array();
             let mut stats_str = String::new();
@@ -1198,21 +1399,33 @@ query {
                     let spa = s[3]["base_stat"].as_i64().unwrap_or(0);
                     let spd = s[4]["base_stat"].as_i64().unwrap_or(0);
                     let spe = s[5]["base_stat"].as_i64().unwrap_or(0);
-                    stats_str = format!("HP:{} 攻:{} 防:{} 特攻:{} 特防:{} 早:{} (合計:{})", hp, atk, def, spa, spd, spe, hp+atk+def+spa+spd+spe);
+                    stats_str = format!(
+                        "HP:{} 攻:{} 防:{} 特攻:{} 特防:{} 早:{} (合計:{})",
+                        hp,
+                        atk,
+                        def,
+                        spa,
+                        spd,
+                        spe,
+                        hp + atk + def + spa + spd + spe
+                    );
                 }
             }
-            
+
             let default_open_ref = format!("https://zukan.pokemon.co.jp/detail/{:04}", id);
-            
+
             let pairs = vec![
                 ("図鑑番号".to_string(), id.to_string()),
                 ("和名".to_string(), ja_name.to_string()),
                 ("タイプ".to_string(), types_arr),
                 ("とくせい".to_string(), abilities_arr),
                 ("種族値".to_string(), stats_str),
-                ("英語名".to_string(), p["name"].as_str().unwrap_or("").to_string()),
+                (
+                    "英語名".to_string(),
+                    p["name"].as_str().unwrap_or("").to_string(),
+                ),
             ];
-            
+
             let mut rec = make_record(pairs, &default_open_ref, &self.common);
             // label_column の指定がない場合は和名をラベル（ツリー上の表示名）にする
             if self.common.label_column.is_none() {
@@ -1220,7 +1433,7 @@ query {
             }
             out.push(rec);
         }
-        
+
         Ok(out)
     }
 }
@@ -1240,29 +1453,49 @@ mod tests {
     }
 
     fn fetch(type_: &str, cfg: serde_json::Value) -> Vec<Record> {
-        build_connector(type_, &cfg.to_string()).unwrap().fetch().unwrap()
+        build_connector(type_, &cfg.to_string())
+            .unwrap()
+            .fetch()
+            .unwrap()
     }
 
     #[test]
     fn csv_skip_rows_top_and_bottom() {
-        let base = fetch("csv", serde_json::json!({ "path": sample("customers.csv") })).len();
+        let base = fetch(
+            "csv",
+            serde_json::json!({ "path": sample("customers.csv") }),
+        )
+        .len();
         assert!(base >= 2);
         // 末尾1行スキップ → データが1行減る。
-        let bottom = fetch("csv", serde_json::json!({ "path": sample("customers.csv"), "skip_rows_bottom": 1 }));
+        let bottom = fetch(
+            "csv",
+            serde_json::json!({ "path": sample("customers.csv"), "skip_rows_bottom": 1 }),
+        );
         assert_eq!(bottom.len(), base - 1);
         // 先頭1行スキップ → 本来のヘッダーが飛び、次行がヘッダーに昇格するのでデータは1行減る。
-        let top = fetch("csv", serde_json::json!({ "path": sample("customers.csv"), "skip_rows_top": 1 }));
+        let top = fetch(
+            "csv",
+            serde_json::json!({ "path": sample("customers.csv"), "skip_rows_top": 1 }),
+        );
         assert_eq!(top.len(), base - 1);
         // 1行目データ「田中太郎」はヘッダーに昇格したのでレコードには現れない。
-        assert!(!top.iter().any(|r| r.fields.values().any(|v| v.as_str() == Some("田中太郎"))));
+        assert!(!top
+            .iter()
+            .any(|r| r.fields.values().any(|v| v.as_str() == Some("田中太郎"))));
     }
 
     #[test]
     fn excel_table_reads_listobject_rows() {
         // 「テーブル」= Excel の構造化テーブル(ListObject)。同一シート内の生セル表とは別領域。
-        let recs = fetch("excel_table", serde_json::json!({ "path": sample("employees.xlsx"), "table": "社員テーブル" }));
+        let recs = fetch(
+            "excel_table",
+            serde_json::json!({ "path": sample("employees.xlsx"), "table": "社員テーブル" }),
+        );
         assert_eq!(recs.len(), 3);
-        assert!(recs.iter().any(|r| r.fields.get("氏名").and_then(|v| v.as_str()) == Some("山本次郎")));
+        assert!(recs
+            .iter()
+            .any(|r| r.fields.get("氏名").and_then(|v| v.as_str()) == Some("山本次郎")));
         // ListObject の列だけが読まれ、隣接する生セル表の列は含まれない。
         assert_eq!(recs[0].fields.len(), 3);
     }
@@ -1270,9 +1503,14 @@ mod tests {
     #[test]
     fn excel_table_legacy_sheet_key_still_works() {
         // table キー未設定・sheet キーのみの旧データはシート全体読みへ後方互換フォールバックする。
-        let recs = fetch("excel_table", serde_json::json!({ "path": sample("employees.xlsx"), "sheet": "社員" }));
+        let recs = fetch(
+            "excel_table",
+            serde_json::json!({ "path": sample("employees.xlsx"), "sheet": "社員" }),
+        );
         assert_eq!(recs.len(), 6);
-        assert!(recs.iter().any(|r| r.fields.get("氏名").and_then(|v| v.as_str()) == Some("田中太郎")));
+        assert!(recs
+            .iter()
+            .any(|r| r.fields.get("氏名").and_then(|v| v.as_str()) == Some("田中太郎")));
     }
 
     #[test]
@@ -1308,7 +1546,9 @@ mod tests {
         // label は display_columns の影響を受けず label_column から取れる。
         assert!(r.label.is_some());
         // 検索テキストは display で除外した列も含む(全フィールドから計算)。
-        assert!(r.search_text.contains(r.fields.get("氏名").unwrap().as_str().unwrap()));
+        assert!(r
+            .search_text
+            .contains(r.fields.get("氏名").unwrap().as_str().unwrap()));
     }
 
     #[test]
@@ -1368,14 +1608,29 @@ mod tests {
         });
         let tmp = std::env::temp_dir().join("everydb_test_bookmarks.json");
         std::fs::write(&tmp, json.to_string()).unwrap();
-        let recs = fetch("browser_bookmarks", serde_json::json!({ "browser": "chrome", "path": tmp.to_string_lossy() }));
+        let recs = fetch(
+            "browser_bookmarks",
+            serde_json::json!({ "browser": "chrome", "path": tmp.to_string_lossy() }),
+        );
         std::fs::remove_file(&tmp).ok();
 
         assert_eq!(recs.len(), 2);
-        let top = recs.iter().find(|r| r.open_ref.as_deref() == Some("https://example.com")).unwrap();
-        assert_eq!(top.fields.get("フォルダ").and_then(|v| v.as_str()), Some("ブックマーク バー"));
-        let nested = recs.iter().find(|r| r.open_ref.as_deref() == Some("https://nested.example.com")).unwrap();
-        assert_eq!(nested.fields.get("フォルダ").and_then(|v| v.as_str()), Some("ブックマーク バー/サブフォルダ"));
+        let top = recs
+            .iter()
+            .find(|r| r.open_ref.as_deref() == Some("https://example.com"))
+            .unwrap();
+        assert_eq!(
+            top.fields.get("フォルダ").and_then(|v| v.as_str()),
+            Some("ブックマーク バー")
+        );
+        let nested = recs
+            .iter()
+            .find(|r| r.open_ref.as_deref() == Some("https://nested.example.com"))
+            .unwrap();
+        assert_eq!(
+            nested.fields.get("フォルダ").and_then(|v| v.as_str()),
+            Some("ブックマーク バー/サブフォルダ")
+        );
     }
 
     // 実機の Chrome/Edge プロファイルが必要なライブ検証。
@@ -1384,15 +1639,21 @@ mod tests {
     #[ignore = "requires a real Chrome/Edge profile on this machine"]
     fn browser_live_history_and_bookmarks() {
         let local = std::env::var("LOCALAPPDATA").expect("LOCALAPPDATA");
-        let hist = fetch("browser_history", serde_json::json!({
-            "browser": "chrome", "path": format!("{local}\\Google\\Chrome\\User Data\\Default\\History")
-        }));
+        let hist = fetch(
+            "browser_history",
+            serde_json::json!({
+                "browser": "chrome", "path": format!("{local}\\Google\\Chrome\\User Data\\Default\\History")
+            }),
+        );
         println!("chrome history = {}", hist.len());
         assert!(!hist.is_empty());
 
-        let bm = fetch("browser_bookmarks", serde_json::json!({
-            "browser": "edge", "path": format!("{local}\\Microsoft\\Edge\\User Data\\Default\\Bookmarks")
-        }));
+        let bm = fetch(
+            "browser_bookmarks",
+            serde_json::json!({
+                "browser": "edge", "path": format!("{local}\\Microsoft\\Edge\\User Data\\Default\\Bookmarks")
+            }),
+        );
         println!("edge bookmarks = {}", bm.len());
         assert!(!bm.is_empty());
     }
@@ -1402,9 +1663,12 @@ mod tests {
     #[ignore = "requires a real Chrome/Edge profile on this machine with download history"]
     fn browser_live_downloads() {
         let local = std::env::var("LOCALAPPDATA").expect("LOCALAPPDATA");
-        let dl = fetch("browser_downloads", serde_json::json!({
-            "browser": "chrome", "path": format!("{local}\\Google\\Chrome\\User Data\\Default\\History")
-        }));
+        let dl = fetch(
+            "browser_downloads",
+            serde_json::json!({
+                "browser": "chrome", "path": format!("{local}\\Google\\Chrome\\User Data\\Default\\History")
+            }),
+        );
         println!("chrome downloads = {}", dl.len());
         assert!(!dl.is_empty());
     }
@@ -1418,7 +1682,10 @@ mod tests {
 
     #[test]
     fn file_uri_to_path_decodes_percent_and_strips_scheme() {
-        assert_eq!(file_uri_to_path("file:///C:/Users/a/My%20File.pdf"), r"C:\Users\a\My File.pdf");
+        assert_eq!(
+            file_uri_to_path("file:///C:/Users/a/My%20File.pdf"),
+            r"C:\Users\a\My File.pdf"
+        );
     }
 
     #[test]
@@ -1436,26 +1703,43 @@ mod tests {
     #[test]
     fn excel_range_single_cell() {
         // 単一セル "B2"(has_header 無効相当)は 1 レコード・列文字 B を見出しに。
-        let recs = fetch("excel_range", serde_json::json!({ "path": sample("employees.xlsx"), "sheet": "設定", "range": "B2" }));
+        let recs = fetch(
+            "excel_range",
+            serde_json::json!({ "path": sample("employees.xlsx"), "sheet": "設定", "range": "B2" }),
+        );
         assert_eq!(recs.len(), 1);
-        assert_eq!(recs[0].fields.get("B").and_then(|v| v.as_str()), Some("サンプル株式会社"));
+        assert_eq!(
+            recs[0].fields.get("B").and_then(|v| v.as_str()),
+            Some("サンプル株式会社")
+        );
     }
 
     #[test]
     fn excel_range_multi_row_uses_first_row_as_header() {
         // 社員シートの A1:C4 → 先頭行(社員番号/氏名/部署)をヘッダーに、3 レコード。
-        let recs = fetch("excel_range", serde_json::json!({ "path": sample("employees.xlsx"), "sheet": "社員", "range": "A1:C4" }));
+        let recs = fetch(
+            "excel_range",
+            serde_json::json!({ "path": sample("employees.xlsx"), "sheet": "社員", "range": "A1:C4" }),
+        );
         assert_eq!(recs.len(), 3);
-        assert!(recs.iter().any(|r| r.fields.get("氏名").and_then(|v| v.as_str()) == Some("田中太郎")));
+        assert!(recs
+            .iter()
+            .any(|r| r.fields.get("氏名").and_then(|v| v.as_str()) == Some("田中太郎")));
         assert!(recs[0].fields.contains_key("社員番号"));
     }
 
     #[test]
     fn excel_cell_legacy_type_still_works() {
         // 旧 "excel_cell" 種別 + "cell" フィールドも後方互換で動く。
-        let recs = fetch("excel_cell", serde_json::json!({ "path": sample("employees.xlsx"), "sheet": "設定", "cell": "B2" }));
+        let recs = fetch(
+            "excel_cell",
+            serde_json::json!({ "path": sample("employees.xlsx"), "sheet": "設定", "cell": "B2" }),
+        );
         assert_eq!(recs.len(), 1);
-        assert_eq!(recs[0].fields.get("B").and_then(|v| v.as_str()), Some("サンプル株式会社"));
+        assert_eq!(
+            recs[0].fields.get("B").and_then(|v| v.as_str()),
+            Some("サンプル株式会社")
+        );
     }
 
     #[test]
@@ -1466,39 +1750,64 @@ mod tests {
 
     #[test]
     fn excel_sheets_lists_names() {
-        let recs = fetch("excel_sheets", serde_json::json!({ "path": sample("employees.xlsx") }));
-        let names: Vec<&str> = recs.iter().filter_map(|r| r.fields.get("シート名").and_then(|v| v.as_str())).collect();
+        let recs = fetch(
+            "excel_sheets",
+            serde_json::json!({ "path": sample("employees.xlsx") }),
+        );
+        let names: Vec<&str> = recs
+            .iter()
+            .filter_map(|r| r.fields.get("シート名").and_then(|v| v.as_str()))
+            .collect();
         assert_eq!(names, vec!["社員", "テーブルサンプル", "拠点", "設定"]);
     }
 
     #[test]
     fn folder_recursive_vs_flat() {
-        let all = fetch("folder", serde_json::json!({ "path": sample("tree"), "recursive": true }));
+        let all = fetch(
+            "folder",
+            serde_json::json!({ "path": sample("tree"), "recursive": true }),
+        );
         assert_eq!(all.len(), 6);
-        let flat = fetch("folder", serde_json::json!({ "path": sample("tree"), "recursive": false }));
+        let flat = fetch(
+            "folder",
+            serde_json::json!({ "path": sample("tree"), "recursive": false }),
+        );
         assert_eq!(flat.len(), 1);
     }
 
     #[test]
     fn folder_extension_filter() {
-        let csvs = fetch("folder", serde_json::json!({ "path": sample("tree"), "recursive": true, "extensions": ["csv"] }));
+        let csvs = fetch(
+            "folder",
+            serde_json::json!({ "path": sample("tree"), "recursive": true, "extensions": ["csv"] }),
+        );
         assert_eq!(csvs.len(), 2);
     }
 
     #[test]
     fn ime_msime_utf16_skips_comment() {
-        let recs = fetch("ime_msime", serde_json::json!({ "path": sample("msime_dict.txt") }));
+        let recs = fetch(
+            "ime_msime",
+            serde_json::json!({ "path": sample("msime_dict.txt") }),
+        );
         assert_eq!(recs.len(), 5); // 先頭の ! コメント行は除外
-        assert!(recs.iter().any(|r| r.fields.get("語").and_then(|v| v.as_str()) == Some("東京")));
+        assert!(recs
+            .iter()
+            .any(|r| r.fields.get("語").and_then(|v| v.as_str()) == Some("東京")));
         // label は 2 列目(語)
         assert_eq!(recs[0].label.as_deref(), Some("東京"));
     }
 
     #[test]
     fn ime_google_utf8() {
-        let recs = fetch("ime_google", serde_json::json!({ "path": sample("google_dict.txt") }));
+        let recs = fetch(
+            "ime_google",
+            serde_json::json!({ "path": sample("google_dict.txt") }),
+        );
         assert_eq!(recs.len(), 4);
-        assert!(recs.iter().any(|r| r.fields.get("単語").and_then(|v| v.as_str()) == Some("EveryDB")));
+        assert!(recs
+            .iter()
+            .any(|r| r.fields.get("単語").and_then(|v| v.as_str()) == Some("EveryDB")));
     }
 
     // Access ドライバ(ACE ODBC)がインストールされた環境でのみ成功する。
@@ -1506,10 +1815,17 @@ mod tests {
     #[test]
     #[ignore = "requires Microsoft Access ODBC driver + samples/access_db.accdb"]
     fn accdb_reads_japanese_rows() {
-        let recs = fetch("accdb", serde_json::json!({ "path": sample("access_db.accdb"), "table": "取引先" }));
+        let recs = fetch(
+            "accdb",
+            serde_json::json!({ "path": sample("access_db.accdb"), "table": "取引先" }),
+        );
         assert_eq!(recs.len(), 5);
-        assert!(recs.iter().any(|r| r.fields.get("会社名").and_then(|v| v.as_str()) == Some("株式会社サンプル商事")));
-        assert!(recs.iter().any(|r| r.fields.get("担当者").and_then(|v| v.as_str()) == Some("渡辺健")));
+        assert!(recs.iter().any(
+            |r| r.fields.get("会社名").and_then(|v| v.as_str()) == Some("株式会社サンプル商事")
+        ));
+        assert!(recs
+            .iter()
+            .any(|r| r.fields.get("担当者").and_then(|v| v.as_str()) == Some("渡辺健")));
     }
 
     // --- Notion: プロパティ変換のオフライン検証（ネットワーク不要）---
@@ -1534,7 +1850,8 @@ mod tests {
         let date = json!({ "type": "date", "date": { "start": "2026-07-24", "end": null } });
         assert_eq!(notion_prop_to_string(&date), "2026-07-24");
 
-        let range = json!({ "type": "date", "date": { "start": "2026-07-01", "end": "2026-07-31" } });
+        let range =
+            json!({ "type": "date", "date": { "start": "2026-07-01", "end": "2026-07-31" } });
         assert_eq!(notion_prop_to_string(&range), "2026-07-01 ~ 2026-07-31");
 
         let empty_sel = json!({ "type": "select", "select": null });
@@ -1552,19 +1869,31 @@ mod tests {
             "department": "営業部",
             "id": "guid-123"
         });
-        let fields = ["displayName", "userPrincipalName", "mail", "jobTitle", "department"];
+        let fields = [
+            "displayName",
+            "userPrincipalName",
+            "mail",
+            "jobTitle",
+            "department",
+        ];
         let cfg = CommonCfg::default();
         let rec = graph_flat_record(&user, &fields, "displayName", mailto_open_ref(&user), &cfg);
         assert_eq!(rec.label.as_deref(), Some("山田太郎"));
         assert_eq!(rec.open_ref.as_deref(), Some("mailto:yamada@example.com"));
-        assert_eq!(rec.fields.get("department").and_then(|v| v.as_str()), Some("営業部"));
+        assert_eq!(
+            rec.fields.get("department").and_then(|v| v.as_str()),
+            Some("営業部")
+        );
         assert!(rec.search_text.contains("課長"));
     }
 
     #[test]
     fn graph_scalar_handles_array_and_missing() {
         use serde_json::json;
-        assert_eq!(json_scalar_to_string(&json!(["03-1", "080-2"])), "03-1, 080-2");
+        assert_eq!(
+            json_scalar_to_string(&json!(["03-1", "080-2"])),
+            "03-1, 080-2"
+        );
         assert_eq!(json_scalar_to_string(&json!(null)), "");
         assert_eq!(json_scalar_to_string(&json!(42)), "42");
         // mail 欠如なら open_ref は None
@@ -1595,11 +1924,18 @@ mod tests {
     fn notion_live_reads_database() {
         let token = std::env::var("EVERYDB_NOTION_TOKEN").expect("EVERYDB_NOTION_TOKEN 未設定");
         let db = std::env::var("EVERYDB_NOTION_DB").expect("EVERYDB_NOTION_DB 未設定");
-        let recs = fetch("notion", serde_json::json!({ "token": token, "database_id": db }));
+        let recs = fetch(
+            "notion",
+            serde_json::json!({ "token": token, "database_id": db }),
+        );
         println!("Notion から {} 件取得", recs.len());
         assert!(!recs.is_empty(), "1 件以上取得できること");
         // 各レコードは open_ref(ページ URL) を持つ。
-        assert!(recs.iter().all(|r| r.open_ref.as_deref().map(|u| u.starts_with("http")).unwrap_or(false)));
+        assert!(recs.iter().all(|r| r
+            .open_ref
+            .as_deref()
+            .map(|u| u.starts_with("http"))
+            .unwrap_or(false)));
     }
 
     // ライブ結合テスト。サービスアカウントの鍵ファイルを共有し、環境変数を設定して実行:
@@ -1607,9 +1943,13 @@ mod tests {
     #[test]
     #[ignore = "requires EVERYDB_GOOGLE_KEY_PATH + EVERYDB_GSHEET_ID env vars and a shared sheet"]
     fn gsheets_live_reads_rows() {
-        let key_path = std::env::var("EVERYDB_GOOGLE_KEY_PATH").expect("EVERYDB_GOOGLE_KEY_PATH 未設定");
+        let key_path =
+            std::env::var("EVERYDB_GOOGLE_KEY_PATH").expect("EVERYDB_GOOGLE_KEY_PATH 未設定");
         let spreadsheet_id = std::env::var("EVERYDB_GSHEET_ID").expect("EVERYDB_GSHEET_ID 未設定");
-        let recs = fetch("google_sheets", serde_json::json!({ "key_path": key_path, "spreadsheet_id": spreadsheet_id }));
+        let recs = fetch(
+            "google_sheets",
+            serde_json::json!({ "key_path": key_path, "spreadsheet_id": spreadsheet_id }),
+        );
         println!("Google Sheets から {} 件取得", recs.len());
         assert!(!recs.is_empty());
     }
@@ -1622,9 +1962,15 @@ mod tests {
 
     #[test]
     fn ical_datetime_and_unescape() {
-        assert_eq!(parse_ical_datetime("20260101T090000Z"), "2026-01-01 09:00:00");
+        assert_eq!(
+            parse_ical_datetime("20260101T090000Z"),
+            "2026-01-01 09:00:00"
+        );
         assert_eq!(parse_ical_datetime("20260101"), "2026-01-01");
-        assert_eq!(ical_unescape(r"line1\nline2\, comma"), "line1\nline2, comma");
+        assert_eq!(
+            ical_unescape(r"line1\nline2\, comma"),
+            "line1\nline2, comma"
+        );
     }
 
     // ライブ結合テスト: 公開 .ics URL を用意して実行:
@@ -1643,7 +1989,10 @@ mod tests {
         use serde_json::json;
         assert_eq!(airtable_value_to_string(&json!("plain")), "plain");
         assert_eq!(airtable_value_to_string(&json!(["a", "b"])), "a, b");
-        assert_eq!(airtable_value_to_string(&json!([{ "filename": "x.png" }, { "filename": "y.png" }])), "x.png, y.png");
+        assert_eq!(
+            airtable_value_to_string(&json!([{ "filename": "x.png" }, { "filename": "y.png" }])),
+            "x.png, y.png"
+        );
     }
 
     // ライブ結合テスト:
@@ -1655,7 +2004,10 @@ mod tests {
         let token = std::env::var("EVERYDB_AIRTABLE_TOKEN").expect("EVERYDB_AIRTABLE_TOKEN 未設定");
         let base_id = std::env::var("EVERYDB_AIRTABLE_BASE").expect("EVERYDB_AIRTABLE_BASE 未設定");
         let table = std::env::var("EVERYDB_AIRTABLE_TABLE").expect("EVERYDB_AIRTABLE_TABLE 未設定");
-        let recs = fetch("airtable", serde_json::json!({ "token": token, "base_id": base_id, "table": table }));
+        let recs = fetch(
+            "airtable",
+            serde_json::json!({ "token": token, "base_id": base_id, "table": table }),
+        );
         println!("Airtable から {} 件取得", recs.len());
         assert!(!recs.is_empty());
     }
@@ -1688,7 +2040,10 @@ impl Connector for ImeConnector {
                 .map(|(i, name)| (name.to_string(), cols.get(i).unwrap_or(&"").to_string()))
                 .collect();
             // label = 2 列目(語/単語)、open_ref = 辞書ファイルパス。
-            let cfg = CommonCfg { label_column: Some(columns[1].to_string()), ..Default::default() };
+            let cfg = CommonCfg {
+                label_column: Some(columns[1].to_string()),
+                ..Default::default()
+            };
             out.push(make_record(pairs, &self.cfg.path, &cfg));
         }
         Ok(out)
@@ -1708,7 +2063,9 @@ struct AccessConnector {
 /// （Access はテーブル名に日本語・空白を許すため英数字限定にはしない）。
 fn valid_bracket_ident(s: &str) -> bool {
     !s.is_empty()
-        && !s.chars().any(|c| c == ']' || c == '[' || c == ';' || c.is_control())
+        && !s
+            .chars()
+            .any(|c| c == ']' || c == '[' || c == ';' || c.is_control())
 }
 
 impl Connector for AccessConnector {
@@ -1721,7 +2078,10 @@ impl Connector for AccessConnector {
         // ODBC 接続文字列は `;` が属性の区切りなので、パスに `;` が混ざると
         // 後続に任意の接続属性を注入できてしまう。ここで弾く。
         if self.path.contains(';') || self.path.contains('{') || self.path.contains('}') {
-            return Err(anyhow!("パスに ODBC 接続文字列で使えない文字（; {{ }}）が含まれています: {}", self.path));
+            return Err(anyhow!(
+                "パスに ODBC 接続文字列で使えない文字（; {{ }}）が含まれています: {}",
+                self.path
+            ));
         }
         // ODBC ドライバマネージャ経由で ACE ドライバに接続。
         let cs = format!(
@@ -1754,7 +2114,9 @@ impl Connector for AccessConnector {
                 // UTF-16(ワイド)で取得 → ロケール非依存で全 Unicode を安全に扱える。
                 let not_null = row.get_wide_text(i, &mut buf)?;
                 let val = if not_null {
-                    String::from_utf16_lossy(&buf).trim_end_matches('\u{0}').to_string()
+                    String::from_utf16_lossy(&buf)
+                        .trim_end_matches('\u{0}')
+                        .to_string()
                 } else {
                     String::new()
                 };
@@ -1814,7 +2176,10 @@ fn notion_prop_to_string(p: &Value) -> String {
             .unwrap_or_default(),
         "date" => {
             let d = p.get("date");
-            let start = d.and_then(|x| x.get("start")).and_then(|v| v.as_str()).unwrap_or("");
+            let start = d
+                .and_then(|x| x.get("start"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let end = d.and_then(|x| x.get("end")).and_then(|v| v.as_str());
             match end {
                 Some(e) if !e.is_empty() => format!("{start} ~ {e}"),
@@ -1850,10 +2215,20 @@ fn notion_prop_to_string(p: &Value) -> String {
             .unwrap_or_default(),
         "formula" => {
             let f = p.get("formula");
-            let ft = f.and_then(|x| x.get("type")).and_then(|v| v.as_str()).unwrap_or("");
+            let ft = f
+                .and_then(|x| x.get("type"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             match ft {
-                "string" => f.and_then(|x| x.get("string")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                "number" => f.and_then(|x| x.get("number")).map(|v| v.to_string()).unwrap_or_default(),
+                "string" => f
+                    .and_then(|x| x.get("string"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                "number" => f
+                    .and_then(|x| x.get("number"))
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
                 "boolean" => match f.and_then(|x| x.get("boolean")).and_then(|v| v.as_bool()) {
                     Some(true) => "✓".to_string(),
                     _ => String::new(),
@@ -1868,12 +2243,23 @@ fn notion_prop_to_string(p: &Value) -> String {
             }
         }
         "relation" => {
-            let n = p.get("relation").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0);
-            if n > 0 { format!("{n} 件") } else { String::new() }
+            let n = p
+                .get("relation")
+                .and_then(|a| a.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            if n > 0 {
+                format!("{n} 件")
+            } else {
+                String::new()
+            }
         }
         "unique_id" => {
             let num = p.get("unique_id").and_then(|x| x.get("number"));
-            let prefix = p.get("unique_id").and_then(|x| x.get("prefix")).and_then(|v| v.as_str());
+            let prefix = p
+                .get("unique_id")
+                .and_then(|x| x.get("prefix"))
+                .and_then(|v| v.as_str());
             match (prefix, num) {
                 (Some(pre), Some(n)) => format!("{pre}-{n}"),
                 (None, Some(n)) => n.to_string(),
@@ -1911,7 +2297,10 @@ fn notion_page_to_record(page: &Value, common: &CommonCfg) -> Record {
 
 impl Connector for NotionConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let url = format!("https://api.notion.com/v1/databases/{}/query", self.database_id);
+        let url = format!(
+            "https://api.notion.com/v1/databases/{}/query",
+            self.database_id
+        );
         let mut out = Vec::new();
         let mut start_cursor: Option<String> = None;
 
@@ -1941,8 +2330,14 @@ impl Connector for NotionConnector {
                 }
             }
 
-            let has_more = value.get("has_more").and_then(|v| v.as_bool()).unwrap_or(false);
-            start_cursor = value.get("next_cursor").and_then(|v| v.as_str()).map(String::from);
+            let has_more = value
+                .get("has_more")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            start_cursor = value
+                .get("next_cursor")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             if !has_more || start_cursor.is_none() {
                 break;
             }
@@ -1965,7 +2360,11 @@ fn json_scalar_to_string(v: &Value) -> String {
         Value::String(s) => s.clone(),
         Value::Number(n) => n.to_string(),
         Value::Bool(b) => b.to_string(),
-        Value::Array(a) => a.iter().map(json_scalar_to_string).collect::<Vec<_>>().join(", "),
+        Value::Array(a) => a
+            .iter()
+            .map(json_scalar_to_string)
+            .collect::<Vec<_>>()
+            .join(", "),
         _ => String::new(),
     }
 }
@@ -1980,11 +2379,19 @@ fn graph_flat_record(
 ) -> Record {
     let pairs: Vec<(String, String)> = fields
         .iter()
-        .map(|f| ((*f).to_string(), obj.get(*f).map(json_scalar_to_string).unwrap_or_default()))
+        .map(|f| {
+            (
+                (*f).to_string(),
+                obj.get(*f).map(json_scalar_to_string).unwrap_or_default(),
+            )
+        })
         .collect();
     let mut rec = make_record(pairs, "", common);
     if common.label_column.is_none() {
-        rec.label = obj.get(label_field).and_then(|v| v.as_str()).map(String::from);
+        rec.label = obj
+            .get(label_field)
+            .and_then(|v| v.as_str())
+            .map(String::from);
     }
     if common.open_ref_column.is_none() {
         rec.open_ref = open_ref;
@@ -2009,9 +2416,21 @@ struct GraphUsersConnector {
 }
 impl Connector for GraphUsersConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(&self.auth.tenant_id, &self.auth.client_id, &self.auth.client_secret)?;
+        let client = GraphClient::new(
+            &self.auth.tenant_id,
+            &self.auth.client_id,
+            &self.auth.client_secret,
+        )?;
         let url = "https://graph.microsoft.com/v1.0/users?$select=displayName,userPrincipalName,mail,jobTitle,department,officeLocation,mobilePhone,id&$top=999";
-        let fields = ["displayName", "userPrincipalName", "mail", "jobTitle", "department", "officeLocation", "mobilePhone"];
+        let fields = [
+            "displayName",
+            "userPrincipalName",
+            "mail",
+            "jobTitle",
+            "department",
+            "officeLocation",
+            "mobilePhone",
+        ];
         Ok(client
             .get_all(url)?
             .iter()
@@ -2030,7 +2449,11 @@ struct GraphGroupsConnector {
 }
 impl Connector for GraphGroupsConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(&self.auth.tenant_id, &self.auth.client_id, &self.auth.client_secret)?;
+        let client = GraphClient::new(
+            &self.auth.tenant_id,
+            &self.auth.client_id,
+            &self.auth.client_secret,
+        )?;
         let url = "https://graph.microsoft.com/v1.0/groups?$select=displayName,mail,description,visibility,id&$top=999";
         let fields = ["displayName", "mail", "description", "visibility"];
         Ok(client
@@ -2051,7 +2474,11 @@ struct GraphTeamsConnector {
 }
 impl Connector for GraphTeamsConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(&self.auth.tenant_id, &self.auth.client_id, &self.auth.client_secret)?;
+        let client = GraphClient::new(
+            &self.auth.tenant_id,
+            &self.auth.client_id,
+            &self.auth.client_secret,
+        )?;
         let url = "https://graph.microsoft.com/v1.0/groups?$filter=resourceProvisioningOptions/Any(x:x eq 'Team')&$select=displayName,mail,description,id&$top=999";
         let fields = ["displayName", "mail", "description"];
         Ok(client
@@ -2071,9 +2498,18 @@ fn sp_field_is_display(key: &str) -> bool {
         return false;
     }
     const BLOCK: &[&str] = &[
-        "ContentType", "Attachments", "Edit", "LinkTitleNoMenu", "LinkTitle", "LinkTitle2",
-        "ItemChildCount", "FolderChildCount", "AuthorLookupId", "EditorLookupId",
-        "AppAuthorLookupId", "AppEditorLookupId",
+        "ContentType",
+        "Attachments",
+        "Edit",
+        "LinkTitleNoMenu",
+        "LinkTitle",
+        "LinkTitle2",
+        "ItemChildCount",
+        "FolderChildCount",
+        "AuthorLookupId",
+        "EditorLookupId",
+        "AppAuthorLookupId",
+        "AppEditorLookupId",
     ];
     !BLOCK.contains(&key)
 }
@@ -2090,7 +2526,11 @@ struct GraphSharePointListConnector {
 }
 impl Connector for GraphSharePointListConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(&self.auth.tenant_id, &self.auth.client_id, &self.auth.client_secret)?;
+        let client = GraphClient::new(
+            &self.auth.tenant_id,
+            &self.auth.client_id,
+            &self.auth.client_secret,
+        )?;
         let sid = graph_site_id(&client, &self.site_url)?;
         // リスト名（内部名 or 表示名）から id を解決。
         let lists = client.get(&format!(
@@ -2153,7 +2593,11 @@ struct GraphSharePointLibraryConnector {
 }
 impl Connector for GraphSharePointLibraryConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(&self.auth.tenant_id, &self.auth.client_id, &self.auth.client_secret)?;
+        let client = GraphClient::new(
+            &self.auth.tenant_id,
+            &self.auth.client_id,
+            &self.auth.client_secret,
+        )?;
         let sid = graph_site_id(&client, &self.site_url)?;
         // ライブラリ名指定があれば drives から一致検索、無ければ既定ライブラリ /drive。
         let did = match self.library_name.as_deref().filter(|s| !s.is_empty()) {
@@ -2164,13 +2608,18 @@ impl Connector for GraphSharePointLibraryConnector {
                 drives
                     .get("value")
                     .and_then(|v| v.as_array())
-                    .and_then(|arr| arr.iter().find(|d| d.get("name").and_then(|v| v.as_str()) == Some(name)))
+                    .and_then(|arr| {
+                        arr.iter()
+                            .find(|d| d.get("name").and_then(|v| v.as_str()) == Some(name))
+                    })
                     .and_then(|d| d.get("id").and_then(|v| v.as_str()))
                     .ok_or_else(|| anyhow!("ライブラリが見つかりません: {name}"))?
                     .to_string()
             }
             None => client
-                .get(&format!("https://graph.microsoft.com/v1.0/sites/{sid}/drive?$select=id"))?
+                .get(&format!(
+                    "https://graph.microsoft.com/v1.0/sites/{sid}/drive?$select=id"
+                ))?
                 .get("id")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("既定ライブラリを取得できません"))?
@@ -2178,7 +2627,13 @@ impl Connector for GraphSharePointLibraryConnector {
         };
 
         let mut out = Vec::new();
-        walk_drive(&client, &format!("sites/{sid}/drives/{did}"), "root", &self.common, &mut out)?;
+        walk_drive(
+            &client,
+            &format!("sites/{sid}/drives/{did}"),
+            "root",
+            &self.common,
+            &mut out,
+        )?;
         Ok(out)
     }
 }
@@ -2193,13 +2648,22 @@ fn walk_drive(
     common: &CommonCfg,
     out: &mut Vec<Record>,
 ) -> Result<()> {
-    let url = format!("https://graph.microsoft.com/v1.0/{drive_base}/items/{item_id}/children?$top=200");
+    let url =
+        format!("https://graph.microsoft.com/v1.0/{drive_base}/items/{item_id}/children?$top=200");
     for c in client.get_all(&url)? {
         let is_folder = c.get("folder").is_some();
-        let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let name = c
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let web = c.get("webUrl").and_then(|v| v.as_str()).map(String::from);
         let size = c.get("size").map(json_scalar_to_string).unwrap_or_default();
-        let modified = c.get("lastModifiedDateTime").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let modified = c
+            .get("lastModifiedDateTime")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let path = c
             .get("parentReference")
             .and_then(|p| p.get("path"))
@@ -2208,7 +2672,15 @@ fn walk_drive(
             .to_string();
         let pairs = vec![
             ("名前".to_string(), name.clone()),
-            ("種類".to_string(), if is_folder { "フォルダ" } else { "ファイル" }.to_string()),
+            (
+                "種類".to_string(),
+                if is_folder {
+                    "フォルダ"
+                } else {
+                    "ファイル"
+                }
+                .to_string(),
+            ),
             ("サイズ".to_string(), size),
             ("更新日時".to_string(), modified),
             ("パス".to_string(), path),
@@ -2241,10 +2713,25 @@ struct GraphDevicesConnector {
 }
 impl Connector for GraphDevicesConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(&self.auth.tenant_id, &self.auth.client_id, &self.auth.client_secret)?;
+        let client = GraphClient::new(
+            &self.auth.tenant_id,
+            &self.auth.client_id,
+            &self.auth.client_secret,
+        )?;
         let url = "https://graph.microsoft.com/v1.0/devices?$select=displayName,operatingSystem,operatingSystemVersion,isCompliant,trustType,approximateLastSignInDateTime&$top=999";
-        let fields = ["displayName", "operatingSystem", "operatingSystemVersion", "isCompliant", "trustType", "approximateLastSignInDateTime"];
-        Ok(client.get_all(url)?.iter().map(|d| graph_flat_record(d, &fields, "displayName", None, &self.common)).collect())
+        let fields = [
+            "displayName",
+            "operatingSystem",
+            "operatingSystemVersion",
+            "isCompliant",
+            "trustType",
+            "approximateLastSignInDateTime",
+        ];
+        Ok(client
+            .get_all(url)?
+            .iter()
+            .map(|d| graph_flat_record(d, &fields, "displayName", None, &self.common))
+            .collect())
     }
 }
 
@@ -2258,10 +2745,25 @@ struct GraphIntuneDevicesConnector {
 }
 impl Connector for GraphIntuneDevicesConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(&self.auth.tenant_id, &self.auth.client_id, &self.auth.client_secret)?;
+        let client = GraphClient::new(
+            &self.auth.tenant_id,
+            &self.auth.client_id,
+            &self.auth.client_secret,
+        )?;
         let url = "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$select=deviceName,operatingSystem,osVersion,complianceState,userPrincipalName,lastSyncDateTime&$top=999";
-        let fields = ["deviceName", "operatingSystem", "osVersion", "complianceState", "userPrincipalName", "lastSyncDateTime"];
-        Ok(client.get_all(url)?.iter().map(|d| graph_flat_record(d, &fields, "deviceName", None, &self.common)).collect())
+        let fields = [
+            "deviceName",
+            "operatingSystem",
+            "osVersion",
+            "complianceState",
+            "userPrincipalName",
+            "lastSyncDateTime",
+        ];
+        Ok(client
+            .get_all(url)?
+            .iter()
+            .map(|d| graph_flat_record(d, &fields, "deviceName", None, &self.common))
+            .collect())
     }
 }
 
@@ -2275,12 +2777,23 @@ struct GraphLicensesConnector {
 }
 impl Connector for GraphLicensesConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(&self.auth.tenant_id, &self.auth.client_id, &self.auth.client_secret)?;
+        let client = GraphClient::new(
+            &self.auth.tenant_id,
+            &self.auth.client_id,
+            &self.auth.client_secret,
+        )?;
         let url = "https://graph.microsoft.com/v1.0/subscribedSkus?$select=skuPartNumber,skuId,consumedUnits,prepaidUnits,capabilityStatus";
         let mut out = Vec::new();
         for sku in client.get_all(url)? {
-            let part_number = sku.get("skuPartNumber").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let consumed = sku.get("consumedUnits").map(json_scalar_to_string).unwrap_or_default();
+            let part_number = sku
+                .get("skuPartNumber")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let consumed = sku
+                .get("consumedUnits")
+                .map(json_scalar_to_string)
+                .unwrap_or_default();
             let enabled = sku
                 .get("prepaidUnits")
                 .and_then(|p| p.get("enabled"))
@@ -2292,11 +2805,21 @@ impl Connector for GraphLicensesConnector {
             };
             let pairs = vec![
                 ("ライセンス名".to_string(), part_number.clone()),
-                ("SKU ID".to_string(), sku.get("skuId").map(json_scalar_to_string).unwrap_or_default()),
+                (
+                    "SKU ID".to_string(),
+                    sku.get("skuId")
+                        .map(json_scalar_to_string)
+                        .unwrap_or_default(),
+                ),
                 ("総数".to_string(), enabled),
                 ("消費数".to_string(), consumed),
                 ("残数".to_string(), remaining),
-                ("状態".to_string(), sku.get("capabilityStatus").map(json_scalar_to_string).unwrap_or_default()),
+                (
+                    "状態".to_string(),
+                    sku.get("capabilityStatus")
+                        .map(json_scalar_to_string)
+                        .unwrap_or_default(),
+                ),
             ];
             let mut rec = make_record(pairs, "", &self.common);
             if self.common.label_column.is_none() {
@@ -2320,17 +2843,40 @@ struct GraphCalendarConnector {
 }
 impl Connector for GraphCalendarConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(&self.auth.tenant_id, &self.auth.client_id, &self.auth.client_secret)?;
+        let client = GraphClient::new(
+            &self.auth.tenant_id,
+            &self.auth.client_id,
+            &self.auth.client_secret,
+        )?;
         let user = urlencoding_light(&self.user);
         let url = format!(
             "https://graph.microsoft.com/v1.0/users/{user}/events?$select=subject,start,end,location,organizer,attendees,webLink&$top=250&$orderby=start/dateTime desc"
         );
         let mut out = Vec::new();
         for ev in client.get_all(&url)? {
-            let subject = ev.get("subject").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let start = ev.get("start").and_then(|s| s.get("dateTime")).and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let end = ev.get("end").and_then(|s| s.get("dateTime")).and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let location = ev.get("location").and_then(|l| l.get("displayName")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let subject = ev
+                .get("subject")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let start = ev
+                .get("start")
+                .and_then(|s| s.get("dateTime"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let end = ev
+                .get("end")
+                .and_then(|s| s.get("dateTime"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let location = ev
+                .get("location")
+                .and_then(|l| l.get("displayName"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let organizer = ev
                 .get("organizer")
                 .and_then(|o| o.get("emailAddress"))
@@ -2382,10 +2928,20 @@ struct GraphOneDriveConnector {
 }
 impl Connector for GraphOneDriveConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(&self.auth.tenant_id, &self.auth.client_id, &self.auth.client_secret)?;
+        let client = GraphClient::new(
+            &self.auth.tenant_id,
+            &self.auth.client_id,
+            &self.auth.client_secret,
+        )?;
         let user = urlencoding_light(&self.user);
         let mut out = Vec::new();
-        walk_drive(&client, &format!("users/{user}/drive"), "root", &self.common, &mut out)?;
+        walk_drive(
+            &client,
+            &format!("users/{user}/drive"),
+            "root",
+            &self.common,
+            &mut out,
+        )?;
         Ok(out)
     }
 }
@@ -2402,27 +2958,48 @@ struct GraphPlannerConnector {
 }
 impl Connector for GraphPlannerConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(&self.auth.tenant_id, &self.auth.client_id, &self.auth.client_secret)?;
+        let client = GraphClient::new(
+            &self.auth.tenant_id,
+            &self.auth.client_id,
+            &self.auth.client_secret,
+        )?;
         let plans = client.get(&format!(
             "https://graph.microsoft.com/v1.0/groups/{}/planner/plans?$select=id,title",
             self.group_id
         ))?;
         let mut out = Vec::new();
-        let Some(plans) = plans.get("value").and_then(|v| v.as_array()) else { return Ok(out) };
+        let Some(plans) = plans.get("value").and_then(|v| v.as_array()) else {
+            return Ok(out);
+        };
         for plan in plans {
-            let plan_id = plan.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let plan_title = plan.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let plan_id = plan
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let plan_title = plan
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             if plan_id.is_empty() {
                 continue;
             }
             // bucket(列) の ID → 名前 の対応表を先に作る。
-            let buckets = client.get(&format!("https://graph.microsoft.com/v1.0/planner/plans/{plan_id}/buckets?$select=id,name"))?;
+            let buckets = client.get(&format!(
+                "https://graph.microsoft.com/v1.0/planner/plans/{plan_id}/buckets?$select=id,name"
+            ))?;
             let bucket_names: std::collections::HashMap<String, String> = buckets
                 .get("value")
                 .and_then(|v| v.as_array())
                 .map(|arr| {
                     arr.iter()
-                        .filter_map(|b| Some((b.get("id")?.as_str()?.to_string(), b.get("name")?.as_str()?.to_string())))
+                        .filter_map(|b| {
+                            Some((
+                                b.get("id")?.as_str()?.to_string(),
+                                b.get("name")?.as_str()?.to_string(),
+                            ))
+                        })
                         .collect()
                 })
                 .unwrap_or_default();
@@ -2431,9 +3008,20 @@ impl Connector for GraphPlannerConnector {
                 "https://graph.microsoft.com/v1.0/planner/plans/{plan_id}/tasks?$select=title,dueDateTime,percentComplete,bucketId,assignments"
             );
             for t in client.get_all(&tasks_url)? {
-                let title = t.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let due = t.get("dueDateTime").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let percent = t.get("percentComplete").map(json_scalar_to_string).unwrap_or_default();
+                let title = t
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let due = t
+                    .get("dueDateTime")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let percent = t
+                    .get("percentComplete")
+                    .map(json_scalar_to_string)
+                    .unwrap_or_default();
                 let status = match percent.as_str() {
                     "100" => "完了",
                     "0" => "未着手",
@@ -2446,7 +3034,11 @@ impl Connector for GraphPlannerConnector {
                     .and_then(|id| bucket_names.get(id))
                     .cloned()
                     .unwrap_or_default();
-                let assignee_count = t.get("assignments").and_then(|a| a.as_object()).map(|o| o.len()).unwrap_or(0);
+                let assignee_count = t
+                    .get("assignments")
+                    .and_then(|a| a.as_object())
+                    .map(|o| o.len())
+                    .unwrap_or(0);
                 let pairs = vec![
                     ("プラン".to_string(), plan_title.clone()),
                     ("タスク名".to_string(), title.clone()),
@@ -2471,7 +3063,9 @@ fn urlencoding_light(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'@' | b'.' | b'-' | b'_' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'@' | b'.' | b'-' | b'_' => {
+                out.push(b as char)
+            }
             _ => out.push_str(&format!("%{b:02X}")),
         }
     }
@@ -2502,7 +3096,10 @@ mod graph_live_tests {
             for (k, v) in extra.as_object().unwrap() {
                 cfg[k] = v.clone();
             }
-            build_connector(type_, &cfg.to_string()).unwrap().fetch().unwrap()
+            build_connector(type_, &cfg.to_string())
+                .unwrap()
+                .fetch()
+                .unwrap()
         };
 
         let users = run("graph_entra_users", serde_json::json!({}));
@@ -2518,12 +3115,22 @@ mod graph_live_tests {
         assert!(!teams.is_empty());
 
         if let Some(site) = env("EVERYDB_SP_SITE") {
-            let list = run("graph_sharepoint_list", serde_json::json!({ "site_url": site, "list_name": "SampleList" }));
+            let list = run(
+                "graph_sharepoint_list",
+                serde_json::json!({ "site_url": site, "list_name": "SampleList" }),
+            );
             println!("sharepoint list = {}", list.len());
             assert!(!list.is_empty());
-            assert!(list.iter().all(|r| r.open_ref.as_deref().map(|u| u.starts_with("http")).unwrap_or(false)));
+            assert!(list.iter().all(|r| r
+                .open_ref
+                .as_deref()
+                .map(|u| u.starts_with("http"))
+                .unwrap_or(false)));
 
-            let lib = run("graph_sharepoint_library", serde_json::json!({ "site_url": site }));
+            let lib = run(
+                "graph_sharepoint_library",
+                serde_json::json!({ "site_url": site }),
+            );
             println!("sharepoint library = {}", lib.len());
             assert!(!lib.is_empty());
         }
@@ -2535,10 +3142,17 @@ mod graph_live_tests {
 // 読み取り前に一時ファイルへコピーしてからそのコピーを開く。
 fn copy_locked_sqlite(path: &str) -> Result<std::path::PathBuf> {
     let src = std::path::Path::new(path);
-    let file_name = src.file_name().ok_or_else(|| anyhow!("不正なパス: {path}"))?;
-    let tmp = std::env::temp_dir().join(format!("everydb_{}_{}", std::process::id(), file_name.to_string_lossy()));
-    std::fs::copy(src, &tmp)
-        .map_err(|e| anyhow!("ファイルのコピーに失敗（ブラウザ実行中はロックされる場合があります）: {e}"))?;
+    let file_name = src
+        .file_name()
+        .ok_or_else(|| anyhow!("不正なパス: {path}"))?;
+    let tmp = std::env::temp_dir().join(format!(
+        "everydb_{}_{}",
+        std::process::id(),
+        file_name.to_string_lossy()
+    ));
+    std::fs::copy(src, &tmp).map_err(|e| {
+        anyhow!("ファイルのコピーに失敗（ブラウザ実行中はロックされる場合があります）: {e}")
+    })?;
     Ok(tmp)
 }
 
@@ -2662,8 +3276,16 @@ impl BrowserBookmarksConnector {
         let node_type = node.get("type").and_then(|v| v.as_str()).unwrap_or("");
         match node_type {
             "url" => {
-                let name = node.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let url = node.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let name = node
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let url = node
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let date_added = node
                     .get("date_added")
                     .and_then(|v| v.as_str())
@@ -2680,7 +3302,11 @@ impl BrowserBookmarksConnector {
             }
             "folder" => {
                 let name = node.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let new_path = if folder_path.is_empty() { name.to_string() } else { format!("{folder_path}/{name}") };
+                let new_path = if folder_path.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{folder_path}/{name}")
+                };
                 if let Some(children) = node.get("children").and_then(|v| v.as_array()) {
                     for child in children {
                         self.walk_chromium_node(child, &new_path, out);
@@ -2750,7 +3376,10 @@ fn percent_decode(s: &str) -> String {
 /// `file:///C:/Users/...` のような URI をローカルパスへ変換する（Windows 向けの簡易実装）。
 fn file_uri_to_path(uri: &str) -> String {
     let decoded = percent_decode(uri);
-    let stripped = decoded.strip_prefix("file:///").or_else(|| decoded.strip_prefix("file://")).unwrap_or(&decoded);
+    let stripped = decoded
+        .strip_prefix("file:///")
+        .or_else(|| decoded.strip_prefix("file://"))
+        .unwrap_or(&decoded);
     stripped.replace('/', "\\")
 }
 
@@ -2815,8 +3444,18 @@ impl BrowserDownloadsConnector {
                 ("URL".to_string(), url.clone()),
                 ("状態".to_string(), state_label),
                 ("サイズ(バイト)".to_string(), size.to_string()),
-                ("開始日時".to_string(), fmt_epoch(webkit_micros_to_unix_secs(start_us))),
-                ("完了日時".to_string(), if end_us > 0 { fmt_epoch(webkit_micros_to_unix_secs(end_us)) } else { String::new() }),
+                (
+                    "開始日時".to_string(),
+                    fmt_epoch(webkit_micros_to_unix_secs(start_us)),
+                ),
+                (
+                    "完了日時".to_string(),
+                    if end_us > 0 {
+                        fmt_epoch(webkit_micros_to_unix_secs(end_us))
+                    } else {
+                        String::new()
+                    },
+                ),
             ];
             out.push(make_record(pairs, &target_path, &self.common));
         }
@@ -2867,12 +3506,24 @@ struct GoogleJwtClaims {
 
 /// サービスアカウント JSON 鍵（の中身の文字列）から Google API アクセストークンを取得する。
 fn google_access_token(sa_json: &str, scope: &str) -> Result<String> {
-    let sa: Value = serde_json::from_str(sa_json).map_err(|e| anyhow!("サービスアカウント JSON の解析に失敗: {e}"))?;
-    let client_email = sa.get("client_email").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("client_email が見つかりません"))?;
-    let private_key = sa.get("private_key").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("private_key が見つかりません"))?;
-    let token_uri = sa.get("token_uri").and_then(|v| v.as_str()).unwrap_or("https://oauth2.googleapis.com/token");
+    let sa: Value = serde_json::from_str(sa_json)
+        .map_err(|e| anyhow!("サービスアカウント JSON の解析に失敗: {e}"))?;
+    let client_email = sa
+        .get("client_email")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("client_email が見つかりません"))?;
+    let private_key = sa
+        .get("private_key")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("private_key が見つかりません"))?;
+    let token_uri = sa
+        .get("token_uri")
+        .and_then(|v| v.as_str())
+        .unwrap_or("https://oauth2.googleapis.com/token");
 
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs() as i64;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs() as i64;
     let claims = GoogleJwtClaims {
         iss: client_email.to_string(),
         scope: scope.to_string(),
@@ -2882,8 +3533,12 @@ fn google_access_token(sa_json: &str, scope: &str) -> Result<String> {
     };
     let key = jsonwebtoken::EncodingKey::from_rsa_pem(private_key.as_bytes())
         .map_err(|e| anyhow!("秘密鍵の読み込みに失敗: {e}"))?;
-    let jwt = jsonwebtoken::encode(&jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256), &claims, &key)
-        .map_err(|e| anyhow!("JWT 署名に失敗: {e}"))?;
+    let jwt = jsonwebtoken::encode(
+        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256),
+        &claims,
+        &key,
+    )
+    .map_err(|e| anyhow!("JWT 署名に失敗: {e}"))?;
 
     let resp = ureq::post(token_uri).send_form(&[
         ("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
@@ -2892,7 +3547,10 @@ fn google_access_token(sa_json: &str, scope: &str) -> Result<String> {
     let body: Value = match resp {
         Ok(r) => r.into_json()?,
         Err(ureq::Error::Status(code, r)) => {
-            return Err(anyhow!("Google トークン取得失敗 {code}: {}", r.into_string().unwrap_or_default()))
+            return Err(anyhow!(
+                "Google トークン取得失敗 {code}: {}",
+                r.into_string().unwrap_or_default()
+            ))
         }
         Err(e) => return Err(anyhow!("Google 認証エンドポイントへの接続に失敗: {e}")),
     };
@@ -2903,10 +3561,15 @@ fn google_access_token(sa_json: &str, scope: &str) -> Result<String> {
 }
 
 fn google_get_json(url: &str, token: &str) -> Result<Value> {
-    let resp = ureq::get(url).set("Authorization", &format!("Bearer {token}")).call();
+    let resp = ureq::get(url)
+        .set("Authorization", &format!("Bearer {token}"))
+        .call();
     match resp {
         Ok(r) => Ok(r.into_json()?),
-        Err(ureq::Error::Status(code, r)) => Err(anyhow!("Google API {code}: {}", r.into_string().unwrap_or_default())),
+        Err(ureq::Error::Status(code, r)) => Err(anyhow!(
+            "Google API {code}: {}",
+            r.into_string().unwrap_or_default()
+        )),
         Err(e) => Err(anyhow!("Google API への接続に失敗: {e}")),
     }
 }
@@ -2929,7 +3592,10 @@ impl Connector for GoogleSheetsConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
         let sa_json = std::fs::read_to_string(&self.key_path)
             .map_err(|e| anyhow!("サービスアカウント鍵ファイルの読み込みに失敗: {e}"))?;
-        let token = google_access_token(&sa_json, "https://www.googleapis.com/auth/spreadsheets.readonly")?;
+        let token = google_access_token(
+            &sa_json,
+            "https://www.googleapis.com/auth/spreadsheets.readonly",
+        )?;
 
         let range = match &self.range {
             Some(r) if !r.is_empty() => r.clone(),
@@ -2945,7 +3611,9 @@ impl Connector for GoogleSheetsConnector {
                     .and_then(|s| s.get("properties"))
                     .and_then(|p| p.get("title"))
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("シート情報を取得できません（共有設定を確認してください）"))?
+                    .ok_or_else(|| {
+                        anyhow!("シート情報を取得できません（共有設定を確認してください）")
+                    })?
                     .to_string()
             }
         };
@@ -2956,7 +3624,11 @@ impl Connector for GoogleSheetsConnector {
             urlencoding_light(&range)
         );
         let data = google_get_json(&values_url, &token)?;
-        let rows_2d = data.get("values").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let rows_2d = data
+            .get("values")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
 
         let cell_str = |v: &Value| -> String {
             match v {
@@ -2983,11 +3655,19 @@ impl Connector for GoogleSheetsConnector {
             if cells.is_empty() {
                 continue;
             }
-            let ncol = if self.has_header { headers.len().max(cells.len()) } else { cells.len() };
+            let ncol = if self.has_header {
+                headers.len().max(cells.len())
+            } else {
+                cells.len()
+            };
             let pairs: Vec<(String, String)> = (0..ncol)
                 .map(|c| {
                     let name = if self.has_header {
-                        headers.get(c).filter(|h| !h.is_empty()).cloned().unwrap_or_else(|| col_to_letters(c as u32))
+                        headers
+                            .get(c)
+                            .filter(|h| !h.is_empty())
+                            .cloned()
+                            .unwrap_or_else(|| col_to_letters(c as u32))
                     } else {
                         col_to_letters(c as u32)
                     };
@@ -3003,14 +3683,29 @@ impl Connector for GoogleSheetsConnector {
 
 // ---- Google カレンダー / iCal（公開 .ics URL。認証不要）----
 fn ical_unescape(s: &str) -> String {
-    s.replace(r"\n", "\n").replace(r"\N", "\n").replace(r"\,", ",").replace(r"\;", ";").replace(r"\\", "\\")
+    s.replace(r"\n", "\n")
+        .replace(r"\N", "\n")
+        .replace(r"\,", ",")
+        .replace(r"\;", ";")
+        .replace(r"\\", "\\")
 }
 
 /// "20260101T090000Z" / "20260101T090000" / "20260101"(終日) を表示用文字列へ。
 fn parse_ical_datetime(v: &str) -> String {
-    let digits: String = v.chars().take_while(|c| c.is_ascii_digit() || *c == 'T').collect();
+    let digits: String = v
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == 'T')
+        .collect();
     if digits.len() >= 15 && digits.as_bytes()[8] == b'T' {
-        format!("{}-{}-{} {}:{}:{}", &digits[0..4], &digits[4..6], &digits[6..8], &digits[9..11], &digits[11..13], &digits[13..15])
+        format!(
+            "{}-{}-{} {}:{}:{}",
+            &digits[0..4],
+            &digits[4..6],
+            &digits[6..8],
+            &digits[9..11],
+            &digits[11..13],
+            &digits[13..15]
+        )
     } else if digits.len() >= 8 {
         format!("{}-{}-{}", &digits[0..4], &digits[4..6], &digits[6..8])
     } else {
@@ -3047,7 +3742,10 @@ impl Connector for IcalConnector {
         let text = match resp {
             Ok(r) => r.into_string()?,
             Err(ureq::Error::Status(code, r)) => {
-                return Err(anyhow!("iCal 取得失敗 {code}: {}", r.into_string().unwrap_or_default()))
+                return Err(anyhow!(
+                    "iCal 取得失敗 {code}: {}",
+                    r.into_string().unwrap_or_default()
+                ))
             }
             Err(e) => return Err(anyhow!("iCal URL への接続に失敗: {e}")),
         };
@@ -3063,10 +3761,22 @@ impl Connector for IcalConnector {
                         let summary = map.get("SUMMARY").cloned().unwrap_or_default();
                         let pairs = vec![
                             ("件名".to_string(), summary.clone()),
-                            ("開始".to_string(), map.get("DTSTART").cloned().unwrap_or_default()),
-                            ("終了".to_string(), map.get("DTEND").cloned().unwrap_or_default()),
-                            ("場所".to_string(), map.get("LOCATION").cloned().unwrap_or_default()),
-                            ("詳細".to_string(), map.get("DESCRIPTION").cloned().unwrap_or_default()),
+                            (
+                                "開始".to_string(),
+                                map.get("DTSTART").cloned().unwrap_or_default(),
+                            ),
+                            (
+                                "終了".to_string(),
+                                map.get("DTEND").cloned().unwrap_or_default(),
+                            ),
+                            (
+                                "場所".to_string(),
+                                map.get("LOCATION").cloned().unwrap_or_default(),
+                            ),
+                            (
+                                "詳細".to_string(),
+                                map.get("DESCRIPTION").cloned().unwrap_or_default(),
+                            ),
                         ];
                         let mut rec = make_record(pairs, &self.url, &self.common);
                         if self.common.label_column.is_none() {
@@ -3079,7 +3789,11 @@ impl Connector for IcalConnector {
                     if let (Some(map), Some(idx)) = (cur.as_mut(), line.find(':')) {
                         let key = line[..idx].split(';').next().unwrap_or("").to_uppercase();
                         let raw_value = ical_unescape(&line[idx + 1..]);
-                        let value = if key == "DTSTART" || key == "DTEND" { parse_ical_datetime(&raw_value) } else { raw_value };
+                        let value = if key == "DTSTART" || key == "DTEND" {
+                            parse_ical_datetime(&raw_value)
+                        } else {
+                            raw_value
+                        };
                         map.insert(key, value);
                     }
                 }
@@ -3143,28 +3857,47 @@ impl Connector for AirtableConnector {
             if let Some(o) = &offset {
                 url.push_str(&format!("&offset={}", urlencoding_light(o)));
             }
-            let resp = ureq::get(&url).set("Authorization", &format!("Bearer {}", self.token)).call();
+            let resp = ureq::get(&url)
+                .set("Authorization", &format!("Bearer {}", self.token))
+                .call();
             let body: Value = match resp {
                 Ok(r) => r.into_json()?,
                 Err(ureq::Error::Status(code, r)) => {
-                    return Err(anyhow!("Airtable API エラー {code}: {}", r.into_string().unwrap_or_default()))
+                    return Err(anyhow!(
+                        "Airtable API エラー {code}: {}",
+                        r.into_string().unwrap_or_default()
+                    ))
                 }
                 Err(e) => return Err(anyhow!("Airtable への接続に失敗: {e}")),
             };
             if let Some(records) = body.get("records").and_then(|v| v.as_array()) {
                 for rec in records {
-                    let id = rec.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let id = rec
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let mut pairs: Vec<(String, String)> = rec
                         .get("fields")
                         .and_then(|v| v.as_object())
-                        .map(|o| o.iter().map(|(k, v)| (k.clone(), airtable_value_to_string(v))).collect())
+                        .map(|o| {
+                            o.iter()
+                                .map(|(k, v)| (k.clone(), airtable_value_to_string(v)))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     pairs.push(("レコードID".to_string(), id.clone()));
-                    let open_ref = format!("https://airtable.com/{}/{}/{}", self.base_id, self.table, id);
+                    let open_ref = format!(
+                        "https://airtable.com/{}/{}/{}",
+                        self.base_id, self.table, id
+                    );
                     out.push(make_record(pairs, &open_ref, &self.common));
                 }
             }
-            offset = body.get("offset").and_then(|v| v.as_str()).map(String::from);
+            offset = body
+                .get("offset")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             if offset.is_none() {
                 break;
             }
@@ -3226,7 +3959,11 @@ impl Connector for PostgresConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
         let schema = self.schema.as_deref().unwrap_or("public");
         if !is_safe_sql_ident(&self.table) || !is_safe_sql_ident(schema) {
-            return Err(anyhow!("不正なテーブル名/スキーマ名: {}.{}", schema, self.table));
+            return Err(anyhow!(
+                "不正なテーブル名/スキーマ名: {}.{}",
+                schema,
+                self.table
+            ));
         }
         let port = self.port.as_ref().map(|p| p.to_u16(5432)).unwrap_or(5432);
         // 値は必ずクォート＋エスケープする。素の format! だと空白入りパスワード等で
@@ -3246,16 +3983,25 @@ impl Connector for PostgresConnector {
             .danger_accept_invalid_certs(self.ssl_accept_invalid_certs.unwrap_or(false))
             .build()
             .map_err(|e| anyhow!("TLS の初期化に失敗: {e}"))?;
-        let mut client = postgres::Client::connect(&conn_str, postgres_native_tls::MakeTlsConnector::new(tls))
-            .map_err(|e| anyhow!("PostgreSQL への接続に失敗: {e}"))?;
+        let mut client =
+            postgres::Client::connect(&conn_str, postgres_native_tls::MakeTlsConnector::new(tls))
+                .map_err(|e| anyhow!("PostgreSQL への接続に失敗: {e}"))?;
         // row_to_json で行ごと JSON 化して受け取ることで、列の型ごとの分岐が不要になる。
-        let sql = format!("SELECT row_to_json(t) FROM \"{schema}\".\"{}\" t LIMIT 20000", self.table);
-        let rows = client.query(&sql, &[]).map_err(|e| anyhow!("クエリ実行に失敗: {e}"))?;
+        let sql = format!(
+            "SELECT row_to_json(t) FROM \"{schema}\".\"{}\" t LIMIT 20000",
+            self.table
+        );
+        let rows = client
+            .query(&sql, &[])
+            .map_err(|e| anyhow!("クエリ実行に失敗: {e}"))?;
         let mut out = Vec::new();
         for row in &rows {
             let json_val: Value = row.get(0);
             if let Some(obj) = json_val.as_object() {
-                let pairs: Vec<(String, String)> = obj.iter().map(|(k, v)| (k.clone(), json_scalar_to_string(v))).collect();
+                let pairs: Vec<(String, String)> = obj
+                    .iter()
+                    .map(|(k, v)| (k.clone(), json_scalar_to_string(v)))
+                    .collect();
                 out.push(make_record(pairs, "", &self.common));
             }
         }
@@ -3328,19 +4074,30 @@ impl Connector for MysqlConnector {
             urlencoding_light(&self.database)
         );
         let mut opts = mysql::OptsBuilder::from_opts(
-            mysql::Opts::from_url(url.as_str()).map_err(|e| anyhow!("MySQL の接続 URL が不正: {e}"))?,
+            mysql::Opts::from_url(url.as_str())
+                .map_err(|e| anyhow!("MySQL の接続 URL が不正: {e}"))?,
         );
         if self.use_tls.unwrap_or(false) {
             opts = opts.ssl_opts(Some(
-                mysql::SslOpts::default()
-                    .with_danger_accept_invalid_certs(self.ssl_accept_invalid_certs.unwrap_or(false)),
+                mysql::SslOpts::default().with_danger_accept_invalid_certs(
+                    self.ssl_accept_invalid_certs.unwrap_or(false),
+                ),
             ));
         }
         let pool = mysql::Pool::new(opts).map_err(|e| anyhow!("MySQL への接続に失敗: {e}"))?;
-        let mut conn = pool.get_conn().map_err(|e| anyhow!("MySQL 接続の確立に失敗: {e}"))?;
+        let mut conn = pool
+            .get_conn()
+            .map_err(|e| anyhow!("MySQL 接続の確立に失敗: {e}"))?;
         let sql = format!("SELECT * FROM `{}` LIMIT 20000", self.table);
-        let result = conn.query_iter(&sql).map_err(|e| anyhow!("クエリ実行に失敗: {e}"))?;
-        let col_names: Vec<String> = result.columns().as_ref().iter().map(|c| c.name_str().to_string()).collect();
+        let result = conn
+            .query_iter(&sql)
+            .map_err(|e| anyhow!("クエリ実行に失敗: {e}"))?;
+        let col_names: Vec<String> = result
+            .columns()
+            .as_ref()
+            .iter()
+            .map(|c| c.name_str().to_string())
+            .collect();
 
         let mut out = Vec::new();
         for row_result in result {
@@ -3382,28 +4139,60 @@ impl Connector for BoxConnector {
 }
 
 impl BoxConnector {
-    fn walk_box_folder(&self, token: &str, folder_id: &str, path: &str, out: &mut Vec<Record>) -> Result<()> {
+    fn walk_box_folder(
+        &self,
+        token: &str,
+        folder_id: &str,
+        path: &str,
+        out: &mut Vec<Record>,
+    ) -> Result<()> {
         let mut offset = 0u32;
         loop {
             let url = format!(
                 "https://api.box.com/2.0/folders/{folder_id}/items?fields=name,type,size,modified_at,path_collection&limit=100&offset={offset}"
             );
-            let resp = ureq::get(&url).set("Authorization", &format!("Bearer {token}")).call();
+            let resp = ureq::get(&url)
+                .set("Authorization", &format!("Bearer {token}"))
+                .call();
             let body: Value = match resp {
                 Ok(r) => r.into_json()?,
-                Err(ureq::Error::Status(code, r)) => return Err(anyhow!("Box API {code}: {}", r.into_string().unwrap_or_default())),
+                Err(ureq::Error::Status(code, r)) => {
+                    return Err(anyhow!(
+                        "Box API {code}: {}",
+                        r.into_string().unwrap_or_default()
+                    ))
+                }
                 Err(e) => return Err(anyhow!("Box への接続に失敗: {e}")),
             };
-            let entries = body.get("entries").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let entries = body
+                .get("entries")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
             if entries.is_empty() {
                 break;
             }
             for entry in &entries {
-                let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let name = entry
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let item_type = entry.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                let id = entry.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let size = entry.get("size").map(json_scalar_to_string).unwrap_or_default();
-                let modified = entry.get("modified_at").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let id = entry
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let size = entry
+                    .get("size")
+                    .map(json_scalar_to_string)
+                    .unwrap_or_default();
+                let modified = entry
+                    .get("modified_at")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let web_url = if item_type == "folder" {
                     format!("https://app.box.com/folder/{id}")
                 } else {
@@ -3411,7 +4200,15 @@ impl BoxConnector {
                 };
                 let pairs = vec![
                     ("名前".to_string(), name.clone()),
-                    ("種類".to_string(), if item_type == "folder" { "フォルダ" } else { "ファイル" }.to_string()),
+                    (
+                        "種類".to_string(),
+                        if item_type == "folder" {
+                            "フォルダ"
+                        } else {
+                            "ファイル"
+                        }
+                        .to_string(),
+                    ),
                     ("サイズ".to_string(), size),
                     ("更新日時".to_string(), modified),
                     ("パス".to_string(), path.to_string()),
@@ -3423,11 +4220,18 @@ impl BoxConnector {
                 out.push(rec);
 
                 if item_type == "folder" {
-                    let new_path = if path.is_empty() { name.clone() } else { format!("{path}/{name}") };
+                    let new_path = if path.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{path}/{name}")
+                    };
                     self.walk_box_folder(token, &id, &new_path, out)?;
                 }
             }
-            let total = body.get("total_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let total = body
+                .get("total_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
             offset += entries.len() as u32;
             if offset >= total {
                 break;
@@ -3449,10 +4253,12 @@ fn response_bytes(resp: ureq::Response) -> Result<Vec<u8>> {
 
 /// zip バイト列から最初に見つかった `.csv` エントリを展開する（署名ファイル `.asc` 等は無視）。
 fn extract_first_csv_from_zip(bytes: &[u8]) -> Result<Vec<u8>> {
-    let mut archive =
-        zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| anyhow!("zip の展開に失敗しました: {e}"))?;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|e| anyhow!("zip の展開に失敗しました: {e}"))?;
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i).map_err(|e| anyhow!("zip 展開エラー: {e}"))?;
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| anyhow!("zip 展開エラー: {e}"))?;
         if file.name().to_ascii_lowercase().ends_with(".csv") {
             let mut buf = Vec::new();
             file.read_to_end(&mut buf)?;
@@ -3464,7 +4270,8 @@ fn extract_first_csv_from_zip(bytes: &[u8]) -> Result<Vec<u8>> {
 
 /// `source=file` のとき、指定パスが `.zip` なら展開して中の CSV を、`.csv` ならそのまま読む。
 fn read_csv_bytes_from_path(path: &str) -> Result<Vec<u8>> {
-    let bytes = std::fs::read(path).map_err(|e| anyhow!("ファイルの読み込みに失敗しました: {e}"))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| anyhow!("ファイルの読み込みに失敗しました: {e}"))?;
     if path.to_ascii_lowercase().ends_with(".zip") {
         extract_first_csv_from_zip(&bytes)
     } else {
@@ -3476,7 +4283,9 @@ fn read_csv_bytes_from_path(path: &str) -> Result<Vec<u8>> {
 fn read_csv_rows(bytes: &[u8]) -> Result<Vec<csv::StringRecord>> {
     let text = String::from_utf8(bytes.to_vec())
         .map_err(|_| anyhow!("CSV の文字コードが UTF-8 ではありません（Shift_JIS 版を指定していないか確認してください）"))?;
-    let mut rdr = ReaderBuilder::new().has_headers(false).from_reader(text.as_bytes());
+    let mut rdr = ReaderBuilder::new()
+        .has_headers(false)
+        .from_reader(text.as_bytes());
     let mut out = Vec::new();
     for rec in rdr.records() {
         out.push(rec?);
@@ -3485,7 +4294,8 @@ fn read_csv_rows(bytes: &[u8]) -> Result<Vec<csv::StringRecord>> {
 }
 
 // ---- 郵便番号データベース（日本郵便）----
-const KEN_ALL_URL: &str = "https://www.post.japanpost.jp/service/search/zipcode/download/utf/zip/utf_ken_all.zip";
+const KEN_ALL_URL: &str =
+    "https://www.post.japanpost.jp/service/search/zipcode/download/utf/zip/utf_ken_all.zip";
 
 #[derive(Deserialize)]
 struct PostalCodeConnector {
@@ -3612,14 +4422,24 @@ fn houjin_bangou_download(prefecture: &str) -> Result<Vec<u8>> {
         .get(HOUJIN_INDEX_URL)
         .call()
         .map_err(|e| anyhow!("法人番号公表サイトへの接続に失敗しました: {e}"))?;
-    let body = resp.into_string().map_err(|e| anyhow!("ページの読み込みに失敗しました: {e}"))?;
-    let token = extract_between(&body, &format!("name=\"{HOUJIN_TOKEN_FIELD}\" value=\""), "\"")
-        .ok_or_else(|| anyhow!("ページ内に CSRF トークンが見つかりません"))?;
+    let body = resp
+        .into_string()
+        .map_err(|e| anyhow!("ページの読み込みに失敗しました: {e}"))?;
+    let token = extract_between(
+        &body,
+        &format!("name=\"{HOUJIN_TOKEN_FIELD}\" value=\""),
+        "\"",
+    )
+    .ok_or_else(|| anyhow!("ページ内に CSRF トークンが見つかりません"))?;
     let file_no = extract_file_no_for_prefecture(&body, prefecture)
         .ok_or_else(|| anyhow!("都道府県『{prefecture}』のダウンロードIDが見つかりません"))?;
     let resp2 = agent
         .post(HOUJIN_INDEX_URL)
-        .send_form(&[(HOUJIN_TOKEN_FIELD, token.as_str()), ("selDlFileNo", file_no.as_str()), ("event", "download")])
+        .send_form(&[
+            (HOUJIN_TOKEN_FIELD, token.as_str()),
+            ("selDlFileNo", file_no.as_str()),
+            ("event", "download"),
+        ])
         .map_err(|e| anyhow!("ダウンロードのリクエストに失敗しました: {e}"))?;
     response_bytes(resp2)
 }
@@ -3635,7 +4455,10 @@ fn extract_between(s: &str, start: &str, end: &str) -> Option<String> {
 /// 同じ都道府県でも形式（Shift-JIS/Unicode/XML）ごとに ID が異なるため、セクションで範囲を絞る。
 fn extract_file_no_for_prefecture(html: &str, prefecture: &str) -> Option<String> {
     let sec_start = html.find("id=\"csv-unicode\"")?;
-    let sec_end = html[sec_start..].find("id=\"xml-unicode\"").map(|i| sec_start + i).unwrap_or(html.len());
+    let sec_end = html[sec_start..]
+        .find("id=\"xml-unicode\"")
+        .map(|i| sec_start + i)
+        .unwrap_or(html.len());
     let section = &html[sec_start..sec_end];
     let dt_marker = format!("<dt class=\"mb05\">{prefecture}</dt>");
     let dt_pos = section.find(&dt_marker)?;
@@ -3685,9 +4508,14 @@ impl Connector for WebPageConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
         let resp = ureq::get(&self.url).call();
         let body = match resp {
-            Ok(r) => r.into_string().map_err(|e| anyhow!("本文の読み込みに失敗しました: {e}"))?,
+            Ok(r) => r
+                .into_string()
+                .map_err(|e| anyhow!("本文の読み込みに失敗しました: {e}"))?,
             Err(ureq::Error::Status(code, r)) => {
-                return Err(anyhow!("HTTP {code}: {}", r.into_string().unwrap_or_default()))
+                return Err(anyhow!(
+                    "HTTP {code}: {}",
+                    r.into_string().unwrap_or_default()
+                ))
             }
             Err(e) => return Err(anyhow!("URL への接続に失敗しました: {e}")),
         };
@@ -3702,9 +4530,12 @@ impl Connector for WebPageConnector {
 impl WebPageConnector {
     fn fetch_html_table(&self, body: &str) -> Result<Vec<Record>> {
         let doc = scraper::Html::parse_document(body);
-        let table_sel = scraper::Selector::parse("table").map_err(|e| anyhow!("内部エラー(tableセレクタ): {e:?}"))?;
-        let tr_sel = scraper::Selector::parse("tr").map_err(|e| anyhow!("内部エラー(trセレクタ): {e:?}"))?;
-        let cell_sel = scraper::Selector::parse("th,td").map_err(|e| anyhow!("内部エラー(th,tdセレクタ): {e:?}"))?;
+        let table_sel = scraper::Selector::parse("table")
+            .map_err(|e| anyhow!("内部エラー(tableセレクタ): {e:?}"))?;
+        let tr_sel =
+            scraper::Selector::parse("tr").map_err(|e| anyhow!("内部エラー(trセレクタ): {e:?}"))?;
+        let cell_sel = scraper::Selector::parse("th,td")
+            .map_err(|e| anyhow!("内部エラー(th,tdセレクタ): {e:?}"))?;
         let idx = self.table_index.unwrap_or(0) as usize;
         let table_count = doc.select(&table_sel).count();
         let table = doc.select(&table_sel).nth(idx).ok_or_else(|| {
@@ -3715,8 +4546,10 @@ impl WebPageConnector {
         let mut out = Vec::new();
         let mut first_row = true;
         for tr in table.select(&tr_sel) {
-            let cells: Vec<String> =
-                tr.select(&cell_sel).map(|c| c.text().collect::<Vec<_>>().join("").trim().to_string()).collect();
+            let cells: Vec<String> = tr
+                .select(&cell_sel)
+                .map(|c| c.text().collect::<Vec<_>>().join("").trim().to_string())
+                .collect();
             if cells.is_empty() {
                 continue;
             }
@@ -3729,12 +4562,22 @@ impl WebPageConnector {
             let pairs: Vec<(String, String)> = cells
                 .into_iter()
                 .enumerate()
-                .map(|(i, v)| (headers.get(i).cloned().unwrap_or_else(|| format!("列{}", i + 1)), v))
+                .map(|(i, v)| {
+                    (
+                        headers
+                            .get(i)
+                            .cloned()
+                            .unwrap_or_else(|| format!("列{}", i + 1)),
+                        v,
+                    )
+                })
                 .collect();
             out.push(make_record(pairs, &self.url, &self.common));
         }
         if out.is_empty() {
-            return Err(anyhow!("テーブルからデータ行を取得できませんでした。{JS_RENDERED_HINT}"));
+            return Err(anyhow!(
+                "テーブルからデータ行を取得できませんでした。{JS_RENDERED_HINT}"
+            ));
         }
         Ok(out)
     }
@@ -3746,13 +4589,15 @@ impl WebPageConnector {
             .as_deref()
             .filter(|s| !s.trim().is_empty())
             .ok_or_else(|| anyhow!("css_selector モードには row_selector の指定が必要です"))?;
-        let row_sel =
-            scraper::Selector::parse(row_selector_str).map_err(|e| anyhow!("row_selector の解析に失敗しました: {e:?}"))?;
+        let row_sel = scraper::Selector::parse(row_selector_str)
+            .map_err(|e| anyhow!("row_selector の解析に失敗しました: {e:?}"))?;
         let columns_spec = self
             .columns
             .as_deref()
             .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| anyhow!("css_selector モードには columns の指定が必要です（例: タイトル=h2 a）"))?;
+            .ok_or_else(|| {
+                anyhow!("css_selector モードには columns の指定が必要です（例: タイトル=h2 a）")
+            })?;
         let parsed = parse_css_columns(columns_spec);
         if parsed.is_empty() {
             return Err(anyhow!("columns の書式が正しくありません（1行に『表示名=セレクタ』、属性を取るなら『表示名=セレクタ@属性名』）"));
@@ -3785,17 +4630,22 @@ impl WebPageConnector {
             out.push(make_record(pairs, &self.url, &self.common));
         }
         if out.is_empty() {
-            return Err(anyhow!("row_selector に一致する要素が見つかりませんでした。{JS_RENDERED_HINT}"));
+            return Err(anyhow!(
+                "row_selector に一致する要素が見つかりませんでした。{JS_RENDERED_HINT}"
+            ));
         }
         Ok(out)
     }
 
     fn fetch_json_api(&self, body: &str) -> Result<Vec<Record>> {
-        let root: Value = serde_json::from_str(body).map_err(|e| anyhow!("JSON の解析に失敗しました: {e}"))?;
+        let root: Value =
+            serde_json::from_str(body).map_err(|e| anyhow!("JSON の解析に失敗しました: {e}"))?;
         let root_path = self.json_root.as_deref().unwrap_or("").trim();
         let target = json_path_get(&root, root_path)
             .ok_or_else(|| anyhow!("json_root『{root_path}』に一致するデータが見つかりません"))?;
-        let array = target.as_array().ok_or_else(|| anyhow!("json_root で指定した先が配列ではありません"))?;
+        let array = target
+            .as_array()
+            .ok_or_else(|| anyhow!("json_root で指定した先が配列ではありません"))?;
         let columns_spec = self.columns.as_deref().unwrap_or("").trim();
         let cols = parse_plain_columns(columns_spec);
 
@@ -3805,18 +4655,25 @@ impl WebPageConnector {
                 cols.iter()
                     .map(|(name, path)| {
                         let v = json_path_get(item, path);
-                        (name.clone(), v.map(json_scalar_to_string).unwrap_or_default())
+                        (
+                            name.clone(),
+                            v.map(json_scalar_to_string).unwrap_or_default(),
+                        )
                     })
                     .collect()
             } else if let Some(obj) = item.as_object() {
-                obj.iter().map(|(k, v)| (k.clone(), json_scalar_to_string(v))).collect()
+                obj.iter()
+                    .map(|(k, v)| (k.clone(), json_scalar_to_string(v)))
+                    .collect()
             } else {
                 vec![("値".to_string(), json_scalar_to_string(item))]
             };
             out.push(make_record(pairs, &self.url, &self.common));
         }
         if out.is_empty() {
-            return Err(anyhow!("json_root で指定した配列は取得できましたが要素が 0 件でした"));
+            return Err(anyhow!(
+                "json_root で指定した配列は取得できましたが要素が 0 件でした"
+            ));
         }
         Ok(out)
     }
@@ -3833,7 +4690,11 @@ fn parse_css_columns(spec: &str) -> Vec<(String, String, Option<String>)> {
             let (name, rest) = line.split_once('=')?;
             let rest = rest.trim();
             if let Some((sel, attr)) = rest.rsplit_once('@') {
-                Some((name.trim().to_string(), sel.trim().to_string(), Some(attr.trim().to_string())))
+                Some((
+                    name.trim().to_string(),
+                    sel.trim().to_string(),
+                    Some(attr.trim().to_string()),
+                ))
             } else {
                 Some((name.trim().to_string(), rest.to_string(), None))
             }
@@ -3876,7 +4737,10 @@ mod gov_data_tests {
     use super::*;
 
     fn fetch(type_: &str, cfg: serde_json::Value) -> Vec<Record> {
-        build_connector(type_, &cfg.to_string()).unwrap().fetch().unwrap()
+        build_connector(type_, &cfg.to_string())
+            .unwrap()
+            .fetch()
+            .unwrap()
     }
 
     /// 実サイトの構造を模した最小限の HTML（3 形式セクション、同一都道府県でも ID が異なる）。
@@ -3906,17 +4770,26 @@ mod gov_data_tests {
     #[test]
     fn picks_file_no_from_csv_unicode_section_only() {
         // csv-sjis(11111) / xml-unicode(33333) ではなく csv-unicode(27505) が選ばれること。
-        assert_eq!(extract_file_no_for_prefecture(MOCK_HOUJIN_HTML, "岐阜県").as_deref(), Some("27505"));
-        assert_eq!(extract_file_no_for_prefecture(MOCK_HOUJIN_HTML, "全国").as_deref(), Some("20000"));
-        assert_eq!(extract_file_no_for_prefecture(MOCK_HOUJIN_HTML, "存在しない県"), None);
+        assert_eq!(
+            extract_file_no_for_prefecture(MOCK_HOUJIN_HTML, "岐阜県").as_deref(),
+            Some("27505")
+        );
+        assert_eq!(
+            extract_file_no_for_prefecture(MOCK_HOUJIN_HTML, "全国").as_deref(),
+            Some("20000")
+        );
+        assert_eq!(
+            extract_file_no_for_prefecture(MOCK_HOUJIN_HTML, "存在しない県"),
+            None
+        );
     }
 
     fn build_test_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut buf = std::io::Cursor::new(Vec::new());
         {
             let mut zw = zip::ZipWriter::new(&mut buf);
-            let opts: zip::write::FileOptions<()> =
-                zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            let opts: zip::write::FileOptions<()> = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
             for (name, data) in entries {
                 zw.start_file(*name, opts).unwrap();
                 std::io::Write::write_all(&mut zw, data).unwrap();
@@ -3930,15 +4803,22 @@ mod gov_data_tests {
     fn extract_first_csv_from_zip_ignores_asc_signature_file() {
         let zip_bytes = build_test_zip(&[
             ("21_gifu_all_20260630.csv.asc", b"signature-bytes-not-csv"),
-            ("21_gifu_all_20260630.csv", "1,1000012160079,\"多治見検察審査会\"".as_bytes()),
+            (
+                "21_gifu_all_20260630.csv",
+                "1,1000012160079,\"多治見検察審査会\"".as_bytes(),
+            ),
         ]);
         let csv_bytes = extract_first_csv_from_zip(&zip_bytes).unwrap();
-        assert_eq!(String::from_utf8(csv_bytes).unwrap(), "1,1000012160079,\"多治見検察審査会\"");
+        assert_eq!(
+            String::from_utf8(csv_bytes).unwrap(),
+            "1,1000012160079,\"多治見検察審査会\""
+        );
     }
 
     #[test]
     fn read_csv_rows_parses_quoted_japanese_fields() {
-        let rows = read_csv_rows("1,1000012160079,\"多治見検察審査会\",\"岐阜県\"\n".as_bytes()).unwrap();
+        let rows =
+            read_csv_rows("1,1000012160079,\"多治見検察審査会\",\"岐阜県\"\n".as_bytes()).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].get(2), Some("多治見検察審査会"));
         assert_eq!(rows[0].get(3), Some("岐阜県"));
@@ -3951,16 +4831,23 @@ mod gov_data_tests {
         let recs = fetch("postal_code", serde_json::json!({}));
         println!("postal_code rows = {}", recs.len());
         assert!(!recs.is_empty());
-        assert!(recs.iter().any(|r| r.fields.get("郵便番号").and_then(|v| v.as_str()) == Some("5070023")));
+        assert!(recs
+            .iter()
+            .any(|r| r.fields.get("郵便番号").and_then(|v| v.as_str()) == Some("5070023")));
     }
 
     #[test]
     #[ignore = "requires network access; downloads real government data (岐阜県)"]
     fn corporate_number_live_downloads_gifu() {
-        let recs = fetch("corporate_number", serde_json::json!({ "prefecture": "岐阜県" }));
+        let recs = fetch(
+            "corporate_number",
+            serde_json::json!({ "prefecture": "岐阜県" }),
+        );
         println!("corporate_number (岐阜県) rows = {}", recs.len());
         assert!(!recs.is_empty());
-        assert!(recs.iter().any(|r| r.fields.get("法人番号").and_then(|v| v.as_str()) == Some("1000012160079")));
+        assert!(recs
+            .iter()
+            .any(|r| r.fields.get("法人番号").and_then(|v| v.as_str()) == Some("1000012160079")));
     }
 }
 
@@ -3995,10 +4882,18 @@ mod web_page_tests {
 
     #[test]
     fn html_table_mode_reads_header_and_rows() {
-        let recs = conn("html_table").fetch_html_table(MOCK_TABLE_HTML).unwrap();
+        let recs = conn("html_table")
+            .fetch_html_table(MOCK_TABLE_HTML)
+            .unwrap();
         assert_eq!(recs.len(), 2);
-        assert_eq!(recs[0].fields.get("名前").and_then(|v| v.as_str()), Some("記事A"));
-        assert_eq!(recs[0].fields.get("URL").and_then(|v| v.as_str()), Some("https://example.com/a"));
+        assert_eq!(
+            recs[0].fields.get("名前").and_then(|v| v.as_str()),
+            Some("記事A")
+        );
+        assert_eq!(
+            recs[0].fields.get("URL").and_then(|v| v.as_str()),
+            Some("https://example.com/a")
+        );
     }
 
     #[test]
@@ -4025,9 +4920,18 @@ mod web_page_tests {
         c.columns = Some("タイトル=h2 a\nURL=h2 a@href\n日付=span.date".to_string());
         let recs = c.fetch_css_selector(MOCK_LIST_HTML).unwrap();
         assert_eq!(recs.len(), 2);
-        assert_eq!(recs[0].fields.get("タイトル").and_then(|v| v.as_str()), Some("記事1"));
-        assert_eq!(recs[0].fields.get("URL").and_then(|v| v.as_str()), Some("/p/1"));
-        assert_eq!(recs[0].fields.get("日付").and_then(|v| v.as_str()), Some("2026-01-01"));
+        assert_eq!(
+            recs[0].fields.get("タイトル").and_then(|v| v.as_str()),
+            Some("記事1")
+        );
+        assert_eq!(
+            recs[0].fields.get("URL").and_then(|v| v.as_str()),
+            Some("/p/1")
+        );
+        assert_eq!(
+            recs[0].fields.get("日付").and_then(|v| v.as_str()),
+            Some("2026-01-01")
+        );
     }
 
     #[test]
@@ -4051,8 +4955,14 @@ mod web_page_tests {
         c.json_root = Some("articles".to_string());
         let recs = c.fetch_json_api(MOCK_JSON_BODY).unwrap();
         assert_eq!(recs.len(), 2);
-        assert_eq!(recs[0].fields.get("title").and_then(|v| v.as_str()), Some("VBAの話"));
-        assert_eq!(recs[0].fields.get("liked_count").and_then(|v| v.as_str()), Some("3"));
+        assert_eq!(
+            recs[0].fields.get("title").and_then(|v| v.as_str()),
+            Some("VBAの話")
+        );
+        assert_eq!(
+            recs[0].fields.get("liked_count").and_then(|v| v.as_str()),
+            Some("3")
+        );
     }
 
     #[test]
@@ -4062,13 +4972,21 @@ mod web_page_tests {
         c.columns = Some("タイトル=title\nいいね=liked_count\n投稿者=user.name".to_string());
         let recs = c.fetch_json_api(MOCK_JSON_BODY).unwrap();
         assert_eq!(recs.len(), 2);
-        assert_eq!(recs[0].fields.get("タイトル").and_then(|v| v.as_str()), Some("VBAの話"));
-        assert_eq!(recs[0].fields.get("投稿者").and_then(|v| v.as_str()), Some("たろう"));
+        assert_eq!(
+            recs[0].fields.get("タイトル").and_then(|v| v.as_str()),
+            Some("VBAの話")
+        );
+        assert_eq!(
+            recs[0].fields.get("投稿者").and_then(|v| v.as_str()),
+            Some("たろう")
+        );
     }
 
     #[test]
     fn json_api_mode_root_array_when_json_root_empty() {
-        let recs = conn("json_api").fetch_json_api(r#"[{"a":1},{"a":2}]"#).unwrap();
+        let recs = conn("json_api")
+            .fetch_json_api(r#"[{"a":1},{"a":2}]"#)
+            .unwrap();
         assert_eq!(recs.len(), 2);
     }
 
@@ -4077,7 +4995,10 @@ mod web_page_tests {
         let cols = parse_css_columns("タイトル=h2 a\nURL=a@href\n\n  空行は無視  =x");
         assert_eq!(cols.len(), 3);
         assert_eq!(cols[0], ("タイトル".to_string(), "h2 a".to_string(), None));
-        assert_eq!(cols[1], ("URL".to_string(), "a".to_string(), Some("href".to_string())));
+        assert_eq!(
+            cols[1],
+            ("URL".to_string(), "a".to_string(), Some("href".to_string()))
+        );
     }
 
     #[test]

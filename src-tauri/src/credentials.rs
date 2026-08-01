@@ -89,22 +89,41 @@ pub fn list_credentials(conn: &Connection, scope: &str) -> Result<Vec<Credential
     )?;
     let rows = stmt
         .query_map([scope], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut out = Vec::new();
     for (id, scope, label, created_at) in rows {
         let used_by = find_usage(conn, id)?
             .into_iter()
-            .map(|(source_id, source_name)| CredentialUsage { source_id, source_name })
+            .map(|(source_id, source_name)| CredentialUsage {
+                source_id,
+                source_name,
+            })
             .collect();
-        out.push(CredentialSummary { id, scope, label, created_at, used_by });
+        out.push(CredentialSummary {
+            id,
+            scope,
+            label,
+            created_at,
+            used_by,
+        });
     }
     Ok(out)
 }
 
 /// 新規保存。スコープの秘密フィールドだけ DPAPI 暗号化する。
-pub fn add_credential(conn: &Connection, scope: &str, label: &str, fields_json: &str) -> Result<i64> {
+pub fn add_credential(
+    conn: &Connection,
+    scope: &str,
+    label: &str,
+    fields_json: &str,
+) -> Result<i64> {
     validate_scope(scope)?;
     let protected = secret::protect_json_keys(protected_keys_of_scope(scope), fields_json)?;
     conn.execute(
@@ -143,7 +162,8 @@ pub fn delete_credential(conn: &Connection, id: i64) -> Result<(), String> {
             names.join("、")
         ));
     }
-    conn.execute("DELETE FROM credentials WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM credentials WHERE id = ?1", [id])
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -153,14 +173,25 @@ pub fn find_usage(conn: &Connection, id: i64) -> Result<Vec<(i64, String)>> {
     let mut stmt = conn.prepare("SELECT id, type, name, config_json FROM sources")?;
     let rows = stmt
         .query_map([], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut out = Vec::new();
     for (source_id, type_, name, config_json) in rows {
-        let Some(scope) = scope_of_type(&type_) else { continue };
-        let Some(key) = source_ref_key_of_scope(scope) else { continue };
-        let Ok(v) = serde_json::from_str::<Value>(&config_json) else { continue };
+        let Some(scope) = scope_of_type(&type_) else {
+            continue;
+        };
+        let Some(key) = source_ref_key_of_scope(scope) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_str::<Value>(&config_json) else {
+            continue;
+        };
         if v.get(key).and_then(|x| x.as_str()) == Some(marker.as_str()) {
             out.push((source_id, name));
         }
@@ -208,11 +239,15 @@ pub fn resolve_secret_value(conn: &Connection, id: i64) -> Result<String> {
     // してしまうため、通常のコピー用途には向かない。
     let key = match scope.as_str() {
         "box" => "client_secret",
-        _ => source_ref_key_of_scope(&scope).ok_or_else(|| anyhow!("秘密フィールドの無いスコープです: {scope}"))?,
+        _ => source_ref_key_of_scope(&scope)
+            .ok_or_else(|| anyhow!("秘密フィールドの無いスコープです: {scope}"))?,
     };
     let decrypted = secret::unprotect_config(&fields_json)?;
     let v: Value = serde_json::from_str(&decrypted)?;
-    Ok(v.get(key).and_then(|x| x.as_str()).unwrap_or("").to_string())
+    Ok(v.get(key)
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string())
 }
 
 /// 指定 config_json のうち、`cred:<id>` 参照になっているフィールドのキー→トークンのラベル。
@@ -222,12 +257,22 @@ pub fn resolve_secret_value(conn: &Connection, id: i64) -> Result<String> {
 pub fn cred_ref_labels(conn: &Connection, config_json: &str) -> Result<Map<String, Value>> {
     let v: Value = serde_json::from_str(config_json)?;
     let mut out = Map::new();
-    let Some(obj) = v.as_object() else { return Ok(out) };
+    let Some(obj) = v.as_object() else {
+        return Ok(out);
+    };
     for (k, val) in obj {
         let Some(s) = val.as_str() else { continue };
-        let Some(id_str) = s.strip_prefix(secret::CRED_MARKER) else { continue };
-        let Ok(id) = id_str.parse::<i64>() else { continue };
-        if let Ok(label) = conn.query_row("SELECT label FROM credentials WHERE id = ?1", [id], |r| r.get::<_, String>(0)) {
+        let Some(id_str) = s.strip_prefix(secret::CRED_MARKER) else {
+            continue;
+        };
+        let Ok(id) = id_str.parse::<i64>() else {
+            continue;
+        };
+        if let Ok(label) =
+            conn.query_row("SELECT label FROM credentials WHERE id = ?1", [id], |r| {
+                r.get::<_, String>(0)
+            })
+        {
             // id も一緒に返す（フロントの「トークンをコピー」ボタンが、このセッションで
             // 選び直したかどうかに関わらず credential_secret_value を呼べるようにするため）。
             out.insert(k.clone(), serde_json::json!({ "id": id, "label": label }));
@@ -240,7 +285,11 @@ pub fn cred_ref_labels(conn: &Connection, config_json: &str) -> Result<Map<Strin
 /// 参照フィールドの「実体」はソースではなく `credentials` 側にあるため、ソース編集画面の
 /// 「解錠して編集」は本来意味を持たない（誤って書き換えると意図せずリンクが外れてしまう）。
 /// 値を変えたい場合はトークン管理画面（`update_credential`）側で行う。
-pub fn remask_cred_refs(conn: &Connection, raw_config_json: &str, visible_json: &str) -> Result<String> {
+pub fn remask_cred_refs(
+    conn: &Connection,
+    raw_config_json: &str,
+    visible_json: &str,
+) -> Result<String> {
     let labels = cred_ref_labels(conn, raw_config_json)?;
     if labels.is_empty() {
         return Ok(visible_json.to_string());
@@ -248,7 +297,10 @@ pub fn remask_cred_refs(conn: &Connection, raw_config_json: &str, visible_json: 
     let mut v: Value = serde_json::from_str(visible_json)?;
     if let Some(obj) = v.as_object_mut() {
         for key in labels.keys() {
-            obj.insert(key.clone(), Value::String(secret::SECRET_PLACEHOLDER.to_string()));
+            obj.insert(
+                key.clone(),
+                Value::String(secret::SECRET_PLACEHOLDER.to_string()),
+            );
         }
     }
     Ok(serde_json::to_string(&v)?)
@@ -258,7 +310,9 @@ pub fn remask_cred_refs(conn: &Connection, raw_config_json: &str, visible_json: 
 /// （connector 構築の直前でのみ呼ぶ。DB に保存する config_json 自体は変更しない）。
 pub fn resolve_credentials(conn: &Connection, config_json: &str) -> Result<String> {
     let mut v: Value = serde_json::from_str(config_json)?;
-    let Some(obj) = v.as_object_mut() else { return Ok(config_json.to_string()) };
+    let Some(obj) = v.as_object_mut() else {
+        return Ok(config_json.to_string());
+    };
     let refs: Vec<(String, i64)> = obj
         .iter()
         .filter_map(|(k, val)| {
@@ -273,8 +327,14 @@ pub fn resolve_credentials(conn: &Connection, config_json: &str) -> Result<Strin
     }
     for (key, id) in refs {
         let (scope, fields_json): (String, String) = conn
-            .query_row("SELECT scope, fields_json FROM credentials WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))
-            .map_err(|_| anyhow!("保存済みトークン(id={id})が見つかりません（削除された可能性があります）"))?;
+            .query_row(
+                "SELECT scope, fields_json FROM credentials WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|_| {
+                anyhow!("保存済みトークン(id={id})が見つかりません（削除された可能性があります）")
+            })?;
         if scope == "box" {
             // box は credentials テーブルに「アクセストークン」自体を保持しない。個人プランは
             // OAuth 2.0（保存してある refresh_token からその場で取得し直し、ローテーションされる
@@ -297,19 +357,35 @@ pub fn resolve_credentials(conn: &Connection, config_json: &str) -> Result<Strin
 
 /// box: `auth_method`（"oauth" 既定 / "ccg"）に応じてアクセストークンを取得する。
 /// `protected_fields_json` は暗号化されたままの値でよい（内部で復号する）。
-fn box_access_token_for_credential(conn: &Connection, credential_id: i64, protected_fields_json: &str) -> Result<String> {
+fn box_access_token_for_credential(
+    conn: &Connection,
+    credential_id: i64,
+    protected_fields_json: &str,
+) -> Result<String> {
     let decrypted = secret::unprotect_config(protected_fields_json)?;
     let v: Value = serde_json::from_str(&decrypted)?;
-    let auth_method = v.get("auth_method").and_then(|x| x.as_str()).unwrap_or("oauth");
-    let client_id = v.get("client_id").and_then(|x| x.as_str()).filter(|s| !s.is_empty())
+    let auth_method = v
+        .get("auth_method")
+        .and_then(|x| x.as_str())
+        .unwrap_or("oauth");
+    let client_id = v
+        .get("client_id")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow!("クライアントIDが未設定です"))?;
-    let client_secret = v.get("client_secret").and_then(|x| x.as_str()).filter(|s| !s.is_empty())
+    let client_secret = v
+        .get("client_secret")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow!("クライアントシークレットが未設定です"))?;
 
     if auth_method == "ccg" {
         // 法人（Enterprise）プラン: Client Credentials Grant。毎回その場でトークンを新規発行する
         // だけで、保存し直す状態は無い（§7-18）。
-        let enterprise_id = v.get("enterprise_id").and_then(|x| x.as_str()).filter(|s| !s.is_empty())
+        let enterprise_id = v
+            .get("enterprise_id")
+            .and_then(|x| x.as_str())
+            .filter(|s| !s.is_empty())
             .ok_or_else(|| anyhow!("Enterprise ID が未設定です"))?;
         return crate::box_oauth::client_credentials_token(client_id, client_secret, enterprise_id);
     }
@@ -319,15 +395,22 @@ fn box_access_token_for_credential(conn: &Connection, credential_id: i64, protec
     let refresh_token = v.get("refresh_token").and_then(|x| x.as_str()).filter(|s| !s.is_empty()).ok_or_else(|| {
         anyhow!("Box の認可が完了していません。トークン管理画面で「Box にログインして認可」を行ってください")
     })?;
-    let (access_token, new_refresh_token) = crate::box_oauth::refresh(client_id, client_secret, refresh_token)?;
+    let (access_token, new_refresh_token) =
+        crate::box_oauth::refresh(client_id, client_secret, refresh_token)?;
     if !new_refresh_token.is_empty() {
         let mut updated = v.clone();
         if let Some(obj) = updated.as_object_mut() {
-            obj.insert("refresh_token".to_string(), Value::String(new_refresh_token));
+            obj.insert(
+                "refresh_token".to_string(),
+                Value::String(new_refresh_token),
+            );
         }
         let updated_json = serde_json::to_string(&updated)?;
         let reprotected = secret::protect_json_keys(protected_keys_of_scope("box"), &updated_json)?;
-        conn.execute("UPDATE credentials SET fields_json = ?2 WHERE id = ?1", params![credential_id, reprotected])?;
+        conn.execute(
+            "UPDATE credentials SET fields_json = ?2 WHERE id = ?1",
+            params![credential_id, reprotected],
+        )?;
     }
     Ok(access_token)
 }
@@ -357,7 +440,8 @@ mod tests {
     #[test]
     fn add_list_and_resolve_roundtrip() {
         let conn = open_test_db();
-        let id = add_credential(&conn, "notion", "個人用", r#"{"token":"ntn_secret_abc"}"#).unwrap();
+        let id =
+            add_credential(&conn, "notion", "個人用", r#"{"token":"ntn_secret_abc"}"#).unwrap();
 
         let list = list_credentials(&conn, "notion").unwrap();
         assert_eq!(list.len(), 1);
@@ -365,7 +449,8 @@ mod tests {
         assert!(list[0].used_by.is_empty());
 
         // resolve_credentials: cred:<id> が実値へ展開される。
-        let cfg = serde_json::json!({ "token": format!("cred:{id}"), "database_id": "abc" }).to_string();
+        let cfg =
+            serde_json::json!({ "token": format!("cred:{id}"), "database_id": "abc" }).to_string();
         let resolved = resolve_credentials(&conn, &cfg).unwrap();
         let v: Value = serde_json::from_str(&resolved).unwrap();
         assert_eq!(v["token"], "ntn_secret_abc");
@@ -386,7 +471,10 @@ mod tests {
         assert_eq!(label, "テナントA");
         assert_eq!(fields.get("tenant_id").and_then(|v| v.as_str()), Some("t1"));
         assert_eq!(fields.get("client_id").and_then(|v| v.as_str()), Some("c1"));
-        assert!(fields.get("client_secret").is_none(), "秘密フィールドはピッカーへ渡さない");
+        assert!(
+            fields.get("client_secret").is_none(),
+            "秘密フィールドはピッカーへ渡さない"
+        );
     }
 
     #[test]
@@ -423,7 +511,8 @@ mod tests {
         let conn = open_test_db();
         let id = add_credential(&conn, "notion", "A", r#"{"token":"ntn_original"}"#).unwrap();
 
-        let placeholder_payload = serde_json::json!({ "token": secret::SECRET_PLACEHOLDER }).to_string();
+        let placeholder_payload =
+            serde_json::json!({ "token": secret::SECRET_PLACEHOLDER }).to_string();
         update_credential(&conn, id, "A(改名のみ)", &placeholder_payload).unwrap();
 
         let cfg = serde_json::json!({ "token": format!("cred:{id}") }).to_string();
@@ -445,7 +534,10 @@ mod tests {
         .unwrap();
 
         let err = delete_credential(&conn, id).unwrap_err();
-        assert!(err.contains("議事録DB"), "使用中ソース名がエラーに含まれること: {err}");
+        assert!(
+            err.contains("議事録DB"),
+            "使用中ソース名がエラーに含まれること: {err}"
+        );
         assert!(err.contains("1件"));
 
         // 実際には削除されていないこと。
@@ -479,7 +571,8 @@ mod tests {
     fn cred_ref_labels_finds_the_linked_field_and_its_label() {
         let conn = open_test_db();
         let id = add_credential(&conn, "notion", "共有トークン", r#"{"token":"ntn_x"}"#).unwrap();
-        let cfg = serde_json::json!({ "token": format!("cred:{id}"), "database_id": "abc" }).to_string();
+        let cfg =
+            serde_json::json!({ "token": format!("cred:{id}"), "database_id": "abc" }).to_string();
         let labels = cred_ref_labels(&conn, &cfg).unwrap();
         let token_entry = labels.get("token").unwrap();
         assert_eq!(token_entry["id"], id);
@@ -513,8 +606,20 @@ mod tests {
         // box は client_secret（アプリのシークレット）と refresh_token（ユーザー本人の認可情報）の
         // 2つとも平文で残してはいけない（§7-17: 個人プランは OAuth 2.0 のみ対応）。
         let conn = open_test_db();
-        let id = add_credential(&conn, "box", "個人アカウント", r#"{"client_id":"cid","client_secret":"csec","refresh_token":"rtok"}"#).unwrap();
-        let stored: String = conn.query_row("SELECT fields_json FROM credentials WHERE id = ?1", [id], |r| r.get(0)).unwrap();
+        let id = add_credential(
+            &conn,
+            "box",
+            "個人アカウント",
+            r#"{"client_id":"cid","client_secret":"csec","refresh_token":"rtok"}"#,
+        )
+        .unwrap();
+        let stored: String = conn
+            .query_row(
+                "SELECT fields_json FROM credentials WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap();
         let v: Value = serde_json::from_str(&stored).unwrap();
         assert_eq!(v["client_id"], "cid"); // 非秘密フィールドは平文のまま
         assert!(v["client_secret"].as_str().unwrap().starts_with("dpapi:"));
@@ -524,10 +629,19 @@ mod tests {
     #[test]
     fn public_fields_excludes_both_protected_keys_for_box() {
         let conn = open_test_db();
-        let id = add_credential(&conn, "box", "個人アカウント", r#"{"client_id":"cid","client_secret":"csec","refresh_token":"rtok"}"#).unwrap();
+        let id = add_credential(
+            &conn,
+            "box",
+            "個人アカウント",
+            r#"{"client_id":"cid","client_secret":"csec","refresh_token":"rtok"}"#,
+        )
+        .unwrap();
         let (label, fields) = public_fields(&conn, id).unwrap();
         assert_eq!(label, "個人アカウント");
-        assert_eq!(fields.get("client_id").and_then(|v| v.as_str()), Some("cid"));
+        assert_eq!(
+            fields.get("client_id").and_then(|v| v.as_str()),
+            Some("cid")
+        );
         assert!(fields.get("client_secret").is_none());
         assert!(fields.get("refresh_token").is_none());
     }
@@ -537,9 +651,19 @@ mod tests {
         // refresh_token が無い（＝トークン管理画面でまだ「Box にログインして認可」していない）
         // 状態で使おうとしたときは、ネットワークへは出ずに分かりやすいエラーを返す。
         let conn = open_test_db();
-        let id = add_credential(&conn, "box", "個人アカウント", r#"{"client_id":"cid","client_secret":"csec"}"#).unwrap();
-        let cfg = serde_json::json!({ "access_token": format!("cred:{id}"), "folder_id": "0" }).to_string();
+        let id = add_credential(
+            &conn,
+            "box",
+            "個人アカウント",
+            r#"{"client_id":"cid","client_secret":"csec"}"#,
+        )
+        .unwrap();
+        let cfg = serde_json::json!({ "access_token": format!("cred:{id}"), "folder_id": "0" })
+            .to_string();
         let err = resolve_credentials(&conn, &cfg).unwrap_err();
-        assert!(err.to_string().contains("認可"), "未認可時のエラーメッセージであること: {err}");
+        assert!(
+            err.to_string().contains("認可"),
+            "未認可時のエラーメッセージであること: {err}"
+        );
     }
 }

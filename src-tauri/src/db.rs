@@ -105,13 +105,20 @@ fn migrate_add_column(conn: &Connection, table: &str, column: &str, decl: &str) 
         .filter_map(|r| r.ok())
         .any(|c| c == column);
     if !exists {
-        conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"), [])?;
+        conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"),
+            [],
+        )?;
     }
     Ok(())
 }
 
 pub fn insert_source(conn: &Connection, type_: &str, name: &str, config_json: &str) -> Result<i64> {
-    let next_order: i64 = conn.query_row("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM sources", [], |r| r.get(0))?;
+    let next_order: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM sources",
+        [],
+        |r| r.get(0),
+    )?;
     conn.execute(
         "INSERT INTO sources(type, name, config_json, sort_order) VALUES(?1, ?2, ?3, ?4)",
         params![type_, name, config_json, next_order],
@@ -131,8 +138,16 @@ pub fn update_source(conn: &Connection, id: i64, name: &str, config_json: &str) 
 /// ソースを複製する（要件 §9-1）。config_json はそのままコピー（秘密は暗号化済みのため安全）。
 pub fn duplicate_source(conn: &Connection, id: i64, new_name: &str) -> Result<i64> {
     let (type_, config_json) = get_source_config(conn, id)?;
-    let refresh_interval: i64 = conn.query_row("SELECT refresh_interval FROM sources WHERE id=?1", [id], |r| r.get(0))?;
-    let next_order: i64 = conn.query_row("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM sources", [], |r| r.get(0))?;
+    let refresh_interval: i64 = conn.query_row(
+        "SELECT refresh_interval FROM sources WHERE id=?1",
+        [id],
+        |r| r.get(0),
+    )?;
+    let next_order: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM sources",
+        [],
+        |r| r.get(0),
+    )?;
     conn.execute(
         "INSERT INTO sources(type, name, config_json, refresh_interval, sort_order) VALUES(?1, ?2, ?3, ?4, ?5)",
         params![type_, new_name, config_json, refresh_interval, next_order],
@@ -144,7 +159,10 @@ pub fn duplicate_source(conn: &Connection, id: i64, new_name: &str) -> Result<i6
 pub fn reorder_sources(conn: &Connection, ordered_ids: &[i64]) -> Result<()> {
     let tx_ok = (|| -> Result<()> {
         for (i, id) in ordered_ids.iter().enumerate() {
-            conn.execute("UPDATE sources SET sort_order = ?2 WHERE id = ?1", params![id, i as i64])?;
+            conn.execute(
+                "UPDATE sources SET sort_order = ?2 WHERE id = ?1",
+                params![id, i as i64],
+            )?;
         }
         Ok(())
     })();
@@ -154,7 +172,9 @@ pub fn reorder_sources(conn: &Connection, ordered_ids: &[i64]) -> Result<()> {
 // ---- app_meta（マスターパスワード等の単一値設定）----
 pub fn get_meta(conn: &Connection, key: &str) -> Result<Option<String>> {
     let v = conn
-        .query_row("SELECT value FROM app_meta WHERE key = ?1", [key], |r| r.get::<_, String>(0))
+        .query_row("SELECT value FROM app_meta WHERE key = ?1", [key], |r| {
+            r.get::<_, String>(0)
+        })
         .ok();
     Ok(v)
 }
@@ -188,7 +208,8 @@ pub fn set_parent_label(conn: &Connection, parent_key: &str, label: &str) -> Res
 }
 
 pub fn list_parent_labels(conn: &Connection) -> Result<Vec<(String, String)>> {
-    let mut stmt = conn.prepare("SELECT key, value FROM app_meta WHERE key LIKE 'parent_label:%'")?;
+    let mut stmt =
+        conn.prepare("SELECT key, value FROM app_meta WHERE key LIKE 'parent_label:%'")?;
     let rows = stmt
         .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -202,7 +223,8 @@ pub fn list_parent_labels(conn: &Connection) -> Result<Vec<(String, String)>> {
 /// フィールド名一覧を復元する（出現順・重複無し）。ライブ接続不能でも表示/検索設定を編集できるように。
 /// 注意: ここで返る名前は表示名エイリアス適用後のもの（キャッシュは Record.fields をそのまま保存しているため）。
 pub fn cached_field_names(conn: &Connection, source_id: i64) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT fields_json FROM records WHERE source_id = ?1 LIMIT 200")?;
+    let mut stmt =
+        conn.prepare("SELECT fields_json FROM records WHERE source_id = ?1 LIMIT 200")?;
     let jsons: Vec<String> = stmt
         .query_map([source_id], |r| r.get::<_, String>(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -238,7 +260,14 @@ pub fn get_source_full(conn: &Connection, id: i64) -> Result<(String, String, i6
     conn.query_row(
         "SELECT type, name, refresh_interval, config_json FROM sources WHERE id = ?1",
         [id],
-        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)),
+        |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        },
     )
     .map_err(Into::into)
 }
@@ -353,7 +382,11 @@ pub fn set_status(conn: &Connection, id: i64, status: &str, error: Option<&str>)
 }
 
 /// スナップショット全置換（要件 §4-1）。トランザクション内で全削除 → 再挿入。
-pub fn replace_source_records(conn: &mut Connection, source_id: i64, records: &[Record]) -> Result<()> {
+pub fn replace_source_records(
+    conn: &mut Connection,
+    source_id: i64,
+    records: &[Record],
+) -> Result<()> {
     let tx = conn.transaction()?;
     tx.execute("DELETE FROM records WHERE source_id = ?1", [source_id])?;
     {
@@ -363,7 +396,14 @@ pub fn replace_source_records(conn: &mut Connection, source_id: i64, records: &[
         )?;
         for r in records {
             let fields_json = serde_json::to_string(&r.fields)?;
-            stmt.execute(params![source_id, r.label, r.open_ref, r.row_number, fields_json, r.search_text])?;
+            stmt.execute(params![
+                source_id,
+                r.label,
+                r.open_ref,
+                r.row_number,
+                fields_json,
+                r.search_text
+            ])?;
         }
     }
     tx.commit()?;
@@ -373,7 +413,12 @@ pub fn replace_source_records(conn: &mut Connection, source_id: i64, records: &[
 /// 検索（要件 §5-2 / §6-2 / §9-5）。
 /// 空クエリはブラウズ、単一語は 1〜2 文字 LIKE / 3 文字以上 FTS、
 /// **半角スペース区切りの複数語は AND 検索**（全語を LIKE で AND 結合、要件 §9-5）。
-pub fn search(conn: &Connection, query: &str, source_ids: &[i64], limit: i64) -> Result<(Vec<Row>, bool)> {
+pub fn search(
+    conn: &Connection,
+    query: &str,
+    source_ids: &[i64],
+    limit: i64,
+) -> Result<(Vec<Row>, bool)> {
     let limit = limit.clamp(1, 1_000_000); // 行数上限（要件: ユーザー設定可能）
 
     // データソースのチェックが全て外れている場合は「全件対象」ではなく 0 件を返す
@@ -383,7 +428,11 @@ pub fn search(conn: &Connection, query: &str, source_ids: &[i64], limit: i64) ->
         return Ok((Vec::new(), false));
     }
 
-    let terms: Vec<&str> = query.split(' ').map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
+    let terms: Vec<&str> = query
+        .split(' ')
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+        .collect();
 
     let ph = vec!["?"; source_ids.len()].join(",");
     let in_clause = format!("r.source_id IN ({ph})");
@@ -391,7 +440,9 @@ pub fn search(conn: &Connection, query: &str, source_ids: &[i64], limit: i64) ->
 
     let rows = match terms.as_slice() {
         [] => browse(conn, &in_clause, &id_params, limit)?,
-        [single] if single.chars().count() < 3 => like_search(conn, single, &in_clause, &id_params, limit)?,
+        [single] if single.chars().count() < 3 => {
+            like_search(conn, single, &in_clause, &id_params, limit)?
+        }
         [single] => fts_search(conn, single, &in_clause, &id_params, limit)?,
         multiple => multi_term_and_search(conn, multiple, &in_clause, &id_params, limit)?,
     };
@@ -403,7 +454,13 @@ pub fn search(conn: &Connection, query: &str, source_ids: &[i64], limit: i64) ->
 /// 複数語 AND 検索。全語を `search_text LIKE` の AND で結合する
 /// （語ごとに FTS/LIKE を混在させると MATCH の複数回結合が煩雑になるため、
 /// 複数語ケースは LIKE の AND に統一する。対象件数は TOTAL_CAP で頭打ちのため十分高速）。
-fn multi_term_and_search(conn: &Connection, terms: &[&str], in_clause: &str, id_params: &[SqlValue], limit: i64) -> Result<Vec<Row>> {
+fn multi_term_and_search(
+    conn: &Connection,
+    terms: &[&str],
+    in_clause: &str,
+    id_params: &[SqlValue],
+    limit: i64,
+) -> Result<Vec<Row>> {
     let mut conds = Vec::with_capacity(terms.len());
     let mut binds: Vec<SqlValue> = id_params.to_vec();
     for t in terms {
@@ -421,7 +478,12 @@ fn multi_term_and_search(conn: &Connection, terms: &[&str], in_clause: &str, id_
     out
 }
 
-fn browse(conn: &Connection, in_clause: &str, id_params: &[SqlValue], limit: i64) -> Result<Vec<Row>> {
+fn browse(
+    conn: &Connection,
+    in_clause: &str,
+    id_params: &[SqlValue],
+    limit: i64,
+) -> Result<Vec<Row>> {
     let sql = format!(
         "SELECT r.source_id, s.name, r.label, r.open_ref, r.row_number, r.fields_json
          FROM records r JOIN sources s ON s.id = r.source_id
@@ -432,7 +494,13 @@ fn browse(conn: &Connection, in_clause: &str, id_params: &[SqlValue], limit: i64
     out
 }
 
-fn like_search(conn: &Connection, q: &str, in_clause: &str, id_params: &[SqlValue], limit: i64) -> Result<Vec<Row>> {
+fn like_search(
+    conn: &Connection,
+    q: &str,
+    in_clause: &str,
+    id_params: &[SqlValue],
+    limit: i64,
+) -> Result<Vec<Row>> {
     let pattern = format!("%{}%", escape_like(q));
     let sql = format!(
         "SELECT r.source_id, s.name, r.label, r.open_ref, r.row_number, r.fields_json
@@ -447,7 +515,13 @@ fn like_search(conn: &Connection, q: &str, in_clause: &str, id_params: &[SqlValu
     out
 }
 
-fn fts_search(conn: &Connection, q: &str, in_clause: &str, id_params: &[SqlValue], limit: i64) -> Result<Vec<Row>> {
+fn fts_search(
+    conn: &Connection,
+    q: &str,
+    in_clause: &str,
+    id_params: &[SqlValue],
+    limit: i64,
+) -> Result<Vec<Row>> {
     // trigram では部分一致をフレーズとして与える。内部の " は "" にエスケープ。
     let match_str = format!("\"{}\"", q.replace('"', "\"\""));
     let sql = format!(
@@ -496,7 +570,11 @@ pub fn add_search_history(conn: &Connection, query: &str) -> Result<()> {
     }
     // 直近と同一クエリなら重複追加しない。
     let last: Option<String> = conn
-        .query_row("SELECT query FROM search_history ORDER BY id DESC LIMIT 1", [], |r| r.get(0))
+        .query_row(
+            "SELECT query FROM search_history ORDER BY id DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
         .ok();
     if last.as_deref() == Some(q) {
         return Ok(());
@@ -514,12 +592,20 @@ pub fn list_search_history(conn: &Connection, limit: i64) -> Result<Vec<String>>
         "SELECT query FROM (SELECT query, MAX(id) AS mid FROM search_history GROUP BY query)
          ORDER BY mid DESC LIMIT ?1",
     )?;
-    let rows = stmt.query_map([limit], |r| r.get::<_, String>(0))?.filter_map(|r| r.ok()).collect();
+    let rows = stmt
+        .query_map([limit], |r| r.get::<_, String>(0))?
+        .filter_map(|r| r.ok())
+        .collect();
     Ok(rows)
 }
 
 // ---- 検索プリセット/お気に入り（要件 REQ-BM-01）----
-pub fn save_search_preset(conn: &Connection, name: &str, query: &str, source_ids: &[i64]) -> Result<i64> {
+pub fn save_search_preset(
+    conn: &Connection,
+    name: &str,
+    query: &str,
+    source_ids: &[i64],
+) -> Result<i64> {
     let ids_json = serde_json::to_string(source_ids)?;
     conn.execute(
         "INSERT INTO search_presets(name, query, source_ids_json) VALUES(?1, ?2, ?3)",
@@ -554,7 +640,9 @@ pub fn delete_search_preset(conn: &Connection, id: i64) -> Result<()> {
 }
 
 fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 #[cfg(test)]
@@ -637,13 +725,22 @@ mod tests {
         // 全チェックを外した状態は「全ソース対象」ではなく 0 件（要件）。
         let (conn, sid) = setup();
         // 前提: 選択されていれば当然ヒットする。
-        assert!(!search(&conn, "田中太", &[sid], DEFAULT_ROW_LIMIT).unwrap().0.is_empty());
-        assert!(!search(&conn, "", &[sid], DEFAULT_ROW_LIMIT).unwrap().0.is_empty());
+        assert!(!search(&conn, "田中太", &[sid], DEFAULT_ROW_LIMIT)
+            .unwrap()
+            .0
+            .is_empty());
+        assert!(!search(&conn, "", &[sid], DEFAULT_ROW_LIMIT)
+            .unwrap()
+            .0
+            .is_empty());
         // 選択が空なら検索もブラウズも 0 件、かつ打ち切り扱いにもしない。
         let (rows, truncated) = search(&conn, "田中太", &[], DEFAULT_ROW_LIMIT).unwrap();
         assert!(rows.is_empty());
         assert!(!truncated);
-        assert!(search(&conn, "", &[], DEFAULT_ROW_LIMIT).unwrap().0.is_empty());
+        assert!(search(&conn, "", &[], DEFAULT_ROW_LIMIT)
+            .unwrap()
+            .0
+            .is_empty());
     }
 
     #[test]
@@ -674,23 +771,44 @@ mod tests {
     #[test]
     fn source_parent_groups_by_path_site_and_service() {
         // ローカル系 → path がそのまま親キー（クォート付きも正規化）。
-        assert_eq!(source_parent("excel_table", r#"{"path":"\"C:\\a\\b.xlsx\"","sheet":"S"}"#), "C:\\a\\b.xlsx");
-        assert_eq!(source_parent("sqlite", r#"{"path":"C:\\db.sqlite","table":"t"}"#), "C:\\db.sqlite");
+        assert_eq!(
+            source_parent("excel_table", r#"{"path":"\"C:\\a\\b.xlsx\"","sheet":"S"}"#),
+            "C:\\a\\b.xlsx"
+        );
+        assert_eq!(
+            source_parent("sqlite", r#"{"path":"C:\\db.sqlite","table":"t"}"#),
+            "C:\\db.sqlite"
+        );
         // SharePoint → site_url が親キー。
         assert_eq!(
-            source_parent("graph_sharepoint_list", r#"{"site_url":"https://x/sites/y","list_name":"L"}"#),
+            source_parent(
+                "graph_sharepoint_list",
+                r#"{"site_url":"https://x/sites/y","list_name":"L"}"#
+            ),
             "https://x/sites/y"
         );
         // Notion / Graph 非 SharePoint 系 → サービス単位でまとめる。
-        assert_eq!(source_parent("notion", r#"{"token":"t","database_id":"d"}"#), "Notion");
-        assert_eq!(source_parent("graph_entra_users", r#"{"tenant_id":"t"}"#), "Microsoft 365");
+        assert_eq!(
+            source_parent("notion", r#"{"token":"t","database_id":"d"}"#),
+            "Notion"
+        );
+        assert_eq!(
+            source_parent("graph_entra_users", r#"{"tenant_id":"t"}"#),
+            "Microsoft 365"
+        );
         // PostgreSQL/MySQL → host+database が親キー。Box → 保存済みトークン(cred:<id>)単位。
         assert_eq!(
-            source_parent("postgres", r#"{"host":"db.example.com","database":"app","table":"t"}"#),
+            source_parent(
+                "postgres",
+                r#"{"host":"db.example.com","database":"app","table":"t"}"#
+            ),
             "postgres://db.example.com/app"
         );
         assert_eq!(
-            source_parent("mysql", r#"{"host":"localhost","database":"shop","table":"t"}"#),
+            source_parent(
+                "mysql",
+                r#"{"host":"localhost","database":"shop","table":"t"}"#
+            ),
             "mysql://localhost/shop"
         );
         assert_eq!(
@@ -703,7 +821,10 @@ mod tests {
             "Airtable (app123)"
         );
         assert_eq!(
-            source_parent("airtable", r#"{"base_id":"app123","base_name":"Projects","table":"tbl1"}"#),
+            source_parent(
+                "airtable",
+                r#"{"base_id":"app123","base_name":"Projects","table":"tbl1"}"#
+            ),
             "Airtable: Projects"
         );
         // 親を持たないソースは空文字（単独ノード扱い）。
@@ -737,7 +858,10 @@ mod tests {
         // 空文字での再設定は削除として扱われる。
         set_parent_label(&conn, "C:\\a\\b.xlsx", "").unwrap();
         let labels = list_parent_labels(&conn).unwrap();
-        assert_eq!(labels, vec![("https://x/sites/y".to_string(), "共有サイト".to_string())]);
+        assert_eq!(
+            labels,
+            vec![("https://x/sites/y".to_string(), "共有サイト".to_string())]
+        );
     }
 
     #[test]

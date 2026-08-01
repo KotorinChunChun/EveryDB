@@ -22,7 +22,11 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(conn: Connection) -> Self {
-        Self { db: Mutex::new(conn), unlocked_until: Mutex::new(None), box_oauth_cancel: Mutex::new(None) }
+        Self {
+            db: Mutex::new(conn),
+            unlocked_until: Mutex::new(None),
+            box_oauth_cancel: Mutex::new(None),
+        }
     }
 
     pub fn is_unlocked(&self) -> bool {
@@ -57,7 +61,9 @@ fn err_to_string<E: std::fmt::Display>(e: E) -> String {
 // Tauri の非同期ランタイム側のスレッドで実行され、UI スレッドは塞がれない。
 #[tauri::command]
 pub async fn winauth_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    Ok(serde_json::json!({ "available": crate::winauth::is_available(), "unlocked": state.is_unlocked() }))
+    Ok(
+        serde_json::json!({ "available": crate::winauth::is_available(), "unlocked": state.is_unlocked() }),
+    )
 }
 
 /// Windows Hello の確認ダイアログを出す。直近 10 分以内に確認済みなら再要求しない
@@ -81,7 +87,8 @@ pub async fn winauth_verify(app: AppHandle, state: State<'_, AppState>) -> Resul
         let _ = &app;
         ()
     };
-    let ok = crate::winauth::verify(hwnd, "EveryDB: 保存済みのトークンを表示します").map_err(err_to_string)?;
+    let ok = crate::winauth::verify(hwnd, "EveryDB: 保存済みのトークンを表示します")
+        .map_err(err_to_string)?;
     if ok {
         state.unlock();
     }
@@ -114,7 +121,10 @@ pub async fn add_source(
     // 追加直後に一度取得しておく（失敗してもソース自体は残り、status=error になる）。
     let _ = reload_one(&mut conn, id);
     // 取得完了後に FTS5 インデックスを最適化（断片化解消による高速化）
-    let _ = conn.execute("INSERT INTO records_fts(records_fts) VALUES('optimize')", []);
+    let _ = conn.execute(
+        "INSERT INTO records_fts(records_fts) VALUES('optimize')",
+        [],
+    );
     Ok(id)
 }
 
@@ -126,7 +136,8 @@ fn fill_shared_from_sibling(
     sibling_config_json: &str,
     shared_keys: &[String],
 ) -> Result<String, String> {
-    let sibling: serde_json::Value = serde_json::from_str(sibling_config_json).map_err(err_to_string)?;
+    let sibling: serde_json::Value =
+        serde_json::from_str(sibling_config_json).map_err(err_to_string)?;
     let mut cfg: serde_json::Map<String, serde_json::Value> =
         serde_json::from_str(config_json).map_err(err_to_string)?;
     for k in shared_keys {
@@ -163,7 +174,10 @@ pub async fn add_source_from_sibling(
     let id = db::insert_source(&conn, &type_, &name, &protected).map_err(err_to_string)?;
     let _ = reload_one(&mut conn, id);
     // 取得完了後に FTS5 インデックスを最適化
-    let _ = conn.execute("INSERT INTO records_fts(records_fts) VALUES('optimize')", []);
+    let _ = conn.execute(
+        "INSERT INTO records_fts(records_fts) VALUES('optimize')",
+        [],
+    );
     Ok(id)
 }
 
@@ -178,7 +192,8 @@ pub async fn delete_source(state: State<'_, AppState>, id: i64) -> Result<(), St
 #[tauri::command]
 pub fn get_source_detail(state: State<'_, AppState>, id: i64) -> Result<serde_json::Value, String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    let (type_, name, refresh_interval, config_json) = db::get_source_full(&conn, id).map_err(err_to_string)?;
+    let (type_, name, refresh_interval, config_json) =
+        db::get_source_full(&conn, id).map_err(err_to_string)?;
     let unlocked = state.is_unlocked();
     let visible = if unlocked {
         secret::unprotect_config(&config_json).map_err(err_to_string)?
@@ -188,7 +203,8 @@ pub fn get_source_detail(state: State<'_, AppState>, id: i64) -> Result<serde_js
     // 保存済みトークンへの参照（cred:<id>）フィールドは、解錠中でも実値を出さず常にマスクする
     // （実体は credentials 側にあり、ソース編集画面での「解錠して編集」は意味を持たないため。
     // 誤って別の値を書き込むとリンクが意図せず外れてしまう。値を変えたい場合はトークン管理画面で）。
-    let visible = crate::credentials::remask_cred_refs(&conn, &config_json, &visible).map_err(err_to_string)?;
+    let visible = crate::credentials::remask_cred_refs(&conn, &config_json, &visible)
+        .map_err(err_to_string)?;
     let linked_credentials =
         crate::credentials::cred_ref_labels(&conn, &config_json).map_err(err_to_string)?;
     let config: serde_json::Value = serde_json::from_str(&visible).map_err(err_to_string)?;
@@ -210,18 +226,26 @@ pub async fn update_source(
 ) -> Result<(), String> {
     let mut conn = state.db.lock().map_err(|_| "lock poisoned")?;
     let (type_, old_config_json) = db::get_source_config(&conn, id).map_err(err_to_string)?;
-    let merged = secret::merge_preserving_placeholder(&type_, &old_config_json, &config_json).map_err(err_to_string)?;
+    let merged = secret::merge_preserving_placeholder(&type_, &old_config_json, &config_json)
+        .map_err(err_to_string)?;
     let protected = secret::protect_config(&type_, &merged).map_err(err_to_string)?;
     db::update_source(&conn, id, &name, &protected).map_err(err_to_string)?;
     let _ = reload_one(&mut conn, id);
     // 更新・再取得完了後に FTS5 インデックスを最適化
-    let _ = conn.execute("INSERT INTO records_fts(records_fts) VALUES('optimize')", []);
+    let _ = conn.execute(
+        "INSERT INTO records_fts(records_fts) VALUES('optimize')",
+        [],
+    );
     Ok(())
 }
 
 /// ソースを複製する（要件 §9-1）。「一部だけ変えた別ソース」を作る下準備として使う。
 #[tauri::command]
-pub fn duplicate_source(state: State<'_, AppState>, id: i64, new_name: String) -> Result<i64, String> {
+pub fn duplicate_source(
+    state: State<'_, AppState>,
+    id: i64,
+    new_name: String,
+) -> Result<i64, String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
     db::duplicate_source(&conn, id, &new_name).map_err(err_to_string)
 }
@@ -236,9 +260,14 @@ pub fn reorder_sources(state: State<'_, AppState>, ordered_ids: Vec<i64>) -> Res
 /// 追加ダイアログ用: まだ保存していない接続情報で試し取得し、フィールド名一覧を返す（要件 §9-3）。
 /// 秘密フィールドに保存済みトークンへの参照（cred:<id>）が入っていることがあるため解決してから使う。
 #[tauri::command]
-pub fn preview_source_fields(state: State<'_, AppState>, type_: String, config_json: String) -> Result<Vec<String>, String> {
+pub fn preview_source_fields(
+    state: State<'_, AppState>,
+    type_: String,
+    config_json: String,
+) -> Result<Vec<String>, String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    let resolved = crate::credentials::resolve_credentials(&conn, &config_json).map_err(err_to_string)?;
+    let resolved =
+        crate::credentials::resolve_credentials(&conn, &config_json).map_err(err_to_string)?;
     crate::connectors::raw_field_names(&type_, &resolved).map_err(err_to_string)
 }
 
@@ -256,18 +285,28 @@ pub struct FieldPreview {
 /// ライブ接続に失敗した場合（ネットワーク断・ファイル移動・認証切れ等）は、既にキャッシュ
 /// 済みのレコードから列名を復元して返す（オフラインでも表示・検索設定を編集できるように）。
 #[tauri::command]
-pub fn preview_source_fields_by_id(state: State<'_, AppState>, id: i64) -> Result<FieldPreview, String> {
+pub fn preview_source_fields_by_id(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<FieldPreview, String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
     let (type_, config_json) = db::get_source_config(&conn, id).map_err(err_to_string)?;
-    let config_json = crate::credentials::resolve_credentials(&conn, &config_json).map_err(err_to_string)?;
+    let config_json =
+        crate::credentials::resolve_credentials(&conn, &config_json).map_err(err_to_string)?;
     match crate::connectors::raw_field_names(&type_, &config_json) {
-        Ok(names) => Ok(FieldPreview { names, from_cache: false }),
+        Ok(names) => Ok(FieldPreview {
+            names,
+            from_cache: false,
+        }),
         Err(live_err) => {
             let cached = db::cached_field_names(&conn, id).map_err(err_to_string)?;
             if cached.is_empty() {
                 Err(err_to_string(live_err))
             } else {
-                Ok(FieldPreview { names: cached, from_cache: true })
+                Ok(FieldPreview {
+                    names: cached,
+                    from_cache: true,
+                })
             }
         }
     }
@@ -276,20 +315,33 @@ pub fn preview_source_fields_by_id(state: State<'_, AppState>, id: i64) -> Resul
 // ---- 保存済みトークン（要件: トークン管理画面。過去に設定したトークンの再利用・一括置換）----
 
 #[tauri::command]
-pub fn list_credentials(state: State<'_, AppState>, scope: String) -> Result<Vec<crate::credentials::CredentialSummary>, String> {
+pub fn list_credentials(
+    state: State<'_, AppState>,
+    scope: String,
+) -> Result<Vec<crate::credentials::CredentialSummary>, String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
     crate::credentials::list_credentials(&conn, &scope).map_err(err_to_string)
 }
 
 #[tauri::command]
-pub fn add_credential(state: State<'_, AppState>, scope: String, label: String, fields_json: String) -> Result<i64, String> {
+pub fn add_credential(
+    state: State<'_, AppState>,
+    scope: String,
+    label: String,
+    fields_json: String,
+) -> Result<i64, String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
     crate::credentials::add_credential(&conn, &scope, &label, &fields_json).map_err(err_to_string)
 }
 
 /// 「置換」。値を書き換えると、参照している全ソースへ自動的に反映される（共有参照方式）。
 #[tauri::command]
-pub fn update_credential(state: State<'_, AppState>, id: i64, label: String, fields_json: String) -> Result<(), String> {
+pub fn update_credential(
+    state: State<'_, AppState>,
+    id: i64,
+    label: String,
+    fields_json: String,
+) -> Result<(), String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
     crate::credentials::update_credential(&conn, id, &label, &fields_json).map_err(err_to_string)
 }
@@ -302,19 +354,30 @@ pub fn delete_credential(state: State<'_, AppState>, id: i64) -> Result<(), Stri
 }
 
 #[tauri::command]
-pub fn credential_usage(state: State<'_, AppState>, id: i64) -> Result<Vec<crate::credentials::CredentialUsage>, String> {
+pub fn credential_usage(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<Vec<crate::credentials::CredentialUsage>, String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
     let out = crate::credentials::find_usage(&conn, id)
         .map_err(err_to_string)?
         .into_iter()
-        .map(|(source_id, source_name)| crate::credentials::CredentialUsage { source_id, source_name })
+        .map(
+            |(source_id, source_name)| crate::credentials::CredentialUsage {
+                source_id,
+                source_name,
+            },
+        )
         .collect();
     Ok(out)
 }
 
 /// ピッカー用: ラベルと非秘密フィールドの平文値だけを返す（秘密フィールドの実値は渡さない）。
 #[tauri::command]
-pub fn credential_public_fields(state: State<'_, AppState>, id: i64) -> Result<serde_json::Value, String> {
+pub fn credential_public_fields(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<serde_json::Value, String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
     let (label, fields) = crate::credentials::public_fields(&conn, id).map_err(err_to_string)?;
     Ok(serde_json::json!({ "label": label, "fields": fields }))
@@ -356,7 +419,12 @@ pub async fn box_oauth_authorize(
     let handle = app.clone();
     let cancel_for_task = cancel.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        crate::box_oauth::authorize_interactive(&handle, &client_id, &client_secret, &cancel_for_task)
+        crate::box_oauth::authorize_interactive(
+            &handle,
+            &client_id,
+            &client_secret,
+            &cancel_for_task,
+        )
     })
     .await
     .map_err(|e| format!("内部エラー: {e}"))?;
@@ -401,7 +469,8 @@ pub fn browse_notion_databases(token: String) -> Result<Vec<crate::browse::Notio
 /// 値ではなくこの実効設定を使う（`preview_source_fields_by_id` と同じ考え方）。
 /// 保存済みトークンへの参照（cred:<id>）を実値へ展開してから復号する。
 fn resolve_and_decrypt(conn: &Connection, config_json: &str) -> Result<String, String> {
-    let resolved = crate::credentials::resolve_credentials(conn, config_json).map_err(err_to_string)?;
+    let resolved =
+        crate::credentials::resolve_credentials(conn, config_json).map_err(err_to_string)?;
     secret::unprotect_config(&resolved).map_err(err_to_string)
 }
 
@@ -444,7 +513,10 @@ fn merge_overrides(
 }
 
 fn cfg_str(cfg: &serde_json::Map<String, serde_json::Value>, key: &str) -> String {
-    cfg.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_string()
+    cfg.get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// 接続設定ダイアログ用の Notion データベース一覧。保存済みトークンを使うため、
@@ -466,7 +538,9 @@ pub fn browse_notion_databases_for_source(
 }
 
 #[tauri::command]
-pub fn browse_airtable_bases(token: String) -> Result<Vec<crate::browse::AirtableBaseEntry>, String> {
+pub fn browse_airtable_bases(
+    token: String,
+) -> Result<Vec<crate::browse::AirtableBaseEntry>, String> {
     crate::browse::airtable_list_bases(&token).map_err(err_to_string)
 }
 
@@ -489,7 +563,10 @@ pub fn browse_airtable_bases_for_source(
 }
 
 #[tauri::command]
-pub fn browse_airtable_tables(token: String, base_id: String) -> Result<Vec<crate::browse::AirtableTableEntry>, String> {
+pub fn browse_airtable_tables(
+    token: String,
+    base_id: String,
+) -> Result<Vec<crate::browse::AirtableTableEntry>, String> {
     crate::browse::airtable_list_tables(&token, &base_id).map_err(err_to_string)
 }
 
@@ -543,17 +620,24 @@ pub fn browse_graph_site_resources_for_source(
 }
 
 #[tauri::command]
-pub fn browse_graph_sites(auth: crate::browse::GraphAuthArgs) -> Result<Vec<crate::browse::SiteEntry>, String> {
+pub fn browse_graph_sites(
+    auth: crate::browse::GraphAuthArgs,
+) -> Result<Vec<crate::browse::SiteEntry>, String> {
     crate::browse::graph_list_sites(&auth).map_err(err_to_string)
 }
 
 #[tauri::command]
-pub fn browse_graph_teams(auth: crate::browse::GraphAuthArgs) -> Result<Vec<crate::browse::TeamEntry>, String> {
+pub fn browse_graph_teams(
+    auth: crate::browse::GraphAuthArgs,
+) -> Result<Vec<crate::browse::TeamEntry>, String> {
     crate::browse::graph_list_teams(&auth).map_err(err_to_string)
 }
 
 #[tauri::command]
-pub fn browse_graph_team_site_url(auth: crate::browse::GraphAuthArgs, team_group_id: String) -> Result<String, String> {
+pub fn browse_graph_team_site_url(
+    auth: crate::browse::GraphAuthArgs,
+    team_group_id: String,
+) -> Result<String, String> {
     crate::browse::graph_team_site_url(&auth, &team_group_id).map_err(err_to_string)
 }
 
@@ -567,41 +651,63 @@ pub fn browse_graph_site_resources(
 
 #[tauri::command]
 pub fn browse_excel_sheets(path: String) -> Result<Vec<String>, String> {
-    crate::browse::list_excel_sheets(&crate::connectors::strip_path_quotes(&path)).map_err(err_to_string)
+    crate::browse::list_excel_sheets(&crate::connectors::strip_path_quotes(&path))
+        .map_err(err_to_string)
 }
 
 #[tauri::command]
 pub fn browse_excel_tables(path: String) -> Result<Vec<String>, String> {
-    crate::browse::list_excel_tables(&crate::connectors::strip_path_quotes(&path)).map_err(err_to_string)
+    crate::browse::list_excel_tables(&crate::connectors::strip_path_quotes(&path))
+        .map_err(err_to_string)
 }
 
 #[tauri::command]
-pub fn browse_excel_grid(path: String, sheet: String, rows: usize, cols: usize, mode: Option<String>) -> Result<crate::browse::ExcelGridPreview, String> {
+pub fn browse_excel_grid(
+    path: String,
+    sheet: String,
+    rows: usize,
+    cols: usize,
+    mode: Option<String>,
+) -> Result<crate::browse::ExcelGridPreview, String> {
     let mode_str = mode.as_deref().unwrap_or("top");
-    crate::browse::preview_excel_grid(&crate::connectors::strip_path_quotes(&path), &sheet, rows, cols, mode_str).map_err(err_to_string)
+    crate::browse::preview_excel_grid(
+        &crate::connectors::strip_path_quotes(&path),
+        &sheet,
+        rows,
+        cols,
+        mode_str,
+    )
+    .map_err(err_to_string)
 }
-
-
 
 #[tauri::command]
 pub fn browse_sqlite_tables(path: String) -> Result<Vec<String>, String> {
-    crate::browse::list_sqlite_tables(&crate::connectors::strip_path_quotes(&path)).map_err(err_to_string)
+    crate::browse::list_sqlite_tables(&crate::connectors::strip_path_quotes(&path))
+        .map_err(err_to_string)
 }
 
 #[tauri::command]
 pub fn browse_accdb_tables(path: String) -> Result<Vec<String>, String> {
-    crate::browse::list_accdb_tables(&crate::connectors::strip_path_quotes(&path)).map_err(err_to_string)
+    crate::browse::list_accdb_tables(&crate::connectors::strip_path_quotes(&path))
+        .map_err(err_to_string)
 }
 
 /// ブラウザ系データソース（閲覧履歴/ブックマーク/ダウンロード履歴）のパス指定を「候補から選ぶだけ」
 /// にするための一覧取得（要件: パス指定が難しいので自動で候補を探して選ばせてほしい）。
 #[tauri::command]
-pub fn browse_browser_profiles(browser: String, target: String) -> Result<Vec<crate::browse::BrowserProfileEntry>, String> {
+pub fn browse_browser_profiles(
+    browser: String,
+    target: String,
+) -> Result<Vec<crate::browse::BrowserProfileEntry>, String> {
     crate::browse::browse_browser_profiles(&browser, &target).map_err(err_to_string)
 }
 
 #[tauri::command]
-pub fn set_refresh_interval(state: State<'_, AppState>, id: i64, seconds: i64) -> Result<(), String> {
+pub fn set_refresh_interval(
+    state: State<'_, AppState>,
+    id: i64,
+    seconds: i64,
+) -> Result<(), String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
     db::set_refresh_interval(&conn, id, seconds).map_err(err_to_string)
 }
@@ -622,7 +728,10 @@ pub fn reload_sources(state: State<'_, AppState>, source_ids: Vec<i64>) -> Resul
         let _ = reload_one(&mut conn, id); // 個別失敗は status に記録し、続行
     }
     // 一括リロード完了時に FTS5 インデックスを最適化
-    let _ = conn.execute("INSERT INTO records_fts(records_fts) VALUES('optimize')", []);
+    let _ = conn.execute(
+        "INSERT INTO records_fts(records_fts) VALUES('optimize')",
+        [],
+    );
     Ok(())
 }
 
@@ -637,7 +746,11 @@ pub fn search(
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
     let limit = limit.unwrap_or(db::DEFAULT_ROW_LIMIT);
     let (rows, truncated) = db::search(&conn, &query, &source_ids, limit).map_err(err_to_string)?;
-    Ok(SearchResponse { seq, rows, truncated })
+    Ok(SearchResponse {
+        seq,
+        rows,
+        truncated,
+    })
 }
 
 /// 検索履歴の保存・再利用（要件 §9-5）。
@@ -666,7 +779,9 @@ pub fn save_search_preset(
 }
 
 #[tauri::command]
-pub fn list_search_presets(state: State<'_, AppState>) -> Result<Vec<crate::model::SearchPreset>, String> {
+pub fn list_search_presets(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::model::SearchPreset>, String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
     db::list_search_presets(&conn).map_err(err_to_string)
 }
@@ -734,10 +849,14 @@ pub fn open_ref(app: AppHandle, target: String) -> Result<(), String> {
         || target.starts_with("https://")
         || target.starts_with("mailto:");
     if is_url {
-        app.opener().open_url(target, None::<&str>).map_err(err_to_string)
+        app.opener()
+            .open_url(target, None::<&str>)
+            .map_err(err_to_string)
     } else {
         reject_executable_target(&target)?;
-        app.opener().open_path(target, None::<&str>).map_err(err_to_string)
+        app.opener()
+            .open_path(target, None::<&str>)
+            .map_err(err_to_string)
     }
 }
 
@@ -786,12 +905,19 @@ mod parent_dialog_tests {
         // 押しても新しいトークンが使われず、旧トークンで検証されているように見える不具合の回帰確認。
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         crate::db::init_schema(&conn).unwrap();
-        let old_id = crate::credentials::add_credential(&conn, "notion", "旧", r#"{"token":"ntn_old"}"#).unwrap();
-        let new_id = crate::credentials::add_credential(&conn, "notion", "新", r#"{"token":"ntn_new"}"#).unwrap();
+        let old_id =
+            crate::credentials::add_credential(&conn, "notion", "旧", r#"{"token":"ntn_old"}"#)
+                .unwrap();
+        let new_id =
+            crate::credentials::add_credential(&conn, "notion", "新", r#"{"token":"ntn_new"}"#)
+                .unwrap();
         let source_id = crate::db::insert_source(
-            &conn, "notion", "テスト",
+            &conn,
+            "notion",
+            "テスト",
             &format!(r#"{{"token":"cred:{old_id}","database_id":"db1"}}"#),
-        ).unwrap();
+        )
+        .unwrap();
 
         // 保存前の override（フロントが「変更…」で選び直した直後の状態を模す）。
         let overrides = format!(r#"{{"token":"cred:{new_id}"}}"#);
@@ -828,14 +954,20 @@ mod parent_dialog_tests {
         db::init_schema(&conn).unwrap();
         let cfg = serde_json::json!({ "token": token, "database_id": "" }).to_string();
         let protected = secret::protect_config("notion", &cfg).unwrap();
-        assert!(protected.contains("dpapi:"), "トークンが暗号化されていること");
+        assert!(
+            protected.contains("dpapi:"),
+            "トークンが暗号化されていること"
+        );
         let id = db::insert_source(&conn, "notion", "案件DB", &protected).unwrap();
 
         // ダイアログ側はロック中でマスク値しか持っていない状況を再現する。
         let overrides = format!(r#"{{"token":"{SECRET_PLACEHOLDER}"}}"#);
         let effective = super::effective_config(&conn, id, &overrides).unwrap();
         let effective_token = effective["token"].as_str().unwrap();
-        assert_ne!(effective_token, SECRET_PLACEHOLDER, "保存済みの平文トークンへ解決されること");
+        assert_ne!(
+            effective_token, SECRET_PLACEHOLDER,
+            "保存済みの平文トークンへ解決されること"
+        );
 
         let dbs = browse::notion_list_databases(effective_token).unwrap();
         println!("notion databases via saved config = {}", dbs.len());
@@ -919,7 +1051,9 @@ pub fn set_theme(state: State<'_, AppState>, theme: String) -> Result<(), String
 #[tauri::command]
 pub fn get_theme(state: State<'_, AppState>) -> Result<String, String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    Ok(db::get_meta(&conn, THEME_META_KEY).map_err(err_to_string)?.unwrap_or_else(|| "dark".to_string()))
+    Ok(db::get_meta(&conn, THEME_META_KEY)
+        .map_err(err_to_string)?
+        .unwrap_or_else(|| "dark".to_string()))
 }
 
 // ---- UI 設定: 起動ショートカットキー（要件 §9-5）----
@@ -928,7 +1062,11 @@ const DEFAULT_HOTKEY: &str = "Alt+Ctrl+D";
 
 /// 起動ショートカットキーを設定・変更し、永続化する。
 #[tauri::command]
-pub fn set_hotkey(app: AppHandle, state: State<'_, AppState>, hotkey: String) -> Result<(), String> {
+pub fn set_hotkey(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    hotkey: String,
+) -> Result<(), String> {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
     let trimmed = hotkey.trim();
     if trimmed.is_empty() {
@@ -985,7 +1123,11 @@ pub fn list_parent_labels(state: State<'_, AppState>) -> Result<Vec<(String, Str
 }
 
 #[tauri::command]
-pub fn set_parent_label(state: State<'_, AppState>, parent_key: String, label: String) -> Result<(), String> {
+pub fn set_parent_label(
+    state: State<'_, AppState>,
+    parent_key: String,
+    label: String,
+) -> Result<(), String> {
     let conn = state.db.lock().map_err(|_| "lock poisoned")?;
     db::set_parent_label(&conn, &parent_key, &label).map_err(err_to_string)
 }

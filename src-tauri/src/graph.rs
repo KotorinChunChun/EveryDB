@@ -41,9 +41,10 @@ impl GraphClient {
             .call();
         match resp {
             Ok(r) => Ok(r.into_json()?),
-            Err(ureq::Error::Status(code, r)) => {
-                Err(anyhow!("Graph GET {code}: {}", r.into_string().unwrap_or_default()))
-            }
+            Err(ureq::Error::Status(code, r)) => Err(anyhow!(
+                "Graph GET {code}: {}",
+                r.into_string().unwrap_or_default()
+            )),
             Err(e) => Err(anyhow!("Graph への接続に失敗: {e}")),
         }
     }
@@ -57,7 +58,10 @@ impl GraphClient {
             if let Some(arr) = page.get("value").and_then(|v| v.as_array()) {
                 out.extend(arr.iter().cloned());
             }
-            next = page.get("@odata.nextLink").and_then(|v| v.as_str()).map(String::from);
+            next = page
+                .get("@odata.nextLink")
+                .and_then(|v| v.as_str())
+                .map(String::from);
         }
         Ok(out)
     }
@@ -66,15 +70,22 @@ impl GraphClient {
 /// "https://host/sites/xxx" を (host, "/sites/xxx") に分解する。
 pub fn parse_site_url(u: &str) -> Result<(String, String)> {
     let s = u.trim().trim_end_matches('/');
-    let s = s.strip_prefix("https://").or_else(|| s.strip_prefix("http://")).unwrap_or(s);
-    let idx = s.find('/').ok_or_else(|| anyhow!("不正なサイト URL: {u}"))?;
+    let s = s
+        .strip_prefix("https://")
+        .or_else(|| s.strip_prefix("http://"))
+        .unwrap_or(s);
+    let idx = s
+        .find('/')
+        .ok_or_else(|| anyhow!("不正なサイト URL: {u}"))?;
     Ok((s[..idx].to_string(), s[idx..].to_string()))
 }
 
 /// サイト URL から Graph のサイト ID（複合 ID）を解決する。
 pub fn site_id(client: &GraphClient, site_url: &str) -> Result<String> {
     let (host, path) = parse_site_url(site_url)?;
-    let v = client.get(&format!("https://graph.microsoft.com/v1.0/sites/{host}:{path}"))?;
+    let v = client.get(&format!(
+        "https://graph.microsoft.com/v1.0/sites/{host}:{path}"
+    ))?;
     v.get("id")
         .and_then(|x| x.as_str())
         .map(String::from)

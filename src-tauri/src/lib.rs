@@ -56,8 +56,11 @@ pub fn run() {
             let conn = Connection::open(dir.join("cache.db"))?;
             db::init_schema(&conn)?;
             // 前回のズーム倍率とホットキーを復元する（要件 REQ-UI-01 / §9-5）。
-            let saved_zoom: f64 = db::get_meta(&conn, "ui_zoom")?.and_then(|s| s.parse().ok()).unwrap_or(1.0);
-            let saved_hotkey: String = db::get_meta(&conn, "ui_hotkey")?.unwrap_or_else(|| "Alt+Ctrl+D".to_string());
+            let saved_zoom: f64 = db::get_meta(&conn, "ui_zoom")?
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(1.0);
+            let saved_hotkey: String =
+                db::get_meta(&conn, "ui_hotkey")?.unwrap_or_else(|| "Alt+Ctrl+D".to_string());
             app.manage(AppState::new(conn));
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_zoom(saved_zoom);

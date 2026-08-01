@@ -16,7 +16,9 @@ use anyhow::Result;
 /// 呼び出し側はこれが false のとき「確認不要（許可）」として扱う。
 #[cfg(windows)]
 pub fn is_available() -> bool {
-    use windows::Security::Credentials::UI::{UserConsentVerifier, UserConsentVerifierAvailability};
+    use windows::Security::Credentials::UI::{
+        UserConsentVerifier, UserConsentVerifierAvailability,
+    };
     (|| -> Result<bool> {
         let availability = UserConsentVerifier::CheckAvailabilityAsync()?.get()?;
         Ok(availability == UserConsentVerifierAvailability::Available)

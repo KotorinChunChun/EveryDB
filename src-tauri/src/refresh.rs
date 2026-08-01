@@ -52,7 +52,10 @@ pub fn reload_ids(app: &AppHandle, ids: &[i64]) {
             let _ = reload_one(&mut conn, id);
         }
         // リロード完了時に FTS5 インデックスを最適化（断片化解消による高速化）
-        let _ = conn.execute("INSERT INTO records_fts(records_fts) VALUES('optimize')", []);
+        let _ = conn.execute(
+            "INSERT INTO records_fts(records_fts) VALUES('optimize')",
+            [],
+        );
     }
     let _ = app.emit("sources-updated", ());
 }
@@ -65,7 +68,9 @@ pub fn reload_all_now(app: &AppHandle) {
             Ok(c) => c,
             Err(_) => return,
         };
-        db::list_sources(&conn).map(|v| v.into_iter().map(|s| s.id).collect::<Vec<_>>()).unwrap_or_default()
+        db::list_sources(&conn)
+            .map(|v| v.into_iter().map(|s| s.id).collect::<Vec<_>>())
+            .unwrap_or_default()
     };
     reload_ids(app, &ids);
 }
@@ -124,7 +129,11 @@ mod tests {
 
         assert!(reload_one(&mut conn, id).is_err());
 
-        let info = db::list_sources(&conn).unwrap().into_iter().find(|s| s.id == id).unwrap();
+        let info = db::list_sources(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|s| s.id == id)
+            .unwrap();
         assert_eq!(info.status.as_deref(), Some("error"));
         assert!(
             info.last_error.unwrap_or_default().contains("9999"),

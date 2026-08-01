@@ -104,12 +104,20 @@ pub fn mask_config(config_json: &str) -> Result<String> {
 
 /// 編集保存時：新しい config でプレースホルダーのままの秘密フィールドは、
 /// 旧設定の暗号化済み値（または `cred:` 参照）をそのまま引き継ぐ（＝ユーザーが触っていない = 変更なし扱い）。
-pub fn merge_preserving_placeholder(type_: &str, old_config_json: &str, new_config_json: &str) -> Result<String> {
+pub fn merge_preserving_placeholder(
+    type_: &str,
+    old_config_json: &str,
+    new_config_json: &str,
+) -> Result<String> {
     merge_preserving_placeholder_keys(secret_keys(type_), old_config_json, new_config_json)
 }
 
 /// `merge_preserving_placeholder` の、種別に紐づかない汎用（キー群指定）版。
-pub fn merge_preserving_placeholder_keys(keys: &[&str], old_config_json: &str, new_config_json: &str) -> Result<String> {
+pub fn merge_preserving_placeholder_keys(
+    keys: &[&str],
+    old_config_json: &str,
+    new_config_json: &str,
+) -> Result<String> {
     if keys.is_empty() {
         return Ok(new_config_json.to_string());
     }
@@ -152,7 +160,10 @@ fn dpapi_protect(plain: &[u8]) -> Result<Vec<u8>> {
     use windows::Win32::Foundation::{LocalFree, HLOCAL};
     use windows::Win32::Security::Cryptography::{CryptProtectData, CRYPT_INTEGER_BLOB};
     unsafe {
-        let input = CRYPT_INTEGER_BLOB { cbData: plain.len() as u32, pbData: plain.as_ptr() as *mut u8 };
+        let input = CRYPT_INTEGER_BLOB {
+            cbData: plain.len() as u32,
+            pbData: plain.as_ptr() as *mut u8,
+        };
         let mut out = CRYPT_INTEGER_BLOB::default();
         CryptProtectData(&input, PCWSTR::null(), None, None, None, 0, &mut out)
             .map_err(|e| anyhow!("CryptProtectData 失敗: {e}"))?;
@@ -167,10 +178,14 @@ fn dpapi_unprotect(cipher: &[u8]) -> Result<Vec<u8>> {
     use windows::Win32::Foundation::{LocalFree, HLOCAL};
     use windows::Win32::Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB};
     unsafe {
-        let input = CRYPT_INTEGER_BLOB { cbData: cipher.len() as u32, pbData: cipher.as_ptr() as *mut u8 };
+        let input = CRYPT_INTEGER_BLOB {
+            cbData: cipher.len() as u32,
+            pbData: cipher.as_ptr() as *mut u8,
+        };
         let mut out = CRYPT_INTEGER_BLOB::default();
-        CryptUnprotectData(&input, None, None, None, None, 0, &mut out)
-            .map_err(|e| anyhow!("CryptUnprotectData 失敗（別ユーザー/別マシンの暗号文の可能性）: {e}"))?;
+        CryptUnprotectData(&input, None, None, None, None, 0, &mut out).map_err(|e| {
+            anyhow!("CryptUnprotectData 失敗（別ユーザー/別マシンの暗号文の可能性）: {e}")
+        })?;
         let v = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
         let _ = LocalFree(Some(HLOCAL(out.pbData as *mut core::ffi::c_void)));
         Ok(v)
@@ -202,8 +217,10 @@ mod mask_and_merge_tests {
 
     #[test]
     fn merge_preserves_old_secret_when_placeholder_untouched() {
-        let old = serde_json::json!({ "token": "dpapi:aabbcc", "database_id": "old_db" }).to_string();
-        let new = serde_json::json!({ "token": SECRET_PLACEHOLDER, "database_id": "new_db" }).to_string();
+        let old =
+            serde_json::json!({ "token": "dpapi:aabbcc", "database_id": "old_db" }).to_string();
+        let new =
+            serde_json::json!({ "token": SECRET_PLACEHOLDER, "database_id": "new_db" }).to_string();
         let merged = merge_preserving_placeholder("notion", &old, &new).unwrap();
         let v: Value = serde_json::from_str(&merged).unwrap();
         assert_eq!(v["token"], "dpapi:aabbcc"); // プレースホルダーのままなら旧暗号化値を維持
@@ -254,7 +271,8 @@ mod tests {
 
     #[test]
     fn protect_then_unprotect_roundtrip() {
-        let cfg = serde_json::json!({ "token": "ntn_secret_value_123", "database_id": "abc" }).to_string();
+        let cfg = serde_json::json!({ "token": "ntn_secret_value_123", "database_id": "abc" })
+            .to_string();
         let prot = protect_config("notion", &cfg).unwrap();
         // 暗号化されて平文トークンが消え、マーカーが付く。
         assert!(prot.contains("dpapi:"));
