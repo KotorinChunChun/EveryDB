@@ -15,12 +15,7 @@ pub fn list_sources(state: &AppState) -> Result<Vec<SourceInfo>, String> {
     db::list_sources(&conn).map_err(err_to_string)
 }
 
-// add_source / update_source / add_source_from_sibling / delete_source は非同期コマンドにする。
-// これらは初回 fetch（reload_one）でリモート先（Notion/Graph/DB等）への通信を伴い数秒かかることが
-// あるが、素の同期 fn のままだと Tauri がメインスレッド上で実行するため、その間ウィンドウ全体が
-// 応答しなくなる（要件: 「保存してリロード」でフリーズする不具合）。async fn にするだけで Tauri の
-// 非同期ランタイム側のスレッドで実行されるようになり、UI スレッドは塞がれない
-// （フロント側の読み込み中スピナー表示 §2-2 が実際に描画されるためにもこれが前提になる）。
+// 初回取得の外部I/Oは、呼び出し側の非同期Tauri commandから実行する。
 pub fn add_source(
     state: &AppState,
     type_: String,
