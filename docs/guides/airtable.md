@@ -14,16 +14,16 @@ Airtable の **Personal Access Token**（個人用アクセストークン）を
 
 1. [Personal access tokens](https://airtable.com/create/tokens) を開きます。
 2. **Create new token** を押します。
-   ![alt text](image.png)
+   ![alt text](../assets/airtable/token-create.png)
 3. 、名前（例: `EveryDB`）を入力します。
 4. **Access** で、 **Add a base** から 取り込みたい**ベース**を追加します（ここで選んだベースだけが読めます）。
-   ![alt text](image-1.png)
+   ![alt text](../assets/airtable/base-access.png)
 5. **Scopes** に `data.records:read` と `schema.bases:read` を追加します。
 6. **Create token** を押します。
-   ![alt text](image-2.png)
+   ![alt text](../assets/airtable/token-scopes.png)
 7. 表示された `pat...` で始まるトークンをコピーします
    （**この画面を閉じると再表示できないため、閉じてしまった場合は後ほど再発行となります**）。
-   ![alt text](image-3.png)
+   ![alt text](../assets/airtable/token-copy.png)
 8. [Airtableのワークスペースページ](https://airtable.com/workspaces)から取り込みたいベースをブラウザで開き、URLをコピーして本ツールの自動入力欄に設定します。
    `https://airtable.com/appXXXXXXXX/tblYYYYYYYY/viwZZZZZZZZ`
    または、URLから以下のIDを控えて本ツールの入力欄に設定します。
@@ -31,7 +31,7 @@ Airtable の **Personal Access Token**（個人用アクセストークン）を
 - `appXXXXXXXX` … Base ID
 - `tblYYYYYYYY` … テーブル ID（テーブル名でも可）
 - `viwZZZZZZZZ` … ビュー ID（任意）
-  ![alt text](image-4.png)
+  ![alt text](../assets/airtable/base-url.png)
 
 ## EveryDB での安全な登録方法
 
