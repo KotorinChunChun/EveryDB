@@ -9,6 +9,7 @@ pub mod graph;
 pub mod model;
 pub mod opener;
 pub mod refresh;
+pub mod search_commands;
 pub mod secret;
 pub mod settings;
 pub mod winauth;
@@ -114,12 +115,12 @@ pub fn run() {
             commands::delete_source,
             commands::set_refresh_interval,
             commands::reload_sources,
-            commands::search,
-            commands::add_search_history_entry,
-            commands::list_search_history,
-            commands::save_search_preset,
-            commands::list_search_presets,
-            commands::delete_search_preset,
+            search_commands::search,
+            search_commands::add_search_history_entry,
+            search_commands::list_search_history,
+            search_commands::save_search_preset,
+            search_commands::list_search_presets,
+            search_commands::delete_search_preset,
             opener::open_ref,
             commands::encode_shift_jis,
             commands::winauth_status,
