@@ -6,6 +6,7 @@ pub mod credentials;
 pub mod db;
 pub mod graph;
 pub mod model;
+pub mod opener;
 pub mod refresh;
 pub mod secret;
 pub mod winauth;
@@ -117,7 +118,7 @@ pub fn run() {
             commands::save_search_preset,
             commands::list_search_presets,
             commands::delete_search_preset,
-            commands::open_ref,
+            opener::open_ref,
             commands::encode_shift_jis,
             commands::winauth_status,
             commands::winauth_verify,
