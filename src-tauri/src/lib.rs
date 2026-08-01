@@ -16,6 +16,7 @@ pub mod search_service;
 pub mod secret;
 pub mod settings;
 pub mod source_commands;
+pub mod source_service;
 pub mod winauth;
 
 use tauri::menu::{Menu, MenuItem};
