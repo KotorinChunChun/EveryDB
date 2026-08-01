@@ -1,0 +1,29 @@
+/* 右クリックコンテキストメニュー */
+.ctx-menu {
+  position: fixed; z-index: 1000; min-width: 160px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4); padding: 4px; display: flex; flex-direction: column;
+}
+.ctx-menu button {
+  display: block; width: 100%; text-align: left; padding: 6px 10px; background: none; border: none;
+  color: var(--text); border-radius: 4px; cursor: pointer; font-size: 13px;
+}
+.ctx-menu button:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); }
+.ctx-menu button.danger:hover:not(:disabled) { background: var(--danger-hover); color: var(--on-danger); }
+.ctx-menu button:disabled { opacity: 0.45; cursor: default; }
+.ctx-menu hr { margin: 4px 0; border: none; border-top: 1px solid var(--border); }
+
+/* 検索履歴パネル */
+.history-panel {
+  position: absolute; top: 46px; left: 8px; width: 380px; max-height: 260px; overflow-y: auto;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; z-index: 50;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+.history-item { padding: 6px 10px; cursor: pointer; font-size: 12px; color: var(--text); }
+.history-item:hover { background: var(--accent); color: var(--on-accent); }
+.history-empty { padding: 8px 10px; color: var(--muted); font-size: 12px; }
+.preset-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.preset-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preset-del { flex: none; background: none; border: none; color: var(--muted); cursor: pointer; padding: 0 4px; font-size: 13px; }
+.preset-del:hover { color: #f85149; }
+
