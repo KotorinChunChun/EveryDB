@@ -22,6 +22,7 @@ import type { ParentKind } from "./source-types/registry";
 import { ENTRA_APPS_URL, NOTION_INTEGRATIONS_URL, TYPE_DEFS } from "./source-types/forms";
 import type { FieldDef, TypeDef } from "./source-types/forms";
 import { parentLabel as formatParentLabel, shortTimestamp, sourceMatchesFilter as matchesSourceFilter, sourceTree, sourceTypeLabel } from "./features/sources/tree";
+import { reorderedSourceIds } from "./features/sources/reorder";
 
 // ==== 状態 ====
 let sources: SourceInfo[] = [];
@@ -165,45 +166,9 @@ let dragSrcId: number | null = null;
 let dragParentKey: string | null = null;
 
 async function performReorder(targetParentKey: string | null, targetId: number | null, insertAfter: boolean = false) {
-  if (dragSrcId === null && dragParentKey === null) return;
-
-  const currentOrder = sources.map((x) => x.id);
-
-  let movingIds: number[] = [];
-  if (dragParentKey !== null) {
-    if (dragParentKey === targetParentKey) return;
-    movingIds = sources.filter((x) => x.parent === dragParentKey).map((x) => x.id);
-  } else if (dragSrcId !== null) {
-    if (dragSrcId === targetId) return;
-    movingIds = [dragSrcId];
-  }
-  if (movingIds.length === 0) return;
-
-  const movingSet = new Set(movingIds);
-  const remainingOrder = currentOrder.filter((id) => !movingSet.has(id));
-
-  let targetIndex = remainingOrder.length;
-  if (targetId !== null) {
-    const idx = remainingOrder.indexOf(targetId);
-    if (idx !== -1) targetIndex = insertAfter ? idx + 1 : idx;
-  } else if (targetParentKey !== null) {
-    if (insertAfter) {
-      const targetGroupLast = [...sources].reverse().find((x) => x.parent === targetParentKey && !movingSet.has(x.id));
-      if (targetGroupLast) {
-        const idx = remainingOrder.indexOf(targetGroupLast.id);
-        if (idx !== -1) targetIndex = idx + 1;
-      }
-    } else {
-      const targetGroupFirst = sources.find((x) => x.parent === targetParentKey && !movingSet.has(x.id));
-      if (targetGroupFirst) {
-        const idx = remainingOrder.indexOf(targetGroupFirst.id);
-        if (idx !== -1) targetIndex = idx;
-      }
-    }
-  }
-
-  remainingOrder.splice(targetIndex, 0, ...movingIds);
-  await invoke("reorder_sources", { orderedIds: remainingOrder });
+  const orderedIds = reorderedSourceIds(sources, dragSrcId, dragParentKey, targetParentKey, targetId, insertAfter);
+  if (!orderedIds) return;
+  await invoke("reorder_sources", { orderedIds });
   await refreshSidebar();
 }
 
