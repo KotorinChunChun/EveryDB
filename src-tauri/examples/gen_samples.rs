@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use rust_xlsxwriter::{Table, Workbook};
 
 fn samples_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("samples")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("samples")
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -36,7 +38,13 @@ fn gen_xlsx(dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
         ["E001", "田中太郎", "営業部", "東京", "tanaka@example.co.jp"],
         ["E002", "鈴木花子", "開発部", "大阪", "suzuki@example.co.jp"],
         ["E003", "佐藤一郎", "総務部", "東京", "sato@example.co.jp"],
-        ["E004", "高橋美咲", "営業部", "名古屋", "takahashi@example.co.jp"],
+        [
+            "E004",
+            "高橋美咲",
+            "営業部",
+            "名古屋",
+            "takahashi@example.co.jp",
+        ],
         ["E005", "渡辺健", "開発部", "東京", "watanabe@example.co.jp"],
         ["E006", "伊藤さくら", "人事部", "大阪", "ito@example.co.jp"],
     ];
@@ -65,10 +73,19 @@ fn gen_xlsx(dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let table = Table::new().set_name("社員テーブル");
-    ws_tbl.add_table(0, 0, table_rows.len() as u32, table_header.len() as u16 - 1, &table)?;
+    ws_tbl.add_table(
+        0,
+        0,
+        table_rows.len() as u32,
+        table_header.len() as u16 - 1,
+        &table,
+    )?;
 
     let ws2 = wb.add_worksheet().set_name("拠点")?;
-    for (r, v) in ["拠点名", "東京", "大阪", "名古屋", "福岡"].iter().enumerate() {
+    for (r, v) in ["拠点名", "東京", "大阪", "名古屋", "福岡"]
+        .iter()
+        .enumerate()
+    {
         ws2.write_string(r as u32, 0, *v)?;
     }
 

@@ -1,13 +1,19 @@
 {
   "name": "everydb",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.0.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "docs:check": "node scripts/check-docs.mjs",
+    "security:check": "node scripts/check-security-config.mjs",
+    "check": "npm run typecheck && npm run test && npm run docs:check && npm run security:check && npm run build",
+    "check:all": "node scripts/check-all.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
@@ -17,7 +23,9 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",
+    "jsdom": "^26.1.0",
     "typescript": "^5.6.3",
-    "vite": "^6.0.3"
+    "vite": "^6.0.3",
+    "vitest": "^3.2.7"
   }
 }

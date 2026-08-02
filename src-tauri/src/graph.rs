@@ -4,6 +4,8 @@
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 
+use crate::connectors::limits::{self, GRAPH_PAGE_TOP};
+
 pub struct GraphClient {
     token: String,
 }
@@ -12,19 +14,18 @@ impl GraphClient {
     /// クライアントクレデンシャルフローでアクセストークンを取得する。
     pub fn new(tenant_id: &str, client_id: &str, client_secret: &str) -> Result<Self> {
         let url = format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token");
-        let resp = ureq::post(&url).send_form(&[
-            ("client_id", client_id),
-            ("client_secret", client_secret),
-            ("scope", "https://graph.microsoft.com/.default"),
-            ("grant_type", "client_credentials"),
-        ]);
+        let resp = limits::http_post_form(
+            &url,
+            &[
+                ("client_id", client_id),
+                ("client_secret", client_secret),
+                ("scope", "https://graph.microsoft.com/.default"),
+                ("grant_type", "client_credentials"),
+            ],
+        );
         let value: Value = match resp {
             Ok(r) => r.into_json()?,
-            Err(ureq::Error::Status(code, r)) => {
-                let msg = r.into_string().unwrap_or_default();
-                return Err(anyhow!("Graph トークン取得失敗 {code}: {msg}"));
-            }
-            Err(e) => return Err(anyhow!("認証エンドポイントへの接続に失敗: {e}")),
+            Err(e) => return Err(anyhow!("Graph トークン取得失敗: {e}")),
         };
         let token = value
             .get("access_token")
@@ -36,15 +37,10 @@ impl GraphClient {
 
     /// 単一 GET（JSON を返す）。
     pub fn get(&self, url: &str) -> Result<Value> {
-        let resp = ureq::get(url)
-            .set("Authorization", &format!("Bearer {}", self.token))
-            .call();
+        let resp = limits::http_get_bearer(url, &self.token);
         match resp {
             Ok(r) => Ok(r.into_json()?),
-            Err(ureq::Error::Status(code, r)) => {
-                Err(anyhow!("Graph GET {code}: {}", r.into_string().unwrap_or_default()))
-            }
-            Err(e) => Err(anyhow!("Graph への接続に失敗: {e}")),
+            Err(e) => Err(anyhow!("Graph GET: {e}")),
         }
     }
 
@@ -55,26 +51,50 @@ impl GraphClient {
         while let Some(url) = next {
             let page = self.get(&url)?;
             if let Some(arr) = page.get("value").and_then(|v| v.as_array()) {
-                out.extend(arr.iter().cloned());
+                for item in arr {
+                    limits::check_fetch_limit(out.len() + 1, "Microsoft Graph")?;
+                    out.push(item.clone());
+                }
             }
-            next = page.get("@odata.nextLink").and_then(|v| v.as_str()).map(String::from);
+            next = page
+                .get("@odata.nextLink")
+                .and_then(|v| v.as_str())
+                .map(String::from);
         }
         Ok(out)
+    }
+
+    /// Graph 一覧 URL に `$top` が無ければ付与する。
+    pub fn with_page_top(url: &str) -> String {
+        if url.contains("$top=") {
+            url.to_string()
+        } else if url.contains('?') {
+            format!("{url}&$top={GRAPH_PAGE_TOP}")
+        } else {
+            format!("{url}?$top={GRAPH_PAGE_TOP}")
+        }
     }
 }
 
 /// "https://host/sites/xxx" を (host, "/sites/xxx") に分解する。
 pub fn parse_site_url(u: &str) -> Result<(String, String)> {
     let s = u.trim().trim_end_matches('/');
-    let s = s.strip_prefix("https://").or_else(|| s.strip_prefix("http://")).unwrap_or(s);
-    let idx = s.find('/').ok_or_else(|| anyhow!("不正なサイト URL: {u}"))?;
+    let s = s
+        .strip_prefix("https://")
+        .or_else(|| s.strip_prefix("http://"))
+        .unwrap_or(s);
+    let idx = s
+        .find('/')
+        .ok_or_else(|| anyhow!("不正なサイト URL: {u}"))?;
     Ok((s[..idx].to_string(), s[idx..].to_string()))
 }
 
-/// サイト URL から Graph のサイト ID（複合 ID）を解決する。
+/// サイト URL から Graph のサイト ID（複数 ID）を解決する。
 pub fn site_id(client: &GraphClient, site_url: &str) -> Result<String> {
     let (host, path) = parse_site_url(site_url)?;
-    let v = client.get(&format!("https://graph.microsoft.com/v1.0/sites/{host}:{path}"))?;
+    let v = client.get(&format!(
+        "https://graph.microsoft.com/v1.0/sites/{host}:{path}"
+    ))?;
     v.get("id")
         .and_then(|x| x.as_str())
         .map(String::from)

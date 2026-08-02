@@ -1,0 +1,114 @@
+/* テーマ（要件 REQ-UI-02）: dark(既定) / light / night(高コントラスト) */
+:root,
+:root[data-theme="dark"] {
+  --bg: #1e1e1e;
+  --panel: #252526;
+  --panel-2: #2d2d30;
+  --border: #3c3c3c;
+  --text: #e0e0e0;
+  --muted: #9a9a9a;
+  --accent: #0e639c;
+  --accent-2: #1177bb;
+  --on-accent: #ffffff;
+  --danger: #5a1d1d;
+  --danger-border: #8a3434;
+  --danger-hover: #7a2a2a;
+  --on-danger: #ffffff;
+  --focus-ring: rgba(17, 119, 187, 0.45);
+  /* 通常ボタン（.btn.primary/.btn.danger 以外）専用のフォーカスリング色。
+     入力欄用の --focus-ring とは独立して調整できるようにしている。 */
+  --focus-ring-btn: var(--focus-ring);
+  --accent-focus: #1a8fd8;
+  --danger-focus: #9c3a3a;
+  --form-error: #f85149;
+  /* 通常ボタンのホバー背景。以前は固定値 #87878c を全テーマ共通で使っていたため、
+     背景/文字色はテーマごとに変わるのにホバーだけ変わらない（要件: 分岐していないのはおかしい）
+     という不具合になっていた。--panel-2 を基準にテーマごとの方向（暗背景なら明るく、
+     明背景なら暗く）でホバー色を定義する。 */
+  --btn-hover-bg: #3a3a3d;
+  --sel: #094771;
+  --row-alt: #232323;
+  font-family: "Segoe UI", "Yu Gothic UI", system-ui, sans-serif;
+  font-size: 13px;
+}
+
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --panel: #f3f3f3;
+  --panel-2: #e8e8e8;
+  --border: #cfcfcf;
+  --text: #1c1c1c;
+  --muted: #5f5f5f;
+  --accent: #0b5c94;
+  --accent-2: #0a4d7c;
+  --on-accent: #ffffff;
+  --danger: #c62828;
+  --danger-border: #a01f1f;
+  --danger-hover: #ad2323;
+  --on-danger: #ffffff;
+  /* 白背景では濃いリングが強すぎるので淡くする（要件: 基本ボタンのフォーカス色を薄く）。 */
+  --focus-ring: rgba(11, 92, 148, 0.16);
+  /* 通常ボタンのフォーカス色（要件で指定された色に変更）。 */
+  --focus-ring-btn: #f1f5f9;
+  /* 塗りつぶしボタン（保存/削除）は淡いリングだと下地に埋もれるため、
+     フォーカス時は背景自体をはっきり暗い色へ変える（要件: 変化を大きく）。 */
+  --accent-focus: #073d63;
+  --danger-focus: #8c1a1a;
+  --form-error: #b42318;
+  --btn-hover-bg: #d8d8d8;
+  --sel: #cfe4f7;
+  --row-alt: #f7f7f7;
+}
+
+/* ナイトモード: 純黒背景+高コントラストで視認性を優先 */
+:root[data-theme="night"] {
+  --bg: #000000;
+  --panel: #0a0a0a;
+  --panel-2: #141414;
+  --border: #333333;
+  --text: #ffffff;
+  --muted: #b0b0b0;
+  --accent: #3399ff;
+  --accent-2: #5cb3ff;
+  --on-accent: #000000;
+  --danger: #b33333;
+  --danger-border: #ff5555;
+  --danger-hover: #d24545;
+  --on-danger: #ffffff;
+  --focus-ring: rgba(92, 179, 255, 0.55);
+  --focus-ring-btn: var(--focus-ring);
+  --accent-focus: #7ec4ff;
+  --danger-focus: #e06a6a;
+  --form-error: #ff6b6b;
+  --btn-hover-bg: #232323;
+  --sel: #003a66;
+  --row-alt: #080808;
+}
+
+* { box-sizing: border-box; }
+
+/* フォーカス時の強調表示（要件: 全状況のフォーカス色を統一）。テーマごとの色味は
+   --focus-ring / --accent-2 で決まる。個別要素の :focus (border-color 変更等) はこれに重ねてよい。 */
+input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
+  outline: none;
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+/* ボタンは枠色を種別ごとの色（危険色など）のまま保ちたいので、リングだけを重ねる。 */
+button:focus-visible, .btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring-btn);
+}
+
+/* hidden 属性は常に display:none を優先させる（.ctx-menu 等が display:flex を持つと
+   UA の [hidden] ルールが詳細度負けして消えなくなるため、明示的に打ち消す）。 */
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+}
+

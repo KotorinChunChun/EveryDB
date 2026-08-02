@@ -1,6 +1,6 @@
 [package]
 name = "everydb"
-version = "0.0.1"
+version = "0.0.5"
 description = "各種データソースをローカル SQLite にキャッシュして横断高速検索するツール"
 authors = ["EveryDB"]
 edition = "2021"
@@ -26,9 +26,17 @@ encoding_rs = "0.8"
 anyhow = "1"
 odbc-api = "29"
 ureq = { version = "2", features = ["json", "cookies"] }
-windows = { version = "0.61", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
-argon2 = "0.5.3"
-rand_core = { version = "0.6", features = ["getrandom"] }
+windows = { version = "0.61", features = [
+    "Win32_Security_Cryptography",
+    "Win32_Foundation",
+    # Windows Hello（PIN/生体認証）による本人確認。UserConsentVerifier + デスクトップアプリ用の
+    # HWND インターop（IUserConsentVerifierInterop）に必要。
+    "Security_Credentials_UI",
+    "Win32_System_WinRT",
+    "Foundation",
+] }
+# windows クレートの生成コードが返す IAsyncOperation<T> 等の待受け（.get()）に必要。
+windows-future = "0.2"
 tauri-plugin-autostart = "2.0.0-rc.1"
 tauri-plugin-global-shortcut = "2.0.0-rc.2"
 tauri-plugin-dialog = "2.0.0-rc.8"
@@ -40,6 +48,7 @@ native-tls = "0.2"
 mysql = "28.0.0"
 zip = { version = "4.2.0", default-features = false, features = ["deflate"] }
 scraper = "0.27.0"
+getrandom = "0.3"
 
 [dev-dependencies]
 rust_xlsxwriter = "0.79"

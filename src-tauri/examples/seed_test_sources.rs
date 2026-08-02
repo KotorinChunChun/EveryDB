@@ -19,7 +19,9 @@ use rusqlite::Connection;
 
 fn cache_db_path() -> std::path::PathBuf {
     let appdata = std::env::var("APPDATA").expect("APPDATA が取得できません");
-    std::path::Path::new(&appdata).join("com.everydb.app").join("cache.db")
+    std::path::Path::new(&appdata)
+        .join("com.everydb.app")
+        .join("cache.db")
 }
 
 /// 同名・同種のソースが既に存在すれば削除してから追加する（再実行しても重複しない）。
@@ -34,7 +36,12 @@ fn upsert_source(conn: &mut Connection, type_: &str, name: &str, config_json: se
     print!("登録: {name} ({type_}) ... ");
     match refresh::reload_one(conn, id) {
         Ok(()) => {
-            let count = db::list_sources(conn).unwrap().into_iter().find(|s| s.id == id).map(|s| s.record_count).unwrap_or(0);
+            let count = db::list_sources(conn)
+                .unwrap()
+                .into_iter()
+                .find(|s| s.id == id)
+                .map(|s| s.record_count)
+                .unwrap_or(0);
             println!("OK ({count} 件)");
         }
         Err(e) => println!("失敗: {e}"),
@@ -42,7 +49,9 @@ fn upsert_source(conn: &mut Connection, type_: &str, name: &str, config_json: se
 }
 
 fn samples_dir() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("samples")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("samples")
 }
 
 fn main() {
@@ -58,41 +67,78 @@ fn main() {
     let p = |name: &str| dir.join(name).to_string_lossy().into_owned();
 
     if dir.join("customers.csv").exists() {
-        upsert_source(&mut conn, "csv", "サンプル: 顧客CSV", serde_json::json!({
-            "path": p("customers.csv"), "has_header": true
-        }));
+        upsert_source(
+            &mut conn,
+            "csv",
+            "サンプル: 顧客CSV",
+            serde_json::json!({
+                "path": p("customers.csv"), "has_header": true
+            }),
+        );
     }
     if dir.join("employees.xlsx").exists() {
-        upsert_source(&mut conn, "excel_table", "サンプル: 社員(Excel)", serde_json::json!({
-            "path": p("employees.xlsx"), "sheet": "社員"
-        }));
-        upsert_source(&mut conn, "excel_sheets", "サンプル: シート名一覧", serde_json::json!({
-            "path": p("employees.xlsx")
-        }));
+        upsert_source(
+            &mut conn,
+            "excel_table",
+            "サンプル: 社員(Excel)",
+            serde_json::json!({
+                "path": p("employees.xlsx"), "sheet": "社員"
+            }),
+        );
+        upsert_source(
+            &mut conn,
+            "excel_sheets",
+            "サンプル: シート名一覧",
+            serde_json::json!({
+                "path": p("employees.xlsx")
+            }),
+        );
     }
     if dir.join("tree").exists() {
-        upsert_source(&mut conn, "folder", "サンプル: フォルダツリー", serde_json::json!({
-            "path": p("tree"), "recursive": true
-        }));
+        upsert_source(
+            &mut conn,
+            "folder",
+            "サンプル: フォルダツリー",
+            serde_json::json!({
+                "path": p("tree"), "recursive": true
+            }),
+        );
     }
     if dir.join("msime_dict.txt").exists() {
-        upsert_source(&mut conn, "ime_msime", "サンプル: MS-IME辞書", serde_json::json!({
-            "path": p("msime_dict.txt")
-        }));
+        upsert_source(
+            &mut conn,
+            "ime_msime",
+            "サンプル: MS-IME辞書",
+            serde_json::json!({
+                "path": p("msime_dict.txt")
+            }),
+        );
     }
     if dir.join("google_dict.txt").exists() {
-        upsert_source(&mut conn, "ime_google", "サンプル: Google日本語入力辞書", serde_json::json!({
-            "path": p("google_dict.txt")
-        }));
+        upsert_source(
+            &mut conn,
+            "ime_google",
+            "サンプル: Google日本語入力辞書",
+            serde_json::json!({
+                "path": p("google_dict.txt")
+            }),
+        );
     }
     if dir.join("access_db.accdb").exists() {
-        upsert_source(&mut conn, "accdb", "サンプル: 取引先(Access)", serde_json::json!({
-            "path": p("access_db.accdb"), "table": "取引先"
-        }));
+        upsert_source(
+            &mut conn,
+            "accdb",
+            "サンプル: 取引先(Access)",
+            serde_json::json!({
+                "path": p("access_db.accdb"), "table": "取引先"
+            }),
+        );
     }
 
-    // --- sample2/ (ユーザーが独自に配置したサンプルデータ) ---
-    let dir2 = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("sample2");
+    // --- samples/ (ユーザーが独自に配置したサンプルデータ) ---
+    let dir2 = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("samples");
     let p2 = |name: &str| dir2.join(name).to_string_lossy().into_owned();
 
     for (file, sheet) in [
@@ -100,32 +146,59 @@ fn main() {
         ("0805koukinsisyutsu.xlsx", "公金支出情報一覧表"),
     ] {
         if dir2.join(file).exists() {
-            let name = format!("sample2: {}", file.trim_end_matches(".xlsx"));
-            upsert_source(&mut conn, "excel_table", &name, serde_json::json!({
-                "path": p2(file), "sheet": sheet
-            }));
+            let name = format!("samples: {}", file.trim_end_matches(".xlsx"));
+            upsert_source(
+                &mut conn,
+                "excel_table",
+                &name,
+                serde_json::json!({
+                    "path": p2(file), "sheet": sheet
+                }),
+            );
         }
     }
 
     let chinook = "Chinook_Sqlite.sqlite";
     if dir2.join(chinook).exists() {
         const CHINOOK_TABLES: &[&str] = &[
-            "Album", "Artist", "Customer", "Employee", "Genre", "Invoice",
-            "InvoiceLine", "MediaType", "Playlist", "PlaylistTrack", "Track",
+            "Album",
+            "Artist",
+            "Customer",
+            "Employee",
+            "Genre",
+            "Invoice",
+            "InvoiceLine",
+            "MediaType",
+            "Playlist",
+            "PlaylistTrack",
+            "Track",
         ];
         for table in CHINOOK_TABLES {
-            let name = format!("sample2: Chinook.{table}");
-            upsert_source(&mut conn, "sqlite", &name, serde_json::json!({
-                "path": p2(chinook), "table": table
-            }));
+            let name = format!("samples: Chinook.{table}");
+            upsert_source(
+                &mut conn,
+                "sqlite",
+                &name,
+                serde_json::json!({
+                    "path": p2(chinook), "table": table
+                }),
+            );
         }
     }
 
     // --- Notion ---
-    if let (Ok(token), Ok(dbid)) = (std::env::var("EVERYDB_NOTION_TOKEN"), std::env::var("EVERYDB_NOTION_DB")) {
-        upsert_source(&mut conn, "notion", "Notion (テスト)", serde_json::json!({
-            "token": token, "database_id": dbid
-        }));
+    if let (Ok(token), Ok(dbid)) = (
+        std::env::var("EVERYDB_NOTION_TOKEN"),
+        std::env::var("EVERYDB_NOTION_DB"),
+    ) {
+        upsert_source(
+            &mut conn,
+            "notion",
+            "Notion (テスト)",
+            serde_json::json!({
+                "token": token, "database_id": dbid
+            }),
+        );
     } else {
         println!("スキップ: Notion（EVERYDB_NOTION_TOKEN / EVERYDB_NOTION_DB 未設定）");
     }
@@ -146,8 +219,18 @@ fn main() {
     if let Some((tenant, client, secret)) = graph_auth {
         let auth = serde_json::json!({ "tenant_id": tenant, "client_id": client, "client_secret": secret });
 
-        upsert_source(&mut conn, "graph_entra_users", "EntraID ユーザー", auth.clone());
-        upsert_source(&mut conn, "graph_entra_groups", "EntraID グループ", auth.clone());
+        upsert_source(
+            &mut conn,
+            "graph_entra_users",
+            "EntraID ユーザー",
+            auth.clone(),
+        );
+        upsert_source(
+            &mut conn,
+            "graph_entra_groups",
+            "EntraID グループ",
+            auth.clone(),
+        );
         upsert_source(&mut conn, "graph_teams", "Teams チーム一覧", auth.clone());
 
         if let Ok(site) = std::env::var("EVERYDB_SP_SITE") {
@@ -156,11 +239,21 @@ fn main() {
             list_cfg["list_name"] = serde_json::Value::String(
                 std::env::var("EVERYDB_SP_LIST").unwrap_or_else(|_| "SampleList".to_string()),
             );
-            upsert_source(&mut conn, "graph_sharepoint_list", "SharePoint リスト (テスト)", list_cfg);
+            upsert_source(
+                &mut conn,
+                "graph_sharepoint_list",
+                "SharePoint リスト (テスト)",
+                list_cfg,
+            );
 
             let mut lib_cfg = auth.clone();
             lib_cfg["site_url"] = serde_json::Value::String(site);
-            upsert_source(&mut conn, "graph_sharepoint_library", "SharePoint ドキュメントライブラリ (テスト)", lib_cfg);
+            upsert_source(
+                &mut conn,
+                "graph_sharepoint_library",
+                "SharePoint ドキュメントライブラリ (テスト)",
+                lib_cfg,
+            );
         } else {
             println!("スキップ: SharePoint（EVERYDB_SP_SITE 未設定）");
         }

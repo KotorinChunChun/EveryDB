@@ -1,87 +1,89 @@
-//! データソースの再取得（スナップショット全置換）と定期更新スケジューラ。
+//! Tauri 連携付きの再取得スケジューラ（emit / トレイ / 定期更新）。
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
-use rusqlite::Connection;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::commands::AppState;
-use crate::{connectors, db};
+use crate::app_state::AppState;
+use crate::db;
+use crate::internal_log;
 
-/// 1 ソースを取得してスナップショット全置換し、ステータスを更新する（要件 §4-1）。
-pub fn reload_one(conn: &mut Connection, id: i64) -> anyhow::Result<()> {
-    let (type_, cfg) = db::get_source_config(conn, id)?;
-    let connector = connectors::build_connector(&type_, &cfg)?;
-    match connector.fetch() {
-        Ok(records) => {
-            db::replace_source_records(conn, id, &records)?;
-            db::set_status(conn, id, "ok", None)?;
-            Ok(())
-        }
-        Err(e) => {
-            let _ = db::set_status(conn, id, "error", Some(&e.to_string()));
-            Err(e)
-        }
-    }
-}
+pub use crate::refresh_service::{
+    optimize_fts, reload_many_for_state, reload_one, reload_one_for_state, ReloadOneOutcome,
+    ReloadSourceResult, ReloadSummary,
+};
 
-/// 指定 id 群を再取得し、完了後にフロントへ通知する。個別失敗は status に記録して続行。
-pub fn reload_ids(app: &AppHandle, ids: &[i64]) {
-    {
+pub fn reload_ids(app: &AppHandle, ids: &[i64]) -> ReloadSummary {
+    let summary = {
         let state = app.state::<AppState>();
-        let mut conn = match state.db.lock() {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-        for &id in ids {
-            let _ = reload_one(&mut conn, id);
-        }
+        reload_many_for_state(&state, ids)
+    };
+    if let Err(error) = app.emit("sources-updated", ()) {
+        internal_log::warn("reload", format!("sources-updated emit failed: {error}"));
     }
-    let _ = app.emit("sources-updated", ());
+    summary
 }
 
-/// 全ソースを今すぐ更新（トレイメニュー用）。
 pub fn reload_all_now(app: &AppHandle) {
     let ids = {
         let state = app.state::<AppState>();
         let conn = match state.db.lock() {
             Ok(c) => c,
-            Err(_) => return,
+            Err(_) => {
+                internal_log::warn("reload", "DB lock poisoned while listing sources");
+                return;
+            }
         };
-        db::list_sources(&conn).map(|v| v.into_iter().map(|s| s.id).collect::<Vec<_>>()).unwrap_or_default()
+        db::list_sources(&conn)
+            .map(|v| v.into_iter().map(|s| s.id).collect::<Vec<_>>())
+            .unwrap_or_default()
     };
     reload_ids(app, &ids);
 }
 
-/// refresh_interval を過ぎた（または未更新の）ソース id を返す。
 fn due_ids(app: &AppHandle) -> Vec<i64> {
     let state = app.state::<AppState>();
     let conn = match state.db.lock() {
         Ok(c) => c,
-        Err(_) => return Vec::new(),
+        Err(_) => {
+            internal_log::warn("scheduler", "DB lock poisoned while checking due sources");
+            return Vec::new();
+        }
     };
     let mut stmt = match conn.prepare(
         "SELECT id FROM sources
          WHERE last_success_at IS NULL
-            OR datetime(last_success_at) <= datetime('now','localtime','-' || refresh_interval || ' seconds')",
+            OR datetime(last_success_at) <= datetime('localtime','-' || refresh_interval || ' seconds')",
     ) {
         Ok(s) => s,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            internal_log::warn("scheduler", format!("due query prepare failed: {error}"));
+            return Vec::new();
+        }
     };
-    let ids = stmt
-        .query_map([], |r| r.get::<_, i64>(0))
+    stmt.query_map([], |r| r.get::<_, i64>(0))
         .map(|rows| rows.flatten().collect::<Vec<_>>())
-        .unwrap_or_default();
-    ids
+        .unwrap_or_default()
 }
 
-/// 内部タイマー。60 秒ごとに期限到来ソースを更新する（要件 §2 常駐 + §4-1）。
-pub fn spawn_scheduler(app: AppHandle) {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(60));
-        let due = due_ids(&app);
-        if !due.is_empty() {
-            reload_ids(&app, &due);
+pub fn spawn_scheduler(app: AppHandle, shutdown: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        while !shutdown.load(Ordering::Relaxed) {
+            for _ in 0..60 {
+                if shutdown.load(Ordering::Relaxed) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_secs(1));
+            }
+            if shutdown.load(Ordering::Relaxed) {
+                return;
+            }
+            let due = due_ids(&app);
+            if !due.is_empty() {
+                reload_ids(&app, &due);
+            }
         }
     });
 }

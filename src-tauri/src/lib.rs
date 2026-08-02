@@ -1,27 +1,61 @@
+pub mod app_state;
+pub mod box_oauth;
 pub mod browse;
-mod commands;
+pub mod browse_commands;
+pub mod browse_service;
 pub mod connectors;
+pub mod credential_commands;
+#[cfg(test)]
+mod credential_regression;
+pub mod credential_service;
+pub mod credentials;
 pub mod db;
+pub mod export_commands;
+pub mod export_service;
 pub mod graph;
+#[cfg(test)]
+mod input_boundary_audit;
+pub mod internal_log;
+pub mod lifecycle;
 pub mod model;
+pub mod opener;
+#[cfg(test)]
+mod perf_baselines;
 pub mod refresh;
+pub mod refresh_service;
+pub mod search_commands;
+pub mod search_service;
 pub mod secret;
+#[cfg(test)]
+mod security_audit;
+pub mod service_error;
+pub mod settings;
+pub mod settings_service;
+pub mod source_commands;
+pub mod source_service;
+pub mod winauth;
 
-use rusqlite::Connection;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{Emitter, Manager, WindowEvent};
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-use commands::AppState;
+use app_state::AppState;
+use lifecycle::shutdown_background_tasks;
 
 /// トレイの「表示」・グローバルホットキーで共通のウィンドウ表示処理。
 /// 表示後に検索ボックスへフォーカスさせるイベントを送る（要件 §9-5: Everything ライク挙動）。
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.set_focus();
-        let _ = app.emit("focus-search", ());
+        if let Err(error) = w.show() {
+            internal_log::warn("window", format!("show failed: {error}"));
+        }
+        if let Err(error) = w.set_focus() {
+            internal_log::warn("window", format!("focus failed: {error}"));
+        }
+        if let Err(error) = app.emit("focus-search", ()) {
+            internal_log::warn("window", format!("focus-search emit failed: {error}"));
+        }
     }
 }
 
@@ -50,14 +84,22 @@ pub fn run() {
             // キャッシュ DB を初期化して状態管理下に置く。
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
-            let conn = Connection::open(dir.join("cache.db"))?;
-            db::init_schema(&conn)?;
+            let conn = db::open_cached_database(&dir.join("cache.db"))?;
             // 前回のズーム倍率とホットキーを復元する（要件 REQ-UI-01 / §9-5）。
-            let saved_zoom: f64 = db::get_meta(&conn, "ui_zoom")?.and_then(|s| s.parse().ok()).unwrap_or(1.0);
-            let saved_hotkey: String = db::get_meta(&conn, "ui_hotkey")?.unwrap_or_else(|| "Alt+Ctrl+D".to_string());
+            let saved_zoom: f64 = db::get_meta(&conn, "ui_zoom")?
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(1.0);
+            let saved_hotkey: String =
+                db::get_meta(&conn, "ui_hotkey")?.unwrap_or_else(|| "Alt+Ctrl+D".to_string());
             app.manage(AppState::new(conn));
+            let scheduler_shutdown = {
+                let state: tauri::State<AppState> = app.state();
+                state.scheduler_shutdown.clone()
+            };
             if let Some(w) = app.get_webview_window("main") {
-                let _ = w.set_zoom(saved_zoom);
+                if let Err(error) = w.set_zoom(saved_zoom) {
+                    internal_log::warn("window", format!("restore zoom failed: {error}"));
+                }
             }
 
             // トレイ常駐（表示 / 全ソース更新 / 終了）。
@@ -78,76 +120,106 @@ pub fn run() {
                 .build(app)?;
 
             // グローバルホットキーでウィンドウ表示（要件 §9-5 / Everything ライク）。
-            let _ = app.global_shortcut().register(saved_hotkey.as_str());
+            if let Err(error) = app.global_shortcut().register(saved_hotkey.as_str()) {
+                internal_log::warn(
+                    "hotkey",
+                    format!("startup register failed for '{saved_hotkey}': {error}"),
+                );
+            }
 
             // "--minimized"（自動起動経由）の場合はウィンドウを出さずトレイ常駐のまま待機する。
             let launched_minimized = std::env::args().any(|a| a == "--minimized");
             if launched_minimized {
                 if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.hide();
+                    if let Err(error) = w.hide() {
+                        internal_log::warn("window", format!("minimized hide failed: {error}"));
+                    }
                 }
             }
 
             // 定期自動更新タイマーを起動。
-            refresh::spawn_scheduler(app.handle().clone());
+            refresh::spawn_scheduler(app.handle().clone(), scheduler_shutdown);
             Ok(())
         })
-        // ウィンドウの×は終了せずトレイに格納する。
+        // ウィンドウの×は終了せずトレイに格納する。OAuth 実行中なら取消する。
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                let _ = window.hide();
-                api.prevent_close();
+                if window.label() == "main" {
+                    shutdown_background_tasks(window.app_handle());
+                    if let Err(error) = window.hide() {
+                        internal_log::warn("window", format!("hide failed: {error}"));
+                    }
+                    api.prevent_close();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
-            commands::list_sources,
-            commands::add_source,
-            commands::delete_source,
-            commands::set_refresh_interval,
-            commands::reload_sources,
-            commands::search,
-            commands::add_search_history_entry,
-            commands::list_search_history,
-            commands::save_search_preset,
-            commands::list_search_presets,
-            commands::delete_search_preset,
-            commands::open_ref,
-            commands::encode_shift_jis,
-            commands::mp_status,
-            commands::mp_set,
-            commands::mp_verify,
-            commands::get_source_detail,
-            commands::update_source,
-            commands::duplicate_source,
-            commands::reorder_sources,
-            commands::preview_source_fields,
-            commands::preview_source_fields_by_id,
-            commands::add_source_from_sibling,
-            commands::browse_notion_databases,
-            commands::browse_notion_databases_for_source,
-            commands::browse_graph_site_resources_for_source,
-            commands::browse_graph_sites,
-            commands::browse_graph_teams,
-            commands::browse_graph_team_site_url,
-            commands::browse_graph_site_resources,
-            commands::browse_excel_sheets,
-            commands::browse_excel_tables,
-            commands::browse_sqlite_tables,
-            commands::browse_accdb_tables,
-            commands::browse_browser_profiles,
-            commands::autostart_status,
-            commands::autostart_set,
-            commands::set_zoom,
-            commands::get_zoom,
-            commands::set_theme,
-            commands::get_theme,
-            commands::set_hotkey,
-            commands::get_hotkey,
-            commands::set_sidebar_width,
-            commands::get_sidebar_width,
-            commands::list_parent_labels,
-            commands::set_parent_label,
+            source_commands::list_sources,
+            source_commands::add_source,
+            source_commands::delete_source,
+            source_commands::set_refresh_interval,
+            source_commands::reload_sources,
+            search_commands::search,
+            search_commands::add_search_history_entry,
+            search_commands::list_search_history,
+            search_commands::save_search_preset,
+            search_commands::list_search_presets,
+            search_commands::delete_search_preset,
+            opener::open_ref,
+            export_commands::encode_shift_jis,
+            credential_commands::winauth_status,
+            credential_commands::winauth_verify,
+            source_commands::get_source_detail,
+            source_commands::update_source,
+            source_commands::duplicate_source,
+            source_commands::reorder_sources,
+            source_commands::preview_source_fields,
+            source_commands::preview_source_fields_by_id,
+            source_commands::add_source_from_sibling,
+            browse_commands::browse_notion_databases,
+            browse_commands::browse_notion_databases_for_source,
+            browse_commands::browse_airtable_bases,
+            browse_commands::browse_airtable_bases_for_source,
+            browse_commands::browse_airtable_tables,
+            browse_commands::browse_airtable_tables_for_source,
+            browse_commands::browse_graph_site_resources_for_source,
+            browse_commands::browse_graph_sites,
+            browse_commands::browse_graph_teams,
+            browse_commands::browse_graph_team_site_url,
+            browse_commands::browse_graph_site_resources,
+            browse_commands::browse_excel_sheets,
+            browse_commands::browse_excel_tables,
+            browse_commands::browse_excel_grid,
+            browse_commands::browse_sqlite_tables,
+            browse_commands::browse_accdb_tables,
+            browse_commands::browse_browser_profiles,
+            credential_commands::list_credentials,
+            credential_commands::add_credential,
+            credential_commands::update_credential,
+            credential_commands::delete_credential,
+            credential_commands::credential_usage,
+            credential_commands::credential_public_fields,
+            credential_commands::credential_secret_value,
+            credential_commands::box_oauth_authorize,
+            credential_commands::box_oauth_cancel,
+            settings::autostart_status,
+            settings::autostart_set,
+            settings::set_zoom,
+            settings::get_zoom,
+            settings::set_theme,
+            settings::get_theme,
+            settings::set_hotkey,
+            settings::get_hotkey,
+            settings::set_sidebar_width,
+            settings::get_sidebar_width,
+            settings::list_parent_labels,
+            settings::set_parent_label,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let RunEvent::Exit = event {
+                shutdown_background_tasks(app);
+            }
+        });
 }

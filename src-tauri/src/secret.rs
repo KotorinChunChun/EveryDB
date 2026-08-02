@@ -1,31 +1,28 @@
-//! 秘密情報の保護（要件 §4-3-bis）と、マスターパスワードによる閲覧ゲート（要件 §9-4）。
+//! 秘密情報の保護（要件 §4-3-bis）。
 //! Windows では DPAPI（現在ユーザーに紐づく暗号化）で秘密フィールドを暗号化して保存する。
 //! config_json 内の秘密フィールドのみを `dpapi:<hex>` 形式に置換する。
+//!
+//! 閲覧時の本人確認は Windows Hello（`crate::winauth`）で行う。以前はアプリ独自の
+//! 「マスターパスワード」（argon2 ハッシュを DB に保存）で行っていたが、DPAPI 自体が
+//! 既に Windows ユーザーに紐づいた暗号化であり、その上にアプリ独自のパスワードを DB へ
+//! 持つ必然性が無いため廃止した（本モジュールはパスワードやそのハッシュを一切保持しない）。
 
 use anyhow::{anyhow, Result};
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
-use argon2::Argon2;
 use serde_json::Value;
 
-/// マスターパスワードを argon2 でハッシュ化する（DB へは元パスワードを保存しない）。
-pub fn hash_master_password(password: &str) -> Result<String> {
-    let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
-    let hash = Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
-        .map_err(|e| anyhow!("パスワードのハッシュ化に失敗: {e}"))?;
-    Ok(hash.to_string())
-}
-
-/// 入力パスワードが保存済みハッシュと一致するか検証する。
-pub fn verify_master_password(password: &str, stored_hash: &str) -> Result<bool> {
-    let parsed = PasswordHash::new(stored_hash).map_err(|e| anyhow!("保存済みハッシュの解析に失敗: {e}"))?;
-    Ok(Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok())
-}
-
 const MARKER: &str = "dpapi:";
+/// 保存済みトークン（`credentials` テーブル）への参照マーカー。`cred:<id>` の形式。
+/// ソースの config_json 内で秘密フィールドの値としてこの形式が入っていたら、実際の値は
+/// 直接持たず `credentials` テーブルを参照する（要件: トークンの再利用・一括置換）。
+pub const CRED_MARKER: &str = "cred:";
 /// 編集ダイアログでロック中に秘密フィールドの代わりに表示するプレースホルダー。
-/// 保存時、この値のままなら「変更なし」とみなし旧暗号化値を維持する。
+/// 保存時、この値のままなら「変更なし」とみなし旧暗号化値（または `cred:` 参照）を維持する。
 pub const SECRET_PLACEHOLDER: &str = "••••••••";
+
+/// 値が「既に保護済み」（DPAPI 暗号化済み、または保存済みトークンへの参照）かどうか。
+fn is_already_protected(s: &str) -> bool {
+    s.starts_with(MARKER) || s.starts_with(CRED_MARKER)
+}
 
 /// この種別が秘密フィールドを持つか（マスターパスワード必須化の判定に使用。要件 §9-4）。
 pub fn has_secret_fields(type_: &str) -> bool {
@@ -38,7 +35,7 @@ fn secret_keys(type_: &str) -> &'static [&'static str] {
         "notion" => &["token"],
         "airtable" => &["token"],
         "postgres" | "mysql" => &["password"],
-        "box_files" => &["client_secret"],
+        "box_files" => &["access_token"],
         // Graph 系（graph_entra_users 等）はすべて client_secret を持つ。
         t if t.starts_with("graph") => &["client_secret"],
         _ => &[],
@@ -47,7 +44,13 @@ fn secret_keys(type_: &str) -> &'static [&'static str] {
 
 /// 保存前：種別の秘密フィールドを暗号化する。
 pub fn protect_config(type_: &str, config_json: &str) -> Result<String> {
-    let keys = secret_keys(type_);
+    protect_json_keys(secret_keys(type_), config_json)
+}
+
+/// 保存前：指定したキー群だけを暗号化する（`credentials` テーブルの `fields_json` 等、
+/// 種別に紐づかない汎用の秘密フィールドにも使える版）。
+/// 既に `dpapi:`/`cred:` で保護済みの値はそのまま（二重処理しない）。
+pub fn protect_json_keys(keys: &[&str], config_json: &str) -> Result<String> {
     if keys.is_empty() {
         return Ok(config_json.to_string());
     }
@@ -56,7 +59,7 @@ pub fn protect_config(type_: &str, config_json: &str) -> Result<String> {
         for k in keys {
             let cur = obj.get(*k).and_then(|x| x.as_str()).map(|s| s.to_string());
             if let Some(s) = cur {
-                if !s.is_empty() && !s.starts_with(MARKER) {
+                if !s.is_empty() && !is_already_protected(&s) {
                     let enc = format!("{MARKER}{}", to_hex(&dpapi_protect(s.as_bytes())?));
                     obj.insert((*k).to_string(), Value::String(enc));
                 }
@@ -85,11 +88,13 @@ pub fn unprotect_config(config_json: &str) -> Result<String> {
 }
 
 /// マスターパスワード未解錠時、編集ダイアログに渡す用に秘密フィールドをプレースホルダーへ置換する。
+/// `dpapi:` 暗号化済みの値だけでなく、`cred:` 参照（保存済みトークンへのリンク）も対象にする
+/// （実値を持たない参照であっても、UI 上は同じくマスク表示に倒して一貫させる）。
 pub fn mask_config(config_json: &str) -> Result<String> {
     let mut v: Value = serde_json::from_str(config_json)?;
     if let Some(obj) = v.as_object_mut() {
         for (_, val) in obj.iter_mut() {
-            if val.as_str().map(|s| s.starts_with(MARKER)).unwrap_or(false) {
+            if val.as_str().map(is_already_protected).unwrap_or(false) {
                 *val = Value::String(SECRET_PLACEHOLDER.to_string());
             }
         }
@@ -98,9 +103,21 @@ pub fn mask_config(config_json: &str) -> Result<String> {
 }
 
 /// 編集保存時：新しい config でプレースホルダーのままの秘密フィールドは、
-/// 旧設定の暗号化済み値をそのまま引き継ぐ（＝ユーザーが触っていない = 変更なし扱い）。
-pub fn merge_preserving_placeholder(type_: &str, old_config_json: &str, new_config_json: &str) -> Result<String> {
-    let keys = secret_keys(type_);
+/// 旧設定の暗号化済み値（または `cred:` 参照）をそのまま引き継ぐ（＝ユーザーが触っていない = 変更なし扱い）。
+pub fn merge_preserving_placeholder(
+    type_: &str,
+    old_config_json: &str,
+    new_config_json: &str,
+) -> Result<String> {
+    merge_preserving_placeholder_keys(secret_keys(type_), old_config_json, new_config_json)
+}
+
+/// `merge_preserving_placeholder` の、種別に紐づかない汎用（キー群指定）版。
+pub fn merge_preserving_placeholder_keys(
+    keys: &[&str],
+    old_config_json: &str,
+    new_config_json: &str,
+) -> Result<String> {
     if keys.is_empty() {
         return Ok(new_config_json.to_string());
     }
@@ -143,7 +160,10 @@ fn dpapi_protect(plain: &[u8]) -> Result<Vec<u8>> {
     use windows::Win32::Foundation::{LocalFree, HLOCAL};
     use windows::Win32::Security::Cryptography::{CryptProtectData, CRYPT_INTEGER_BLOB};
     unsafe {
-        let input = CRYPT_INTEGER_BLOB { cbData: plain.len() as u32, pbData: plain.as_ptr() as *mut u8 };
+        let input = CRYPT_INTEGER_BLOB {
+            cbData: plain.len() as u32,
+            pbData: plain.as_ptr() as *mut u8,
+        };
         let mut out = CRYPT_INTEGER_BLOB::default();
         CryptProtectData(&input, PCWSTR::null(), None, None, None, 0, &mut out)
             .map_err(|e| anyhow!("CryptProtectData 失敗: {e}"))?;
@@ -158,10 +178,14 @@ fn dpapi_unprotect(cipher: &[u8]) -> Result<Vec<u8>> {
     use windows::Win32::Foundation::{LocalFree, HLOCAL};
     use windows::Win32::Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB};
     unsafe {
-        let input = CRYPT_INTEGER_BLOB { cbData: cipher.len() as u32, pbData: cipher.as_ptr() as *mut u8 };
+        let input = CRYPT_INTEGER_BLOB {
+            cbData: cipher.len() as u32,
+            pbData: cipher.as_ptr() as *mut u8,
+        };
         let mut out = CRYPT_INTEGER_BLOB::default();
-        CryptUnprotectData(&input, None, None, None, None, 0, &mut out)
-            .map_err(|e| anyhow!("CryptUnprotectData 失敗（別ユーザー/別マシンの暗号文の可能性）: {e}"))?;
+        CryptUnprotectData(&input, None, None, None, None, 0, &mut out).map_err(|e| {
+            anyhow!("CryptUnprotectData 失敗（別ユーザー/別マシンの暗号文の可能性）: {e}")
+        })?;
         let v = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
         let _ = LocalFree(Some(HLOCAL(out.pbData as *mut core::ffi::c_void)));
         Ok(v)
@@ -179,16 +203,8 @@ fn dpapi_unprotect(cipher: &[u8]) -> Result<Vec<u8>> {
 }
 
 #[cfg(test)]
-mod master_password_tests {
+mod mask_and_merge_tests {
     use super::*;
-
-    #[test]
-    fn hash_and_verify_roundtrip() {
-        let hash = hash_master_password("correct horse battery staple").unwrap();
-        assert!(hash.starts_with("$argon2"));
-        assert!(verify_master_password("correct horse battery staple", &hash).unwrap());
-        assert!(!verify_master_password("wrong password", &hash).unwrap());
-    }
 
     #[test]
     fn mask_replaces_only_secret_looking_values() {
@@ -201,8 +217,10 @@ mod master_password_tests {
 
     #[test]
     fn merge_preserves_old_secret_when_placeholder_untouched() {
-        let old = serde_json::json!({ "token": "dpapi:aabbcc", "database_id": "old_db" }).to_string();
-        let new = serde_json::json!({ "token": SECRET_PLACEHOLDER, "database_id": "new_db" }).to_string();
+        let old =
+            serde_json::json!({ "token": "dpapi:aabbcc", "database_id": "old_db" }).to_string();
+        let new =
+            serde_json::json!({ "token": SECRET_PLACEHOLDER, "database_id": "new_db" }).to_string();
         let merged = merge_preserving_placeholder("notion", &old, &new).unwrap();
         let v: Value = serde_json::from_str(&merged).unwrap();
         assert_eq!(v["token"], "dpapi:aabbcc"); // プレースホルダーのままなら旧暗号化値を維持
@@ -219,13 +237,31 @@ mod master_password_tests {
     }
 
     #[test]
-    fn same_password_hashes_differently_each_time() {
-        // ソルトが毎回ランダムなので、同じパスワードでもハッシュ文字列は一致しない。
-        let h1 = hash_master_password("same").unwrap();
-        let h2 = hash_master_password("same").unwrap();
-        assert_ne!(h1, h2);
-        assert!(verify_master_password("same", &h1).unwrap());
-        assert!(verify_master_password("same", &h2).unwrap());
+    fn mask_treats_cred_reference_same_as_dpapi() {
+        // 保存済みトークンへの参照（cred:<id>）も dpapi: と同様にマスク対象（要件: トークン管理画面）。
+        let cfg = serde_json::json!({ "token": "cred:7", "database_id": "abc" }).to_string();
+        let masked = mask_config(&cfg).unwrap();
+        let v: Value = serde_json::from_str(&masked).unwrap();
+        assert_eq!(v["token"], SECRET_PLACEHOLDER);
+        assert_eq!(v["database_id"], "abc");
+    }
+
+    #[test]
+    fn protect_json_keys_does_not_touch_cred_reference() {
+        // cred:<id> は既に「保護済み」扱いとし、二重に dpapi: で包まない（参照が壊れるため）。
+        let cfg = serde_json::json!({ "token": "cred:7" }).to_string();
+        let protected = protect_config("notion", &cfg).unwrap();
+        let v: Value = serde_json::from_str(&protected).unwrap();
+        assert_eq!(v["token"], "cred:7");
+    }
+
+    #[test]
+    fn merge_preserves_cred_reference_when_placeholder_untouched() {
+        let old = serde_json::json!({ "token": "cred:7" }).to_string();
+        let new = serde_json::json!({ "token": SECRET_PLACEHOLDER }).to_string();
+        let merged = merge_preserving_placeholder("notion", &old, &new).unwrap();
+        let v: Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(v["token"], "cred:7"); // リンクは維持される
     }
 }
 
@@ -235,7 +271,8 @@ mod tests {
 
     #[test]
     fn protect_then_unprotect_roundtrip() {
-        let cfg = serde_json::json!({ "token": "ntn_secret_value_123", "database_id": "abc" }).to_string();
+        let cfg = serde_json::json!({ "token": "ntn_secret_value_123", "database_id": "abc" })
+            .to_string();
         let prot = protect_config("notion", &cfg).unwrap();
         // 暗号化されて平文トークンが消え、マーカーが付く。
         assert!(prot.contains("dpapi:"));
