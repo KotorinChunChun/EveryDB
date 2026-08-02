@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::common::{make_record, CommonCfg};
+use super::limits::{self, static_field_names};
 use super::Connector;
 use crate::graph::GraphClient;
 use crate::model::Record;
@@ -68,6 +69,8 @@ pub(crate) fn mailto_open_ref(obj: &Value) -> Option<String> {
         .map(|m| format!("mailto:{m}"))
 }
 
+const DRIVE_ITEM_FIELD_NAMES: &[&str] = &["名前", "種類", "サイズ", "更新日時", "パス"];
+
 // EntraID ユーザー
 #[derive(Deserialize)]
 pub(crate) struct GraphUsersConnector {
@@ -99,6 +102,18 @@ impl Connector for GraphUsersConnector {
             .map(|u| graph_flat_record(u, &fields, "displayName", mailto_open_ref(u), &self.common))
             .collect())
     }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        static_field_names(&[
+            "displayName",
+            "userPrincipalName",
+            "mail",
+            "jobTitle",
+            "department",
+            "officeLocation",
+            "mobilePhone",
+        ])
+    }
 }
 
 // EntraID グループ
@@ -124,6 +139,10 @@ impl Connector for GraphGroupsConnector {
             .map(|g| graph_flat_record(g, &fields, "displayName", mailto_open_ref(g), &self.common))
             .collect())
     }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        static_field_names(&["displayName", "mail", "description", "visibility"])
+    }
 }
 
 // Teams チームリスト（Team 化されたグループ）
@@ -148,6 +167,10 @@ impl Connector for GraphTeamsConnector {
             .iter()
             .map(|t| graph_flat_record(t, &fields, "displayName", None, &self.common))
             .collect())
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        static_field_names(&["displayName", "mail", "description"])
     }
 }
 
@@ -186,19 +209,13 @@ pub(crate) struct GraphSharePointListConnector {
     #[serde(flatten)]
     common: CommonCfg,
 }
-impl Connector for GraphSharePointListConnector {
-    fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
-        let sid = graph_site_id(&client, &self.site_url)?;
-        // リスト名（内部名 or 表示名）から id を解決。
+
+impl GraphSharePointListConnector {
+    fn resolve_list_id(&self, client: &GraphClient, sid: &str) -> Result<String> {
         let lists = client.get(&format!(
             "https://graph.microsoft.com/v1.0/sites/{sid}/lists?$select=id,name,displayName"
         ))?;
-        let lid = lists
+        lists
             .get("value")
             .and_then(|v| v.as_array())
             .and_then(|arr| {
@@ -209,8 +226,20 @@ impl Connector for GraphSharePointListConnector {
                 })
             })
             .and_then(|l| l.get("id").and_then(|v| v.as_str()))
-            .ok_or_else(|| anyhow!("リストが見つかりません: {}", self.list_name))?
-            .to_string();
+            .map(String::from)
+            .ok_or_else(|| anyhow!("リストが見つかりません: {}", self.list_name))
+    }
+}
+
+impl Connector for GraphSharePointListConnector {
+    fn fetch(&self) -> Result<Vec<Record>> {
+        let client = GraphClient::new(
+            &self.auth.tenant_id,
+            &self.auth.client_id,
+            &self.auth.client_secret,
+        )?;
+        let sid = graph_site_id(&client, &self.site_url)?;
+        let lid = self.resolve_list_id(&client, &sid)?;
 
         let url = format!(
             "https://graph.microsoft.com/v1.0/sites/{sid}/lists/{lid}/items?expand=fields&$top=200"
@@ -236,9 +265,44 @@ impl Connector for GraphSharePointListConnector {
                     rec.label = Some(title.to_string());
                 }
             }
-            out.push(rec);
+            limits::push_record(&mut out, rec, "SharePoint リスト")?;
         }
         Ok(out)
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        let client = GraphClient::new(
+            &self.auth.tenant_id,
+            &self.auth.client_id,
+            &self.auth.client_secret,
+        )?;
+        let sid = graph_site_id(&client, &self.site_url)?;
+        let lid = self.resolve_list_id(&client, &sid)?;
+        let cols = client.get(&format!(
+            "https://graph.microsoft.com/v1.0/sites/{sid}/lists/{lid}/columns?$select=name,displayName"
+        ))?;
+        Ok(cols
+            .get("value")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|c| {
+                        let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        if sp_field_is_display(name) {
+                            Some(
+                                c.get("displayName")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.is_empty())
+                                    .unwrap_or(name)
+                                    .to_string(),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 }
 
@@ -298,6 +362,10 @@ impl Connector for GraphSharePointLibraryConnector {
         )?;
         Ok(out)
     }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        static_field_names(DRIVE_ITEM_FIELD_NAMES)
+    }
 }
 
 /// ドライブ配下を再帰的に走査してファイル/フォルダをレコード化する。
@@ -354,7 +422,7 @@ fn walk_drive(
         if common.label_column.is_none() {
             rec.label = Some(name);
         }
-        out.push(rec);
+        limits::push_record(out, rec, "Microsoft Graph ドライブ")?;
 
         if is_folder {
             if let Some(id) = c.get("id").and_then(|v| v.as_str()) {
@@ -395,6 +463,17 @@ impl Connector for GraphDevicesConnector {
             .map(|d| graph_flat_record(d, &fields, "displayName", None, &self.common))
             .collect())
     }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        static_field_names(&[
+            "displayName",
+            "operatingSystem",
+            "operatingSystemVersion",
+            "isCompliant",
+            "trustType",
+            "approximateLastSignInDateTime",
+        ])
+    }
 }
 
 // ---- Intune デバイス一覧 ----
@@ -426,6 +505,17 @@ impl Connector for GraphIntuneDevicesConnector {
             .iter()
             .map(|d| graph_flat_record(d, &fields, "deviceName", None, &self.common))
             .collect())
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        static_field_names(&[
+            "deviceName",
+            "operatingSystem",
+            "osVersion",
+            "complianceState",
+            "userPrincipalName",
+            "lastSyncDateTime",
+        ])
     }
 }
 
@@ -487,9 +577,13 @@ impl Connector for GraphLicensesConnector {
             if self.common.label_column.is_none() {
                 rec.label = Some(part_number);
             }
-            out.push(rec);
+            limits::push_record(&mut out, rec, "Microsoft 365 ライセンス")?;
         }
         Ok(out)
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        static_field_names(&["ライセンス名", "SKU ID", "総数", "消費数", "残数", "状態"])
     }
 }
 
@@ -572,9 +666,13 @@ impl Connector for GraphCalendarConnector {
             if self.common.open_ref_column.is_none() {
                 rec.open_ref = web_link;
             }
-            out.push(rec);
+            limits::push_record(&mut out, rec, "Outlook 予定表")?;
         }
         Ok(out)
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        static_field_names(&["件名", "開始", "終了", "場所", "主催者", "参加者"])
     }
 }
 
@@ -605,6 +703,10 @@ impl Connector for GraphOneDriveConnector {
             &mut out,
         )?;
         Ok(out)
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        static_field_names(DRIVE_ITEM_FIELD_NAMES)
     }
 }
 
@@ -713,10 +815,21 @@ impl Connector for GraphPlannerConnector {
                 if self.common.label_column.is_none() {
                     rec.label = Some(title);
                 }
-                out.push(rec);
+                limits::push_record(&mut out, rec, "Planner")?;
             }
         }
         Ok(out)
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        static_field_names(&[
+            "プラン",
+            "タスク名",
+            "Bucket",
+            "期限",
+            "進行状況",
+            "担当者数",
+        ])
     }
 }
 

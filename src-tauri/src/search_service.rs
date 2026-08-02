@@ -5,10 +5,7 @@
 use crate::app_state::AppState;
 use crate::db;
 use crate::model::{SearchPreset, SearchResponse};
-
-fn err_to_string<E: std::fmt::Display>(error: E) -> String {
-    error.to_string()
-}
+use crate::service_error::{lock_db, ServiceError, ServiceResult};
 
 pub fn search(
     state: &AppState,
@@ -16,10 +13,11 @@ pub fn search(
     source_ids: &[i64],
     seq: i64,
     limit: Option<i64>,
-) -> Result<SearchResponse, String> {
-    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+) -> ServiceResult<SearchResponse> {
+    let conn = lock_db(state)?;
     let limit = limit.unwrap_or(db::DEFAULT_ROW_LIMIT);
-    let (rows, truncated) = db::search(&conn, query, source_ids, limit).map_err(err_to_string)?;
+    let (rows, truncated) = db::search(&conn, query, source_ids, limit)
+        .map_err(|e| ServiceError::external("検索に失敗しました", e))?;
     Ok(SearchResponse {
         seq,
         rows,
@@ -27,14 +25,16 @@ pub fn search(
     })
 }
 
-pub fn add_history(state: &AppState, query: &str) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    db::add_search_history(&conn, query).map_err(err_to_string)
+pub fn add_history(state: &AppState, query: &str) -> ServiceResult<()> {
+    let conn = lock_db(state)?;
+    db::add_search_history(&conn, query)
+        .map_err(|e| ServiceError::external("検索履歴の保存に失敗しました", e))
 }
 
-pub fn list_history(state: &AppState) -> Result<Vec<String>, String> {
-    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    db::list_search_history(&conn, 15).map_err(err_to_string)
+pub fn list_history(state: &AppState) -> ServiceResult<Vec<String>> {
+    let conn = lock_db(state)?;
+    db::list_search_history(&conn, 15)
+        .map_err(|e| ServiceError::external("検索履歴の取得に失敗しました", e))
 }
 
 pub fn save_preset(
@@ -42,19 +42,22 @@ pub fn save_preset(
     name: &str,
     query: &str,
     source_ids: &[i64],
-) -> Result<i64, String> {
-    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    db::save_search_preset(&conn, name, query, source_ids).map_err(err_to_string)
+) -> ServiceResult<i64> {
+    let conn = lock_db(state)?;
+    db::save_search_preset(&conn, name, query, source_ids)
+        .map_err(|e| ServiceError::external("お気に入りの保存に失敗しました", e))
 }
 
-pub fn list_presets(state: &AppState) -> Result<Vec<SearchPreset>, String> {
-    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    db::list_search_presets(&conn).map_err(err_to_string)
+pub fn list_presets(state: &AppState) -> ServiceResult<Vec<SearchPreset>> {
+    let conn = lock_db(state)?;
+    db::list_search_presets(&conn)
+        .map_err(|e| ServiceError::external("お気に入り一覧の取得に失敗しました", e))
 }
 
-pub fn delete_preset(state: &AppState, id: i64) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    db::delete_search_preset(&conn, id).map_err(err_to_string)
+pub fn delete_preset(state: &AppState, id: i64) -> ServiceResult<()> {
+    let conn = lock_db(state)?;
+    db::delete_search_preset(&conn, id)
+        .map_err(|e| ServiceError::external("お気に入りの削除に失敗しました", e))
 }
 
 #[cfg(test)]

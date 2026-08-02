@@ -2,37 +2,60 @@ pub mod app_state;
 pub mod box_oauth;
 pub mod browse;
 pub mod browse_commands;
+pub mod browse_service;
 pub mod connectors;
 pub mod credential_commands;
+#[cfg(test)]
+mod credential_regression;
+pub mod credential_service;
 pub mod credentials;
 pub mod db;
 pub mod export_commands;
+pub mod export_service;
 pub mod graph;
+#[cfg(test)]
+mod input_boundary_audit;
+pub mod internal_log;
+pub mod lifecycle;
 pub mod model;
 pub mod opener;
+#[cfg(test)]
+mod perf_baselines;
 pub mod refresh;
+pub mod refresh_service;
 pub mod search_commands;
 pub mod search_service;
 pub mod secret;
+#[cfg(test)]
+mod security_audit;
+pub mod service_error;
 pub mod settings;
+pub mod settings_service;
 pub mod source_commands;
 pub mod source_service;
 pub mod winauth;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{Emitter, Manager, WindowEvent};
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 use app_state::AppState;
+use lifecycle::shutdown_background_tasks;
 
 /// トレイの「表示」・グローバルホットキーで共通のウィンドウ表示処理。
 /// 表示後に検索ボックスへフォーカスさせるイベントを送る（要件 §9-5: Everything ライク挙動）。
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.set_focus();
-        let _ = app.emit("focus-search", ());
+        if let Err(error) = w.show() {
+            internal_log::warn("window", format!("show failed: {error}"));
+        }
+        if let Err(error) = w.set_focus() {
+            internal_log::warn("window", format!("focus failed: {error}"));
+        }
+        if let Err(error) = app.emit("focus-search", ()) {
+            internal_log::warn("window", format!("focus-search emit failed: {error}"));
+        }
     }
 }
 
@@ -69,8 +92,14 @@ pub fn run() {
             let saved_hotkey: String =
                 db::get_meta(&conn, "ui_hotkey")?.unwrap_or_else(|| "Alt+Ctrl+D".to_string());
             app.manage(AppState::new(conn));
+            let scheduler_shutdown = {
+                let state: tauri::State<AppState> = app.state();
+                state.scheduler_shutdown.clone()
+            };
             if let Some(w) = app.get_webview_window("main") {
-                let _ = w.set_zoom(saved_zoom);
+                if let Err(error) = w.set_zoom(saved_zoom) {
+                    internal_log::warn("window", format!("restore zoom failed: {error}"));
+                }
             }
 
             // トレイ常駐（表示 / 全ソース更新 / 終了）。
@@ -91,25 +120,37 @@ pub fn run() {
                 .build(app)?;
 
             // グローバルホットキーでウィンドウ表示（要件 §9-5 / Everything ライク）。
-            let _ = app.global_shortcut().register(saved_hotkey.as_str());
+            if let Err(error) = app.global_shortcut().register(saved_hotkey.as_str()) {
+                internal_log::warn(
+                    "hotkey",
+                    format!("startup register failed for '{saved_hotkey}': {error}"),
+                );
+            }
 
             // "--minimized"（自動起動経由）の場合はウィンドウを出さずトレイ常駐のまま待機する。
             let launched_minimized = std::env::args().any(|a| a == "--minimized");
             if launched_minimized {
                 if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.hide();
+                    if let Err(error) = w.hide() {
+                        internal_log::warn("window", format!("minimized hide failed: {error}"));
+                    }
                 }
             }
 
             // 定期自動更新タイマーを起動。
-            refresh::spawn_scheduler(app.handle().clone());
+            refresh::spawn_scheduler(app.handle().clone(), scheduler_shutdown);
             Ok(())
         })
-        // ウィンドウの×は終了せずトレイに格納する。
+        // ウィンドウの×は終了せずトレイに格納する。OAuth 実行中なら取消する。
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                let _ = window.hide();
-                api.prevent_close();
+                if window.label() == "main" {
+                    shutdown_background_tasks(window.app_handle());
+                    if let Err(error) = window.hide() {
+                        internal_log::warn("window", format!("hide failed: {error}"));
+                    }
+                    api.prevent_close();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -174,6 +215,11 @@ pub fn run() {
             settings::list_parent_labels,
             settings::set_parent_label,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let RunEvent::Exit = event {
+                shutdown_background_tasks(app);
+            }
+        });
 }

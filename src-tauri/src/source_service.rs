@@ -1,51 +1,44 @@
 //! データソース操作の業務処理。Tauri command 型へ依存しない。
 
 use crate::app_state::AppState;
-
 use crate::model::SourceInfo;
-use crate::refresh::{optimize_fts, reload_many_for_state, reload_one_for_state, ReloadSummary};
+use crate::refresh_service::{reload_many_for_state, reload_one_source, ReloadSummary};
+use crate::service_error::{lock_db, ServiceError, ServiceResult};
 use crate::{db, secret};
 
-fn err_to_string<E: std::fmt::Display>(e: E) -> String {
-    e.to_string()
+pub fn list_sources(state: &AppState) -> ServiceResult<Vec<SourceInfo>> {
+    let conn = lock_db(state)?;
+    db::list_sources(&conn)
+        .map_err(|e| ServiceError::external("データソース一覧の取得に失敗しました", e))
 }
 
-pub fn list_sources(state: &AppState) -> Result<Vec<SourceInfo>, String> {
-    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    db::list_sources(&conn).map_err(err_to_string)
-}
-
-// 初回取得の外部I/Oは、呼び出し側の非同期Tauri commandから実行する。
 pub fn add_source(
     state: &AppState,
     type_: String,
     name: String,
     config_json: String,
-) -> Result<i64, String> {
+) -> ServiceResult<i64> {
     let id = {
-        let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-        // 秘密フィールド（Notion トークン等）は DPAPI で暗号化してから保存する（要件 §4-3-bis）。
-        let config_json = secret::protect_config(&type_, &config_json).map_err(err_to_string)?;
-        db::insert_source(&conn, &type_, &name, &config_json).map_err(err_to_string)?
+        let conn = lock_db(state)?;
+        let config_json = secret::protect_config(&type_, &config_json)
+            .map_err(|e| ServiceError::external("接続情報の保存に失敗しました", e))?;
+        db::insert_source(&conn, &type_, &name, &config_json)
+            .map_err(|e| ServiceError::external("データソースの追加に失敗しました", e))?
     };
-    // 追加直後に一度取得しておく。外部I/O中はDBロックを保持しない。
-    let _ = reload_one_for_state(state, id);
-    optimize_fts(state);
+    let summary = reload_one_source(state, id);
+    summary.log_failures();
     Ok(id)
 }
 
-/// 新規テーブルの設定に、兄弟ソースの接続情報（保存されている暗号化済みの値）を補う。
-/// 空・プレースホルダーのキーだけが対象。`dpapi:` 付きの値はそのままコピーされ、
-/// `protect_config` が二重に暗号化しないため復号可能な状態を保てる。
 fn fill_shared_from_sibling(
     config_json: &str,
     sibling_config_json: &str,
     shared_keys: &[String],
-) -> Result<String, String> {
-    let sibling: serde_json::Value =
-        serde_json::from_str(sibling_config_json).map_err(err_to_string)?;
-    let mut cfg: serde_json::Map<String, serde_json::Value> =
-        serde_json::from_str(config_json).map_err(err_to_string)?;
+) -> ServiceResult<String> {
+    let sibling: serde_json::Value = serde_json::from_str(sibling_config_json)
+        .map_err(|e| ServiceError::external("兄弟ソースの設定 JSON が不正です", e))?;
+    let mut cfg: serde_json::Map<String, serde_json::Value> = serde_json::from_str(config_json)
+        .map_err(|e| ServiceError::external("設定 JSON が不正です", e))?;
     for k in shared_keys {
         let cur = cfg.get(k).and_then(|v| v.as_str()).unwrap_or_default();
         if cur.is_empty() || cur == secret::SECRET_PLACEHOLDER {
@@ -54,15 +47,10 @@ fn fill_shared_from_sibling(
             }
         }
     }
-    serde_json::to_string(&cfg).map_err(err_to_string)
+    serde_json::to_string(&cfg)
+        .map_err(|e| ServiceError::internal("設定 JSON の合成に失敗しました", e))
 }
 
-/// 既存の兄弟ソースから接続情報を引き継いで、同じ接続先配下にテーブルを追加する。
-/// 接続設定ダイアログのテーブル一覧から追加するときに使う。
-///
-/// UI 側の秘密フィールドは未確認時マスク（`••••••••`）されているため、その値で追加すると
-/// 壊れたソースができてしまう。ここでは**暗号化されたままの値をコピー**することで、
-/// UI が平文の秘密情報を扱わずに済むようにしている。
 pub fn add_source_from_sibling(
     state: &AppState,
     sibling_id: i64,
@@ -70,45 +58,46 @@ pub fn add_source_from_sibling(
     name: String,
     config_json: String,
     shared_keys: Vec<String>,
-) -> Result<i64, String> {
+) -> ServiceResult<i64> {
     let id = {
-        let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-        let (_, sibling_json) = db::get_source_config(&conn, sibling_id).map_err(err_to_string)?;
+        let conn = lock_db(state)?;
+        let (_, sibling_json) = db::get_source_config(&conn, sibling_id)
+            .map_err(|e| ServiceError::external("兄弟ソースの取得に失敗しました", e))?;
         let merged = fill_shared_from_sibling(&config_json, &sibling_json, &shared_keys)?;
-        // 既に `dpapi:` 付きの値は protect_config が二重暗号化しないので、そのまま渡してよい。
-        let protected = secret::protect_config(&type_, &merged).map_err(err_to_string)?;
-        db::insert_source(&conn, &type_, &name, &protected).map_err(err_to_string)?
+        let protected = secret::protect_config(&type_, &merged)
+            .map_err(|e| ServiceError::external("接続情報の保存に失敗しました", e))?;
+        db::insert_source(&conn, &type_, &name, &protected)
+            .map_err(|e| ServiceError::external("データソースの追加に失敗しました", e))?
     };
-    let _ = reload_one_for_state(state, id);
-    optimize_fts(state);
+    let summary = reload_one_source(state, id);
+    summary.log_failures();
     Ok(id)
 }
 
-pub fn delete_source(state: &AppState, id: i64) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    db::delete_source(&conn, id).map_err(err_to_string)
+pub fn delete_source(state: &AppState, id: i64) -> ServiceResult<()> {
+    let conn = lock_db(state)?;
+    db::delete_source(&conn, id)
+        .map_err(|e| ServiceError::external("データソースの削除に失敗しました", e))
 }
 
-/// 閲覧・編集ダイアログ用の詳細取得。マスターパスワードが未解錠なら秘密フィールドは
-/// プレースホルダーで返す（要件 §9-1 / §9-4）。
-pub fn get_source_detail(state: &AppState, id: i64) -> Result<serde_json::Value, String> {
-    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    let (type_, name, refresh_interval, config_json) =
-        db::get_source_full(&conn, id).map_err(err_to_string)?;
+pub fn get_source_detail(state: &AppState, id: i64) -> ServiceResult<serde_json::Value> {
+    let conn = lock_db(state)?;
+    let (type_, name, refresh_interval, config_json) = db::get_source_full(&conn, id)
+        .map_err(|e| ServiceError::external("データソース詳細の取得に失敗しました", e))?;
     let unlocked = state.is_unlocked();
     let visible = if unlocked {
-        secret::unprotect_config(&config_json).map_err(err_to_string)?
+        secret::unprotect_config(&config_json)
+            .map_err(|e| ServiceError::external("接続情報の復号に失敗しました", e))?
     } else {
-        secret::mask_config(&config_json).map_err(err_to_string)?
+        secret::mask_config(&config_json)
+            .map_err(|e| ServiceError::external("接続情報のマスクに失敗しました", e))?
     };
-    // 保存済みトークンへの参照（cred:<id>）フィールドは、解錠中でも実値を出さず常にマスクする
-    // （実体は credentials 側にあり、ソース編集画面での「解錠して編集」は意味を持たないため。
-    // 誤って別の値を書き込むとリンクが意図せず外れてしまう。値を変えたい場合はトークン管理画面で）。
     let visible = crate::credentials::remask_cred_refs(&conn, &config_json, &visible)
-        .map_err(err_to_string)?;
-    let linked_credentials =
-        crate::credentials::cred_ref_labels(&conn, &config_json).map_err(err_to_string)?;
-    let config: serde_json::Value = serde_json::from_str(&visible).map_err(err_to_string)?;
+        .map_err(|e| ServiceError::external("リンク済みトークン情報の取得に失敗しました", e))?;
+    let linked_credentials = crate::credentials::cred_ref_labels(&conn, &config_json)
+        .map_err(|e| ServiceError::external("リンク済みトークン一覧の取得に失敗しました", e))?;
+    let config: serde_json::Value = serde_json::from_str(&visible)
+        .map_err(|e| ServiceError::external("設定 JSON の解析に失敗しました", e))?;
     Ok(serde_json::json!({
         "type_": type_, "name": name, "refresh_interval": refresh_interval,
         "config": config, "unlocked": unlocked, "has_secret": secret::has_secret_fields(&type_),
@@ -116,74 +105,67 @@ pub fn get_source_detail(state: &AppState, id: i64) -> Result<serde_json::Value,
     }))
 }
 
-/// ソースの設定を編集保存する（要件 §9-1）。プレースホルダーのままの秘密フィールドは
-/// 旧暗号化値を維持する。保存後は再取得して最新状態を反映する。
 pub fn update_source(
     state: &AppState,
     id: i64,
     name: String,
     config_json: String,
-) -> Result<(), String> {
+) -> ServiceResult<()> {
     {
-        let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-        let (type_, old_config_json) = db::get_source_config(&conn, id).map_err(err_to_string)?;
+        let conn = lock_db(state)?;
+        let (type_, old_config_json) = db::get_source_config(&conn, id)
+            .map_err(|e| ServiceError::external("データソース設定の取得に失敗しました", e))?;
         let merged = secret::merge_preserving_placeholder(&type_, &old_config_json, &config_json)
-            .map_err(err_to_string)?;
-        let protected = secret::protect_config(&type_, &merged).map_err(err_to_string)?;
-        db::update_source(&conn, id, &name, &protected).map_err(err_to_string)?;
+            .map_err(|e| ServiceError::external("接続情報の更新に失敗しました", e))?;
+        let protected = secret::protect_config(&type_, &merged)
+            .map_err(|e| ServiceError::external("接続情報の保存に失敗しました", e))?;
+        db::update_source(&conn, id, &name, &protected)
+            .map_err(|e| ServiceError::external("データソースの更新に失敗しました", e))?;
     }
-    let _ = reload_one_for_state(state, id);
-    optimize_fts(state);
+    let summary = reload_one_source(state, id);
+    summary.log_failures();
     Ok(())
 }
 
-/// ソースを複製する（要件 §9-1）。「一部だけ変えた別ソース」を作る下準備として使う。
-pub fn duplicate_source(state: &AppState, id: i64, new_name: String) -> Result<i64, String> {
-    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    db::duplicate_source(&conn, id, &new_name).map_err(err_to_string)
+pub fn duplicate_source(state: &AppState, id: i64, new_name: String) -> ServiceResult<i64> {
+    let conn = lock_db(state)?;
+    db::duplicate_source(&conn, id, &new_name)
+        .map_err(|e| ServiceError::external("データソースの複製に失敗しました", e))
 }
 
-/// サイドバーのドラッグ並び替えを保存する（要件 §9-1）。
-pub fn reorder_sources(state: &AppState, ordered_ids: Vec<i64>) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    db::reorder_sources(&conn, &ordered_ids).map_err(err_to_string)
+pub fn reorder_sources(state: &AppState, ordered_ids: Vec<i64>) -> ServiceResult<()> {
+    let conn = lock_db(state)?;
+    db::reorder_sources(&conn, &ordered_ids)
+        .map_err(|e| ServiceError::external("並び順の保存に失敗しました", e))
 }
 
-/// 追加ダイアログ用: まだ保存していない接続情報で試し取得し、フィールド名一覧を返す（要件 §9-3）。
-/// 秘密フィールドに保存済みトークンへの参照（cred:<id>）が入っていることがあるため解決してから使う。
 pub fn preview_source_fields(
     state: &AppState,
     type_: String,
     config_json: String,
-) -> Result<Vec<String>, String> {
-    // credential参照の解決だけをロック内で行い、接続先へのI/O中はDBを解放する。
+) -> ServiceResult<Vec<String>> {
     let resolved = {
-        let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-        crate::credentials::resolve_credentials(&conn, &config_json).map_err(err_to_string)?
+        let conn = lock_db(state)?;
+        crate::credentials::resolve_credentials(&conn, &config_json)
+            .map_err(|e| ServiceError::external("接続情報の解決に失敗しました", e))?
     };
-    crate::connectors::raw_field_names(&type_, &resolved).map_err(err_to_string)
+    crate::connectors::raw_field_names(&type_, &resolved)
+        .map_err(|e| ServiceError::external("フィールド一覧の取得に失敗しました", e))
 }
 
 #[derive(serde::Serialize)]
 pub struct FieldPreview {
     pub names: Vec<String>,
-    /// true の場合、ライブ接続に失敗したためキャッシュ済みレコードから復元した名前一覧
-    /// （表示名エイリアス適用後の名前になる点に注意）。
     pub from_cache: bool,
 }
 
-/// 編集ダイアログ用: 既存ソースの保存済み設定（DPAPI 暗号化のまま）で試し取得し、
-/// フィールド名一覧を返す。マスターパスワードの解錠状態に関わらず動作する
-/// （DPAPI 復号はアプリ内部利用であり、UI 表示ゲートとは独立のため）。
-/// ライブ接続に失敗した場合（ネットワーク断・ファイル移動・認証切れ等）は、既にキャッシュ
-/// 済みのレコードから列名を復元して返す（オフラインでも表示・検索設定を編集できるように）。
-pub fn preview_source_fields_by_id(state: &AppState, id: i64) -> Result<FieldPreview, String> {
-    // 保存済み設定とcredential参照をsnapshotし、ライブ接続はロック外で実行する。
+pub fn preview_source_fields_by_id(state: &AppState, id: i64) -> ServiceResult<FieldPreview> {
     let (type_, config_json) = {
-        let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-        let (type_, config_json) = db::get_source_config(&conn, id).map_err(err_to_string)?;
-        let resolved =
-            crate::credentials::resolve_credentials(&conn, &config_json).map_err(err_to_string)?;
+        let conn = lock_db(state)?;
+        let (type_, config_json) = db::get_source_config(&conn, id)
+            .map_err(|e| ServiceError::external("データソース設定の取得に失敗しました", e))?;
+        let resolved = crate::credentials::resolve_credentials(&conn, &config_json)
+            .map_err(|e| ServiceError::external("接続情報の解決に失敗しました", e))?;
         (type_, resolved)
     };
     match crate::connectors::raw_field_names(&type_, &config_json) {
@@ -192,10 +174,14 @@ pub fn preview_source_fields_by_id(state: &AppState, id: i64) -> Result<FieldPre
             from_cache: false,
         }),
         Err(live_err) => {
-            let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-            let cached = db::cached_field_names(&conn, id).map_err(err_to_string)?;
+            let conn = lock_db(state)?;
+            let cached = db::cached_field_names(&conn, id)
+                .map_err(|e| ServiceError::external("キャッシュ列名の取得に失敗しました", e))?;
             if cached.is_empty() {
-                Err(err_to_string(live_err))
+                Err(ServiceError::external(
+                    "フィールド一覧の取得に失敗しました",
+                    live_err,
+                ))
             } else {
                 Ok(FieldPreview {
                     names: cached,
@@ -206,46 +192,43 @@ pub fn preview_source_fields_by_id(state: &AppState, id: i64) -> Result<FieldPre
     }
 }
 
-pub fn set_refresh_interval(state: &AppState, id: i64, seconds: i64) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|_| "lock poisoned")?;
-    db::set_refresh_interval(&conn, id, seconds).map_err(err_to_string)
+pub fn set_refresh_interval(state: &AppState, id: i64, seconds: i64) -> ServiceResult<()> {
+    let conn = lock_db(state)?;
+    db::set_refresh_interval(&conn, id, seconds)
+        .map_err(|e| ServiceError::external("更新間隔の保存に失敗しました", e))
 }
 
-/// 指定ソースを再取得し、個別成功・失敗・重複取消を件数とエラー付きで返す。
-/// source_idsが空なら全ソースを対象にする。
-pub fn reload_sources(state: &AppState, source_ids: Vec<i64>) -> Result<ReloadSummary, String> {
+pub fn reload_sources(state: &AppState, source_ids: Vec<i64>) -> ServiceResult<ReloadSummary> {
     let ids = if source_ids.is_empty() {
-        let conn = state.db.lock().map_err(|_| "lock poisoned")?;
+        let conn = lock_db(state)?;
         db::list_sources(&conn)
-            .map_err(err_to_string)?
+            .map_err(|e| ServiceError::external("データソース一覧の取得に失敗しました", e))?
             .into_iter()
             .map(|source| source.id)
             .collect()
     } else {
         source_ids
     };
-    Ok(reload_many_for_state(state, &ids))
+    let summary = reload_many_for_state(state, &ids);
+    summary.log_failures();
+    Ok(summary)
 }
 
 #[cfg(test)]
 mod source_service_tests {
     use super::fill_shared_from_sibling;
     use crate::secret::SECRET_PLACEHOLDER;
+
     #[test]
     fn fill_shared_copies_encrypted_secret_without_decrypting() {
         let sibling = r#"{"token":"dpapi:deadbeef","database_id":"db1"}"#;
         let new_cfg = format!(r#"{{"database_id":"db2","token":"{SECRET_PLACEHOLDER}"}}"#);
         let out = fill_shared_from_sibling(&new_cfg, sibling, &["token".to_string()]).unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-        // 暗号化済みのまま引き継ぐ（UI 側は平文を一切扱わない）
         assert_eq!(v["token"], "dpapi:deadbeef");
-        // 一覧で選んだ側の値は上書きされない
         assert_eq!(v["database_id"], "db2");
     }
 
-    /// v0.0.3 で直したバグの再現・回帰テスト。
-    /// 「保存済みトークンを DPAPI で暗号化 → マスク済みの値で一覧取得」という接続設定ダイアログと
-    /// 同じ経路をたどり、実際に Notion からデータベース一覧が取れることを確認する。
     #[test]
     fn fill_shared_keeps_explicitly_entered_value() {
         let sibling = r#"{"token":"dpapi:deadbeef"}"#;

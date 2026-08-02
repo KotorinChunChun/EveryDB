@@ -1,37 +1,24 @@
-use anyhow::{anyhow, Result};
+#[cfg(test)]
+use crate::model::Record;
+use anyhow::Result;
 #[cfg(test)]
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::model::Record;
-
 mod cloud;
 mod common;
 mod database;
+mod factory;
 mod graph_data;
+pub(crate) mod limits;
 mod local;
 mod public_data;
 
-use cloud::{
-    AirtableConnector, BoxConnector, GoogleSheetsConnector, IcalConnector, NotionConnector,
-};
-use database::{MysqlConnector, PostgresConnector};
+pub use factory::{build_connector, is_supported_source_type, Connector, SUPPORTED_SOURCE_TYPES};
+pub use limits::{DB_FETCH_LIMIT, MAX_FETCH_RECORDS};
+
 pub(crate) use graph_data::{json_scalar_to_string, urlencoding_light};
-use graph_data::{
-    GraphCalendarConnector, GraphDevicesConnector, GraphGroupsConnector,
-    GraphIntuneDevicesConnector, GraphLicensesConnector, GraphOneDriveConnector,
-    GraphPlannerConnector, GraphSharePointLibraryConnector, GraphSharePointListConnector,
-    GraphTeamsConnector, GraphUsersConnector,
-};
 pub(crate) use local::{cell_to_string, col_to_letters};
-use local::{
-    AccessConnector, BrowserBookmarksConnector, BrowserDownloadsConnector, BrowserHistoryConnector,
-    CsvConnector, ExcelRangeConnector, ExcelSheetsConnector, ExcelTableConnector, FolderConnector,
-    ImeCfg, ImeConnector, ImeFlavor, SqliteConnector,
-};
-use public_data::{
-    CorporateNumberConnector, PokeApiConnector, PostalCodeConnector, WebPageConnector,
-};
 
 #[cfg(test)]
 use cloud::{
@@ -50,25 +37,6 @@ pub(crate) fn default_true() -> bool {
     true
 }
 
-/// データソース取得の共通拡張点（要件 §5-3）。
-pub trait Connector {
-    fn fetch(&self) -> Result<Vec<Record>>;
-    /// レコード全件を取得せず、フィールド（列）名の一覧のみを高速に取得する。
-    fn field_names(&self) -> Result<Vec<String>> {
-        let records = self.fetch()?;
-        let mut seen = std::collections::HashSet::new();
-        let mut names = Vec::new();
-        for r in &records {
-            for k in r.fields.keys() {
-                if seen.insert(k.clone()) {
-                    names.push(k.clone());
-                }
-            }
-        }
-        Ok(names)
-    }
-}
-
 /// パス文字列の両端のダブルクォートを除去する（エクスプローラの「パスのコピー」対策）。
 pub fn strip_path_quotes(s: &str) -> String {
     let t = s.trim();
@@ -76,136 +44,6 @@ pub fn strip_path_quotes(s: &str) -> String {
         t[1..t.len() - 1].trim().to_string()
     } else {
         t.to_string()
-    }
-}
-
-/// config_json 内のパス系フィールド値の両端クォートを正規化する。
-fn normalize_path_in_config(config_json: &str) -> Result<String> {
-    let mut v: Value = serde_json::from_str(config_json)?;
-    let mut changed = false;
-    if let Some(obj) = v.as_object_mut() {
-        for key in ["path", "key_path"] {
-            if let Some(p) = obj.get(key).and_then(|x| x.as_str()) {
-                let cleaned = strip_path_quotes(p);
-                obj.insert(key.to_string(), Value::String(cleaned));
-                changed = true;
-            }
-        }
-    }
-    if changed {
-        Ok(serde_json::to_string(&v)?)
-    } else {
-        Ok(config_json.to_string())
-    }
-}
-
-/// Rust factoryが受け入れる安定したデータソースID。フロントのmetadataと対応を保つ。
-pub const SUPPORTED_SOURCE_TYPES: &[&str] = &[
-    "csv",
-    "sqlite",
-    "accdb",
-    "excel_table",
-    "excel_range",
-    "excel_cell",
-    "excel_sheets",
-    "folder",
-    "ime_msime",
-    "ime_google",
-    "notion",
-    "graph_entra_users",
-    "graph_entra_groups",
-    "graph_teams",
-    "graph_sharepoint_list",
-    "graph_sharepoint_library",
-    "graph_entra_devices",
-    "graph_intune_devices",
-    "graph_licenses",
-    "graph_calendar",
-    "graph_onedrive",
-    "graph_planner",
-    "browser_history",
-    "browser_bookmarks",
-    "browser_downloads",
-    "google_sheets",
-    "ical_calendar",
-    "airtable",
-    "postgres",
-    "mysql",
-    "box_files",
-    "postal_code",
-    "corporate_number",
-    "web_page",
-    "pokeapi",
-];
-
-pub fn is_supported_source_type(type_: &str) -> bool {
-    SUPPORTED_SOURCE_TYPES.contains(&type_)
-}
-/// 種別 + config_json からコネクタを生成するファクトリ。
-pub fn build_connector(type_: &str, config_json: &str) -> Result<Box<dyn Connector>> {
-    use serde_json::from_str;
-    if !is_supported_source_type(type_) {
-        return Err(anyhow!("未対応のデータソース種別: {type_}"));
-    }
-    // 保存時に暗号化された秘密フィールドをここで復号する（要件 §4-3-bis）。
-    let config_json = crate::secret::unprotect_config(config_json)?;
-    // ファイルパスの両端クォートを除去する（要件: クォート付きパス対応）。
-    let config_json = normalize_path_in_config(&config_json)?;
-    let config_json = config_json.as_str();
-    match type_ {
-        "csv" => Ok(Box::new(from_str::<CsvConnector>(config_json)?)),
-        "sqlite" => Ok(Box::new(from_str::<SqliteConnector>(config_json)?)),
-        "excel_table" => Ok(Box::new(from_str::<ExcelTableConnector>(config_json)?)),
-        "excel_range" | "excel_cell" => Ok(Box::new(from_str::<ExcelRangeConnector>(config_json)?)),
-        "excel_sheets" => Ok(Box::new(from_str::<ExcelSheetsConnector>(config_json)?)),
-        "folder" => Ok(Box::new(from_str::<FolderConnector>(config_json)?)),
-        "ime_msime" => Ok(Box::new(ImeConnector::new(
-            from_str::<ImeCfg>(config_json)?,
-            ImeFlavor::MsIme,
-        ))),
-        "ime_google" => Ok(Box::new(ImeConnector::new(
-            from_str::<ImeCfg>(config_json)?,
-            ImeFlavor::Google,
-        ))),
-        "accdb" => Ok(Box::new(from_str::<AccessConnector>(config_json)?)),
-        "notion" => Ok(Box::new(from_str::<NotionConnector>(config_json)?)),
-        "graph_entra_users" => Ok(Box::new(from_str::<GraphUsersConnector>(config_json)?)),
-        "graph_entra_groups" => Ok(Box::new(from_str::<GraphGroupsConnector>(config_json)?)),
-        "graph_teams" => Ok(Box::new(from_str::<GraphTeamsConnector>(config_json)?)),
-        "graph_sharepoint_list" => Ok(Box::new(from_str::<GraphSharePointListConnector>(
-            config_json,
-        )?)),
-        "graph_sharepoint_library" => Ok(Box::new(from_str::<GraphSharePointLibraryConnector>(
-            config_json,
-        )?)),
-        "browser_history" => Ok(Box::new(from_str::<BrowserHistoryConnector>(config_json)?)),
-        "browser_bookmarks" => Ok(Box::new(from_str::<BrowserBookmarksConnector>(
-            config_json,
-        )?)),
-        "browser_downloads" => Ok(Box::new(from_str::<BrowserDownloadsConnector>(
-            config_json,
-        )?)),
-        "graph_entra_devices" => Ok(Box::new(from_str::<GraphDevicesConnector>(config_json)?)),
-        "graph_intune_devices" => Ok(Box::new(from_str::<GraphIntuneDevicesConnector>(
-            config_json,
-        )?)),
-        "graph_licenses" => Ok(Box::new(from_str::<GraphLicensesConnector>(config_json)?)),
-        "graph_calendar" => Ok(Box::new(from_str::<GraphCalendarConnector>(config_json)?)),
-        "graph_onedrive" => Ok(Box::new(from_str::<GraphOneDriveConnector>(config_json)?)),
-        "graph_planner" => Ok(Box::new(from_str::<GraphPlannerConnector>(config_json)?)),
-        "google_sheets" => Ok(Box::new(from_str::<GoogleSheetsConnector>(config_json)?)),
-        "ical_calendar" => Ok(Box::new(from_str::<IcalConnector>(config_json)?)),
-        "airtable" => Ok(Box::new(from_str::<AirtableConnector>(config_json)?)),
-        "postgres" => Ok(Box::new(from_str::<PostgresConnector>(config_json)?)),
-        "mysql" => Ok(Box::new(from_str::<MysqlConnector>(config_json)?)),
-        "box_files" => Ok(Box::new(from_str::<BoxConnector>(config_json)?)),
-        "postal_code" => Ok(Box::new(from_str::<PostalCodeConnector>(config_json)?)),
-        "corporate_number" => Ok(Box::new(from_str::<CorporateNumberConnector>(config_json)?)),
-        "web_page" => Ok(Box::new(from_str::<WebPageConnector>(config_json)?)),
-        "pokeapi" => Ok(Box::new(from_str::<PokeApiConnector>(config_json)?)),
-        other => Err(anyhow!(
-            "factory定義が不足しているデータソース種別: {other}"
-        )),
     }
 }
 
@@ -242,7 +80,7 @@ struct SourceTypeManifestEntry {
 #[test]
 fn source_type_manifest_matches_factory_registry() {
     let manifest: Vec<SourceTypeManifestEntry> =
-        serde_json::from_str(include_str!("../../shared/source-types.json"))
+        serde_json::from_str(include_str!("../../../shared/source-types.json"))
             .expect("shared source type manifest must be valid JSON");
     let manifest_ids: Vec<&str> = manifest.iter().map(|entry| entry.id.as_str()).collect();
 

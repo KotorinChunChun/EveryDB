@@ -8,6 +8,7 @@ use std::io::Read;
 
 use super::common::{make_record, CommonCfg};
 use super::default_true;
+use super::limits::{self, static_field_names};
 use super::Connector;
 use crate::connectors::json_scalar_to_string;
 use crate::model::Record;
@@ -52,9 +53,11 @@ query {
 }
         "#;
         let body = serde_json::json!({ "query": query });
-        let res = ureq::post("https://beta.pokeapi.co/graphql/v1beta")
-            .set("Content-Type", "application/json")
-            .send_json(body)?;
+        let res = limits::http_post_json_with_headers(
+            "https://beta.pokeapi.co/graphql/v1beta",
+            &[("Content-Type", "application/json")],
+            body,
+        )?;
         let json_res: Value = res.into_json()?;
 
         let list = json_res["data"]["pokemon_v2_pokemon"]
@@ -147,10 +150,14 @@ query {
             if self.common.label_column.is_none() {
                 rec.label = Some(ja_name.to_string());
             }
-            out.push(rec);
+            limits::push_record(&mut out, rec, "PokéAPI")?;
         }
 
         Ok(out)
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        static_field_names(&["図鑑番号", "和名", "タイプ", "とくせい", "種族値", "英語名"])
     }
 }
 
@@ -231,7 +238,7 @@ impl Connector for PostalCodeConnector {
                 .ok_or_else(|| anyhow!("『ファイル指定』を選んだ場合はパスの入力が必要です"))?;
             read_csv_bytes_from_path(path)?
         } else {
-            let resp = ureq::get(KEN_ALL_URL).call().map_err(|e| {
+            let resp = limits::http_get(KEN_ALL_URL).map_err(|e| {
                 anyhow!(
                     "郵便番号データのダウンロードに失敗しました: {e}。\
                      手動でダウンロードした zip/csv を『ファイル指定』で指定してください"
@@ -257,6 +264,18 @@ impl Connector for PostalCodeConnector {
             out.push(make_record(pairs, "", &self.common));
         }
         Ok(out)
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        static_field_names(&[
+            "郵便番号",
+            "都道府県",
+            "市区町村",
+            "町域",
+            "都道府県カナ",
+            "市区町村カナ",
+            "町域カナ",
+        ])
     }
 }
 
@@ -325,12 +344,30 @@ impl Connector for CorporateNumberConnector {
         }
         Ok(out)
     }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        static_field_names(&[
+            "法人番号",
+            "商号又は名称",
+            "法人種別",
+            "都道府県",
+            "市区町村",
+            "丁目番地等",
+            "郵便番号",
+            "更新年月日",
+            "法人番号指定年月日",
+            "フリガナ",
+            "英語表記(名称)",
+            "英語表記(都道府県)",
+            "英語表記(所在地)",
+        ])
+    }
 }
 
 /// 法人番号公表サイトの一覧ページから CSRF トークンと都道府県の ID を取得し、
 /// 同一セッション（Cookie）で POST してダウンロードする（§0-2 で実測確認済みの手順）。
 fn houjin_bangou_download(prefecture: &str) -> Result<Vec<u8>> {
-    let agent = ureq::AgentBuilder::new().build();
+    let agent = limits::http_agent();
     let resp = agent
         .get(HOUJIN_INDEX_URL)
         .call()
@@ -419,23 +456,43 @@ fn default_web_page_mode() -> String {
 
 impl Connector for WebPageConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let resp = ureq::get(&self.url).call();
+        let resp = limits::http_get(&self.url);
         let body = match resp {
             Ok(r) => r
                 .into_string()
                 .map_err(|e| anyhow!("本文の読み込みに失敗しました: {e}"))?,
-            Err(ureq::Error::Status(code, r)) => {
-                return Err(anyhow!(
-                    "HTTP {code}: {}",
-                    r.into_string().unwrap_or_default()
-                ))
-            }
-            Err(e) => return Err(anyhow!("URL への接続に失敗しました: {e}")),
+            Err(e) => return Err(anyhow!("URL 取得失敗: {e}")),
         };
         match self.mode.as_str() {
             "json_api" => self.fetch_json_api(&body),
             "css_selector" => self.fetch_css_selector(&body),
             _ => self.fetch_html_table(&body),
+        }
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        match self.mode.as_str() {
+            "css_selector" => {
+                let spec = self.columns.as_deref().unwrap_or("").trim();
+                if spec.is_empty() {
+                    return Err(anyhow!(
+                        "css_selector モードには columns の指定が必要です（例: タイトル=h2 a）"
+                    ));
+                }
+                Ok(parse_css_columns(spec)
+                    .into_iter()
+                    .map(|(name, _, _)| name)
+                    .collect())
+            }
+            "json_api" => {
+                let spec = self.columns.as_deref().unwrap_or("").trim();
+                let cols = parse_plain_columns(spec);
+                if !cols.is_empty() {
+                    return Ok(cols.into_iter().map(|(name, _)| name).collect());
+                }
+                Ok(Vec::new())
+            }
+            _ => Connector::field_names(self),
         }
     }
 }
@@ -794,6 +851,23 @@ mod web_page_tests {
           </table>
         </body></html>
     "#;
+
+    #[test]
+    fn html_table_mode_treats_markup_as_text_not_executable() {
+        let html = r#"<table><tr><th>本文</th></tr><tr><td><script>alert(1)</script>安全</td></tr></table>"#;
+        let recs = conn("html_table").fetch_html_table(html).unwrap();
+        assert_eq!(recs.len(), 1);
+        let cell = recs[0]
+            .fields
+            .get("本文")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(cell.contains("安全"));
+        assert!(
+            !cell.contains('<'),
+            "HTML tags must not survive ingest as markup: {cell}"
+        );
+    }
 
     #[test]
     fn html_table_mode_reads_header_and_rows() {

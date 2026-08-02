@@ -141,7 +141,7 @@
   color: var(--muted); font-size: 12px; background: var(--panel-2); border: 1px solid var(--border);
   border-radius: 4px; padding: 6px 8px; margin: -4px 0 10px;
 }
-.form-error { color: #f85149; font-size: 12px; min-height: 1em; margin-bottom: 6px; }
+.form-error { color: var(--form-error); font-size: 12px; min-height: 1em; margin-bottom: 6px; }
 
 .browse-area { margin-bottom: 10px; }
 .browse-area .btn { margin-bottom: 6px; }

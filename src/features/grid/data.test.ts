@@ -47,4 +47,17 @@ describe("grid data helpers", () => {
     expect(toRawFieldNames(["顧客名", "age", "顧客名"], { customer_name: "顧客名" })).toEqual(["customer_name", "age"]);
     expect([...buildSourceFieldIndex([row(1, "A", { x: "1" }), row(1, "A", { y: "2" })]).get(1)!]).toEqual(["x", "y"]);
   });
+
+  it("RF-50-08: column build and sort stay fast for 10k rows", () => {
+    const rows: Row[] = Array.from({ length: 10_000 }, (_, index) =>
+      row(index + 1, "Bench", { value: String(index).padStart(5, "0"), note: `row-${index}` }, `Row ${index}`),
+    );
+    const started = performance.now();
+    const columns = buildGridColumns(rows, ["value", "note"]);
+    const { rows: sorted } = sortedGridRows(rows, columns, { column: "value", dir: "asc" });
+    const elapsed = performance.now() - started;
+    expect(sorted.length).toBe(10_000);
+    expect(columns).toContain("value");
+    expect(elapsed).toBeLessThan(2000);
+  });
 });

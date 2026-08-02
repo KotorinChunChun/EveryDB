@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::common::{make_record, CommonCfg};
+use super::limits::{self, static_field_names, API_PAGE_SIZE};
 use super::Connector;
 use crate::connectors::{col_to_letters, default_true, json_scalar_to_string, urlencoding_light};
 use crate::model::Record;
@@ -65,16 +66,10 @@ pub(crate) struct IcalConnector {
 
 impl Connector for IcalConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let resp = ureq::get(&self.url).call();
+        let resp = limits::http_get(&self.url);
         let text = match resp {
             Ok(r) => r.into_string()?,
-            Err(ureq::Error::Status(code, r)) => {
-                return Err(anyhow!(
-                    "iCal 取得失敗 {code}: {}",
-                    r.into_string().unwrap_or_default()
-                ))
-            }
-            Err(e) => return Err(anyhow!("iCal URL への接続に失敗: {e}")),
+            Err(e) => return Err(anyhow!("iCal 取得失敗: {e}")),
         };
         let unfolded = ical_unfold(&text);
 
@@ -128,6 +123,10 @@ impl Connector for IcalConnector {
         }
         Ok(out)
     }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        static_field_names(&["件名", "開始", "終了", "場所", "詳細"])
+    }
 }
 
 // ---- Airtable（REST API + Personal Access Token）----
@@ -174,9 +173,10 @@ impl Connector for AirtableConnector {
         let mut offset: Option<String> = None;
         loop {
             let mut url = format!(
-                "https://api.airtable.com/v0/{}/{}?pageSize=100",
+                "https://api.airtable.com/v0/{}/{}?pageSize={}",
                 urlencoding_light(&self.base_id),
-                urlencoding_light(&self.table)
+                urlencoding_light(&self.table),
+                API_PAGE_SIZE
             );
             if let Some(v) = &self.view {
                 url.push_str(&format!("&view={}", urlencoding_light(v)));
@@ -184,18 +184,10 @@ impl Connector for AirtableConnector {
             if let Some(o) = &offset {
                 url.push_str(&format!("&offset={}", urlencoding_light(o)));
             }
-            let resp = ureq::get(&url)
-                .set("Authorization", &format!("Bearer {}", self.token))
-                .call();
+            let resp = limits::http_get_bearer(&url, &self.token);
             let body: Value = match resp {
                 Ok(r) => r.into_json()?,
-                Err(ureq::Error::Status(code, r)) => {
-                    return Err(anyhow!(
-                        "Airtable API エラー {code}: {}",
-                        r.into_string().unwrap_or_default()
-                    ))
-                }
-                Err(e) => return Err(anyhow!("Airtable への接続に失敗: {e}")),
+                Err(e) => return Err(anyhow!("Airtable API: {e}")),
             };
             if let Some(records) = body.get("records").and_then(|v| v.as_array()) {
                 for rec in records {
@@ -218,9 +210,14 @@ impl Connector for AirtableConnector {
                         "https://airtable.com/{}/{}/{}",
                         self.base_id, self.table, id
                     );
-                    out.push(make_record(pairs, &open_ref, &self.common));
+                    limits::push_record(
+                        &mut out,
+                        make_record(pairs, &open_ref, &self.common),
+                        "Airtable",
+                    )?;
                 }
             }
+            limits::check_fetch_limit(out.len(), "Airtable")?;
             offset = body
                 .get("offset")
                 .and_then(|v| v.as_str())
@@ -230,6 +227,28 @@ impl Connector for AirtableConnector {
             }
         }
         Ok(out)
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        let mut url = format!(
+            "https://api.airtable.com/v0/{}/{}?pageSize=1&maxRecords=1",
+            urlencoding_light(&self.base_id),
+            urlencoding_light(&self.table)
+        );
+        if let Some(v) = &self.view {
+            url.push_str(&format!("&view={}", urlencoding_light(v)));
+        }
+        let body: Value = limits::http_get_bearer(&url, &self.token)?.into_json()?;
+        let mut names = body
+            .get("records")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|rec| rec.get("fields"))
+            .and_then(|v| v.as_object())
+            .map(|o| o.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        names.push("レコードID".to_string());
+        Ok(names)
     }
 }
 
@@ -410,30 +429,35 @@ impl Connector for NotionConnector {
         let mut start_cursor: Option<String> = None;
 
         loop {
-            let mut body = serde_json::json!({ "page_size": 100 });
+            let mut body = serde_json::json!({ "page_size": API_PAGE_SIZE });
             if let Some(c) = &start_cursor {
                 body["start_cursor"] = Value::String(c.clone());
             }
-            let resp = ureq::post(&url)
-                .set("Authorization", &format!("Bearer {}", self.token))
-                .set("Notion-Version", NOTION_VERSION)
-                .set("Content-Type", "application/json")
-                .send_json(body);
+            let resp = limits::http_post_json_with_headers(
+                &url,
+                &[
+                    ("Authorization", &format!("Bearer {}", self.token)),
+                    ("Notion-Version", NOTION_VERSION),
+                    ("Content-Type", "application/json"),
+                ],
+                body,
+            );
 
             let value: Value = match resp {
                 Ok(r) => r.into_json()?,
-                Err(ureq::Error::Status(code, r)) => {
-                    let msg = r.into_string().unwrap_or_default();
-                    return Err(anyhow!("Notion API エラー {code}: {msg}"));
-                }
-                Err(e) => return Err(anyhow!("Notion への接続に失敗: {e}")),
+                Err(e) => return Err(anyhow!("Notion API: {e}")),
             };
 
             if let Some(results) = value.get("results").and_then(|v| v.as_array()) {
                 for page in results {
-                    out.push(notion_page_to_record(page, &self.common));
+                    limits::push_record(
+                        &mut out,
+                        notion_page_to_record(page, &self.common),
+                        "Notion",
+                    )?;
                 }
             }
+            limits::check_fetch_limit(out.len(), "Notion")?;
 
             let has_more = value
                 .get("has_more")
@@ -448,6 +472,23 @@ impl Connector for NotionConnector {
             }
         }
         Ok(out)
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        let url = format!("https://api.notion.com/v1/databases/{}", self.database_id);
+        let value: Value = limits::http_get_with_headers(
+            &url,
+            &[
+                ("Authorization", &format!("Bearer {}", self.token)),
+                ("Notion-Version", NOTION_VERSION),
+            ],
+        )?
+        .into_json()?;
+        Ok(value
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .map(|props| props.keys().cloned().collect())
+            .unwrap_or_default())
     }
 }
 
@@ -497,19 +538,16 @@ fn google_access_token(sa_json: &str, scope: &str) -> Result<String> {
     )
     .map_err(|e| anyhow!("JWT 署名に失敗: {e}"))?;
 
-    let resp = ureq::post(token_uri).send_form(&[
-        ("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
-        ("assertion", &jwt),
-    ]);
+    let resp = limits::http_post_form(
+        token_uri,
+        &[
+            ("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
+            ("assertion", &jwt),
+        ],
+    );
     let body: Value = match resp {
         Ok(r) => r.into_json()?,
-        Err(ureq::Error::Status(code, r)) => {
-            return Err(anyhow!(
-                "Google トークン取得失敗 {code}: {}",
-                r.into_string().unwrap_or_default()
-            ))
-        }
-        Err(e) => return Err(anyhow!("Google 認証エンドポイントへの接続に失敗: {e}")),
+        Err(e) => return Err(anyhow!("Google トークン取得失敗: {e}")),
     };
     body.get("access_token")
         .and_then(|v| v.as_str())
@@ -518,17 +556,9 @@ fn google_access_token(sa_json: &str, scope: &str) -> Result<String> {
 }
 
 fn google_get_json(url: &str, token: &str) -> Result<Value> {
-    let resp = ureq::get(url)
-        .set("Authorization", &format!("Bearer {token}"))
-        .call();
-    match resp {
-        Ok(r) => Ok(r.into_json()?),
-        Err(ureq::Error::Status(code, r)) => Err(anyhow!(
-            "Google API {code}: {}",
-            r.into_string().unwrap_or_default()
-        )),
-        Err(e) => Err(anyhow!("Google API への接続に失敗: {e}")),
-    }
+    let resp = limits::http_get_bearer(url, token).map_err(|e| anyhow!("Google API: {e}"))?;
+    resp.into_json()
+        .map_err(|e| anyhow!("Google API JSON: {e}"))
 }
 
 #[derive(Deserialize)]
@@ -632,9 +662,81 @@ impl Connector for GoogleSheetsConnector {
                     (name, val)
                 })
                 .collect();
-            out.push(make_record(pairs, "", &self.common));
+            limits::push_record(
+                &mut out,
+                make_record(pairs, "", &self.common),
+                "Google Sheets",
+            )?;
         }
         Ok(out)
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        let sa_json = std::fs::read_to_string(&self.key_path)
+            .map_err(|e| anyhow!("サービスアカウント鍵ファイルの読み込みに失敗: {e}"))?;
+        let token = google_access_token(
+            &sa_json,
+            "https://www.googleapis.com/auth/spreadsheets.readonly",
+        )?;
+
+        let range = match &self.range {
+            Some(r) if !r.is_empty() => {
+                if r.contains('!') {
+                    format!("{}!1:1", r.split('!').next().unwrap_or(r))
+                } else {
+                    format!("{r}!1:1")
+                }
+            }
+            _ => {
+                let meta_url = format!(
+                    "https://sheets.googleapis.com/v4/spreadsheets/{}?fields=sheets.properties.title",
+                    self.spreadsheet_id
+                );
+                let meta = google_get_json(&meta_url, &token)?;
+                let sheet = meta
+                    .get("sheets")
+                    .and_then(|s| s.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|s| s.get("properties"))
+                    .and_then(|p| p.get("title"))
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        anyhow!("シート情報を取得できません（共有設定を確認してください）")
+                    })?;
+                format!("{sheet}!1:1")
+            }
+        };
+
+        let values_url = format!(
+            "https://sheets.googleapis.com/v4/spreadsheets/{}/values/{}",
+            self.spreadsheet_id,
+            urlencoding_light(&range)
+        );
+        let data = google_get_json(&values_url, &token)?;
+        let row = data
+            .get("values")
+            .and_then(|v| v.as_array())
+            .and_then(|rows| rows.first())
+            .and_then(|r| r.as_array());
+
+        let cell_str = |v: &Value| -> String {
+            match v {
+                Value::String(s) => s.clone(),
+                Value::Number(n) => n.to_string(),
+                Value::Bool(b) => b.to_string(),
+                _ => String::new(),
+            }
+        };
+
+        if self.has_header {
+            Ok(row
+                .map(|r| r.iter().map(cell_str).filter(|h| !h.is_empty()).collect())
+                .unwrap_or_default())
+        } else {
+            Ok(row
+                .map(|r| (0..r.len()).map(|c| col_to_letters(c as u32)).collect())
+                .unwrap_or_default())
+        }
     }
 }
 
@@ -660,6 +762,10 @@ impl Connector for BoxConnector {
         self.walk_box_folder(&self.access_token, &self.folder_id, "", &mut out)?;
         Ok(out)
     }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        static_field_names(&["名前", "種類", "サイズ", "更新日時", "パス"])
+    }
 }
 
 impl BoxConnector {
@@ -673,20 +779,13 @@ impl BoxConnector {
         let mut offset = 0u32;
         loop {
             let url = format!(
-                "https://api.box.com/2.0/folders/{folder_id}/items?fields=name,type,size,modified_at,path_collection&limit=100&offset={offset}"
+                "https://api.box.com/2.0/folders/{folder_id}/items?fields=name,type,size,modified_at,path_collection&limit={}&offset={offset}",
+                API_PAGE_SIZE
             );
-            let resp = ureq::get(&url)
-                .set("Authorization", &format!("Bearer {token}"))
-                .call();
+            let resp = limits::http_get_bearer(&url, token);
             let body: Value = match resp {
                 Ok(r) => r.into_json()?,
-                Err(ureq::Error::Status(code, r)) => {
-                    return Err(anyhow!(
-                        "Box API {code}: {}",
-                        r.into_string().unwrap_or_default()
-                    ))
-                }
-                Err(e) => return Err(anyhow!("Box への接続に失敗: {e}")),
+                Err(e) => return Err(anyhow!("Box API: {e}")),
             };
             let entries = body
                 .get("entries")
@@ -737,11 +836,17 @@ impl BoxConnector {
                     ("更新日時".to_string(), modified),
                     ("パス".to_string(), path.to_string()),
                 ];
-                let mut rec = make_record(pairs, &web_url, &self.common);
-                if self.common.label_column.is_none() {
-                    rec.label = Some(name.clone());
-                }
-                out.push(rec);
+                limits::push_record(
+                    out,
+                    {
+                        let mut rec = make_record(pairs, &web_url, &self.common);
+                        if self.common.label_column.is_none() {
+                            rec.label = Some(name.clone());
+                        }
+                        rec
+                    },
+                    "Box",
+                )?;
 
                 if item_type == "folder" {
                     let new_path = if path.is_empty() {

@@ -20,6 +20,7 @@
   --focus-ring-btn: var(--focus-ring);
   --accent-focus: #1a8fd8;
   --danger-focus: #9c3a3a;
+  --form-error: #f85149;
   /* 通常ボタンのホバー背景。以前は固定値 #87878c を全テーマ共通で使っていたため、
      背景/文字色はテーマごとに変わるのにホバーだけ変わらない（要件: 分岐していないのはおかしい）
      という不具合になっていた。--panel-2 を基準にテーマごとの方向（暗背景なら明るく、
@@ -53,6 +54,7 @@
      フォーカス時は背景自体をはっきり暗い色へ変える（要件: 変化を大きく）。 */
   --accent-focus: #073d63;
   --danger-focus: #8c1a1a;
+  --form-error: #b42318;
   --btn-hover-bg: #d8d8d8;
   --sel: #cfe4f7;
   --row-alt: #f7f7f7;
@@ -77,6 +79,7 @@
   --focus-ring-btn: var(--focus-ring);
   --accent-focus: #7ec4ff;
   --danger-focus: #e06a6a;
+  --form-error: #ff6b6b;
   --btn-hover-bg: #232323;
   --sel: #003a66;
   --row-alt: #080808;

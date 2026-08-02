@@ -1,22 +1,33 @@
 import { describe, expect, it } from "vitest";
 
 import html from "../../index.html?raw";
+import { mountSimplePickerDialogs, SIMPLE_PICKER_DIALOGS } from "./simple-picker-dialogs";
+
 const requiredIds = [
   "app", "search", "sources", "status", "grid", "grid-head", "grid-viewport", "grid-rows", "result-info",
   "add-dialog", "parent-dialog", "column-map-dialog", "settings-dialog", "credential-manager",
   "guide-dialog", "confirm-dialog", "export-dialog", "shortcut-guide-dialog",
+  "simple-picker-dialog-template",
 ];
+
+function mountAppDom(): void {
+  document.documentElement.innerHTML = html;
+  mountSimplePickerDialogs();
+}
 
 describe("index.html structural smoke test", () => {
   it("keeps all application IDs unique and preserves essential controls", () => {
-    document.documentElement.innerHTML = html;
+    mountAppDom();
     const ids = [...document.querySelectorAll<HTMLElement>("[id]")].map((element) => element.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const id of requiredIds) expect(document.getElementById(id), `#${id}`).not.toBeNull();
+    for (const def of SIMPLE_PICKER_DIALOGS) {
+      expect(document.getElementById(def.dialogId), `#${def.dialogId}`).not.toBeNull();
+    }
   });
 
   it("gives every dialog a heading and retains the main dialog forms", () => {
-    document.documentElement.innerHTML = html;
+    mountAppDom();
     const dialogs = [...document.querySelectorAll<HTMLDialogElement>("dialog")];
     expect(dialogs.length).toBeGreaterThanOrEqual(15);
     for (const dialog of dialogs) {
@@ -24,5 +35,31 @@ describe("index.html structural smoke test", () => {
     }
     expect(document.querySelector("#add-dialog form#add-form")).not.toBeNull();
     expect(document.querySelector("#export-dialog input[name='export-format']:checked")).not.toBeNull();
+  });
+
+  it("labels every dialog for assistive technology", () => {
+    mountAppDom();
+    for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog")) {
+      const labelledBy = dialog.getAttribute("aria-labelledby");
+      expect(labelledBy, `#${dialog.id} aria-labelledby`).toBeTruthy();
+      expect(document.getElementById(labelledBy!), `#${dialog.id} title #${labelledBy}`).not.toBeNull();
+    }
+  });
+
+  it("names icon-only dialog close buttons", () => {
+    mountAppDom();
+    for (const button of document.querySelectorAll<HTMLButtonElement>(".dialog-close-x")) {
+      expect(button.getAttribute("aria-label") || button.title, `#${button.id} accessible name`).toBeTruthy();
+    }
+  });
+
+  it("mounts simple picker dialogs from shared template", () => {
+    mountAppDom();
+    for (const def of SIMPLE_PICKER_DIALOGS) {
+      const dialog = document.getElementById(def.dialogId);
+      expect(dialog?.querySelector(".picker-list"), `#${def.dialogId} picker list`).not.toBeNull();
+      expect(document.getElementById(def.closeId), `#${def.closeId}`).not.toBeNull();
+      expect(dialog?.getAttribute("aria-labelledby")).toBe(def.titleId);
+    }
   });
 });

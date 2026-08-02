@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::common::{make_record, CommonCfg};
+use super::limits::DB_FETCH_LIMIT;
 use super::{json_scalar_to_string, urlencoding_light, Connector};
 use crate::model::Record;
 /// SQL 識別子として安全か（テーブル名/スキーマ名の簡易検証。英数字・アンダースコアのみ許可）。
@@ -99,8 +100,8 @@ impl Connector for PostgresConnector {
         let mut client = self.connect()?;
         // row_to_json で行ごと JSON 化して受け取ることで、列の型ごとの分岐が不要になる。
         let sql = format!(
-            "SELECT row_to_json(t) FROM \"{schema}\".\"{}\" t LIMIT 20000",
-            self.table
+            "SELECT row_to_json(t) FROM \"{schema}\".\"{}\" t LIMIT {}",
+            self.table, DB_FETCH_LIMIT
         );
         let rows = client
             .query(&sql, &[])
@@ -220,7 +221,7 @@ impl Connector for MysqlConnector {
         let mut conn = pool
             .get_conn()
             .map_err(|e| anyhow!("MySQL 接続の確立に失敗: {e}"))?;
-        let sql = format!("SELECT * FROM `{}` LIMIT 20000", self.table);
+        let sql = format!("SELECT * FROM `{}` LIMIT {}", self.table, DB_FETCH_LIMIT);
         let result = conn
             .query_iter(&sql)
             .map_err(|e| anyhow!("クエリ実行に失敗: {e}"))?;

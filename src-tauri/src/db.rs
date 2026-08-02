@@ -61,10 +61,16 @@ mod tests {
     }
 
     const LEGACY_CACHE_V1_FIXTURE: &str = include_str!("../tests/fixtures/legacy_cache_v1.sql");
+    const LEGACY_CACHE_V1_STEP1_FIXTURE: &str =
+        include_str!("../tests/fixtures/legacy_cache_v1_step1.sql");
 
     fn create_legacy_fixture(path: &Path) {
         let conn = Connection::open(path).unwrap();
         conn.execute_batch(LEGACY_CACHE_V1_FIXTURE).unwrap();
+    }
+    fn create_legacy_step1_fixture(path: &Path) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(LEGACY_CACHE_V1_STEP1_FIXTURE).unwrap();
     }
     fn temporary_database_path(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
         let nonce = std::time::SystemTime::now()
@@ -111,6 +117,36 @@ mod tests {
     }
 
     #[test]
+    fn migrates_version1_fixture_to_version2_without_data_loss() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(LEGACY_CACHE_V1_STEP1_FIXTURE).unwrap();
+
+        init_schema(&conn).unwrap();
+
+        assert_eq!(
+            get_meta(&conn, SCHEMA_VERSION_KEY).unwrap().as_deref(),
+            Some("2")
+        );
+        assert!(table_has_column(&conn, "records", "row_number").unwrap());
+        assert_eq!(
+            conn.query_row::<i64, _, _>("SELECT sort_order FROM sources WHERE id=8", [], |row| {
+                row.get(0)
+            })
+            .unwrap(),
+            3
+        );
+        assert_eq!(
+            conn.query_row::<String, _, _>(
+                "SELECT label FROM records WHERE source_id=8",
+                [],
+                |row| row.get(0)
+            )
+            .unwrap(),
+            "中間版レコード"
+        );
+    }
+
+    #[test]
     fn file_migration_cleans_up_backup_after_success() {
         let (dir, path) = temporary_database_path("success");
         create_legacy_fixture(&path);
@@ -121,6 +157,25 @@ mod tests {
             Some("2")
         );
         assert_eq!(list_sources(&conn).unwrap()[0].name, "移行前ソース");
+        drop(conn);
+
+        assert!(!path
+            .with_file_name("cache.db.before-migration.bak")
+            .exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn file_migration_from_version1_fixture_cleans_up_backup_after_success() {
+        let (dir, path) = temporary_database_path("step1-success");
+        create_legacy_step1_fixture(&path);
+
+        let conn = open_cached_database(&path).unwrap();
+        assert_eq!(
+            get_meta(&conn, SCHEMA_VERSION_KEY).unwrap().as_deref(),
+            Some("2")
+        );
+        assert_eq!(list_sources(&conn).unwrap()[0].name, "中間版ソース");
         drop(conn);
 
         assert!(!path

@@ -17,6 +17,8 @@ pub struct AppState {
     pub(crate) box_oauth_cancel: Mutex<Option<Arc<AtomicBool>>>,
     /// 同一sourceに対する重複reloadを抑止するための実行中ID。
     reloading_source_ids: Mutex<HashSet<i64>>,
+    /// 定期 reload スレッドへ終了を通知するフラグ。
+    pub(crate) scheduler_shutdown: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -26,6 +28,7 @@ impl AppState {
             unlocked_until: Mutex::new(None),
             box_oauth_cancel: Mutex::new(None),
             reloading_source_ids: Mutex::new(HashSet::new()),
+            scheduler_shutdown: Arc::new(AtomicBool::new(false)),
         }
     }
 

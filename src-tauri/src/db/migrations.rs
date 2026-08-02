@@ -43,7 +43,15 @@ where
         drop(conn);
         if let Some(backup_path) = backup.as_deref() {
             restore_migration_backup(path, backup_path)?;
-            let _ = fs::remove_file(backup_path);
+            if let Err(error) = fs::remove_file(backup_path) {
+                crate::internal_log::warn(
+                    "migration",
+                    format!(
+                        "failed to remove backup after restore {}: {error}",
+                        backup_path.display()
+                    ),
+                );
+            }
         }
         return Err(error)
             .context("DB schema migration failed; the previous database was restored");
@@ -200,7 +208,12 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             Ok(())
         }
         Err(error) => {
-            let _ = conn.execute_batch("ROLLBACK");
+            if let Err(rollback_error) = conn.execute_batch("ROLLBACK") {
+                crate::internal_log::warn(
+                    "migration",
+                    format!("transaction ROLLBACK failed: {rollback_error}"),
+                );
+            }
             Err(error)
         }
     }
