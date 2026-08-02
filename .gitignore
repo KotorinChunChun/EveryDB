@@ -1,6 +1,9 @@
 /target
 .claude/
-dev/
+dev/*
+!dev/scripts/
+dev/scripts/*
+!dev/scripts/*.ps1
 release/
 node_modules/
 dist/
