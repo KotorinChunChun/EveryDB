@@ -397,6 +397,41 @@ impl Connector for AccessConnector {
         }
         Ok(out)
     }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        use odbc_api::{ConnectionOptions, Environment, ResultSetMetadata};
+
+        if !valid_bracket_ident(&self.table) {
+            return Err(anyhow!("不正なテーブル名: {}", self.table));
+        }
+        // fetch と同じ接続文字列境界を適用し、列名プレビューを別の入力経路にしない。
+        if self.path.contains(';') || self.path.contains('{') || self.path.contains('}') {
+            return Err(anyhow!(
+                "パスに ODBC 接続文字列で使えない文字（; {{ }}）が含まれています: {}",
+                self.path
+            ));
+        }
+        let cs = format!(
+            "Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};Dbq={};",
+            self.path
+        );
+        let env = Environment::new().map_err(|e| anyhow!("ODBC 環境の初期化に失敗: {e}"))?;
+        let conn = env
+            .connect_with_connection_string(&cs, ConnectionOptions::default())
+            .map_err(|e| anyhow!("Access への接続に失敗（ドライバ/パス確認）: {e}"))?;
+
+        let sql = format!("SELECT * FROM [{}] WHERE 1 = 0", self.table);
+        let mut cursor = match conn.execute(&sql, (), None)? {
+            Some(cursor) => cursor,
+            None => return Ok(Vec::new()),
+        };
+        let ncol = cursor.num_result_cols()? as u16;
+        let mut names = Vec::with_capacity(ncol as usize);
+        for i in 1..=ncol {
+            names.push(cursor.col_name(i)?);
+        }
+        Ok(names)
+    }
 }
 
 // ---- ブラウザのブックマーク & 履歴（要件 REQ-新規: ローカルブラウザデータ系）----
