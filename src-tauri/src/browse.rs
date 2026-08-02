@@ -12,11 +12,18 @@ use crate::graph::GraphClient;
 pub struct GraphAuthArgs {
     pub tenant_id: String,
     pub client_id: String,
+    #[serde(default)]
     pub client_secret: String,
+    #[serde(default)]
+    pub access_token: String,
 }
 
 fn graph_client(auth: &GraphAuthArgs) -> Result<GraphClient> {
-    GraphClient::new(&auth.tenant_id, &auth.client_id, &auth.client_secret)
+    if !auth.access_token.is_empty() {
+        Ok(GraphClient::new_with_token(&auth.access_token))
+    } else {
+        GraphClient::new(&auth.tenant_id, &auth.client_id, &auth.client_secret)
+    }
 }
 
 // ---- Notion: アクセス可能なデータベース一覧 ----
@@ -790,6 +797,7 @@ mod tests {
             tenant_id: env("EVERYDB_GRAPH_TENANT").expect("EVERYDB_GRAPH_TENANT"),
             client_id: env("EVERYDB_GRAPH_CLIENT").expect("EVERYDB_GRAPH_CLIENT"),
             client_secret: env("EVERYDB_GRAPH_SECRET").expect("EVERYDB_GRAPH_SECRET"),
+            access_token: String::new(),
         };
         let sites = graph_list_sites(&auth).unwrap();
         println!("sites = {}", sites.len());

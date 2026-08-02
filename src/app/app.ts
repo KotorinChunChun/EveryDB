@@ -112,7 +112,7 @@ const gridView = mountGridView({
 renderRows = gridView.renderRows;
 cellText = gridView.cellText;
 
-const { guideTextFor, openGuide } = mountGuideViewer();
+const { guideTextFor, openGuide, openGuideDoc } = mountGuideViewer();
 
 const { openExportDialog } = mountExportDialog({
   getRowCount: () => appState.rows.length,
@@ -360,6 +360,7 @@ const pickers = mountSourcePickers({
 const credentials = mountCredentials({
   getSourceEditor: () => sourceEditor,
   openGuide,
+  openGuideDoc,
 });
 export async function refreshWinAuthStatus() {
   await credentials.refreshWinAuthStatus();

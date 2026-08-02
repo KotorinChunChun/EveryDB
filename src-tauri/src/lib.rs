@@ -13,6 +13,7 @@ pub mod db;
 pub mod export_commands;
 pub mod export_service;
 pub mod graph;
+pub mod graph_oauth;
 #[cfg(test)]
 mod input_boundary_audit;
 pub mod internal_log;
@@ -202,6 +203,9 @@ pub fn run() {
             credential_commands::credential_secret_value,
             credential_commands::box_oauth_authorize,
             credential_commands::box_oauth_cancel,
+            credential_commands::graph_oauth_authorize,
+            credential_commands::graph_oauth_cancel,
+            credential_commands::resolve_graph_auth,
             settings::autostart_status,
             settings::autostart_set,
             settings::set_zoom,

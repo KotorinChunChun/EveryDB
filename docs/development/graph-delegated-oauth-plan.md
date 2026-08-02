@@ -168,7 +168,7 @@ sequenceDiagram
 | トークン管理 | 「Microsoft にログインして認可…」ボタン、取消ボタン、認可状態（✅ 認可済み） |
 | トークン管理 | Redirect URI ヘルプ文言（`http://localhost:58914/graph-callback`） |
 | 接続設定ピッカー | 委任プロファイル選択時も `cred:<id>` 参照で動作することを確認 |
-| 手順書リンク | `GUIDE_FOR_TYPE` / `shared/source-types.json` の `guide` フィールドで SharePoint 種別から `microsoft365-delegated` を参照 |
+| 手順書リンク | 既存 `microsoft365.md`（アプリケーションの許可）は **変更しない**。ユーザー委任は別ファイル `microsoft365-delegated.md`。`data-sources.md` に注記済み。アプリ内の `guide` 配線は実装時に方針決定（既存ガイドを壊さない） |
 | Tauri IPC | `graph_oauth_authorize` コマンド、キャンセルフラグ、アプリ終了時の OAuth 待機打ち切り |
 
 ## テスト計画

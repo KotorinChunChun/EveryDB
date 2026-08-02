@@ -41,6 +41,11 @@
 | 公開データ | PokéAPI (ポケモン)（`pokeapi`） | [pokeapi](guides/pokeapi.md) |
 <!-- source-catalog:end -->
 
+SharePoint を **ユーザー委任（ログインして認可）** で接続する手順は、上記の
+アプリケーションの許可手順とは別に
+[microsoft365-delegated](guides/microsoft365-delegated.md) を参照してください。
+既存の [microsoft365](guides/microsoft365.md)（クライアントシークレット方式）はそのまま有効です。
+
 ## 検証レベル
 
 ローカル形式と変換処理は自動テストで確認しています。外部サービスは認証情報・ネットワーク・契約が必要なため、実際の接続は利用者の環境で確認してください。開発時に利用可能な環境変数がある場合だけ、ignoredのライブテストを明示的に実行します。

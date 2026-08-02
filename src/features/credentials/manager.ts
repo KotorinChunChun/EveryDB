@@ -12,6 +12,7 @@ import type { WinAuthController } from "./winauth";
 export interface CredentialManagerDeps {
   winAuth: WinAuthController;
   openGuide: (type: string) => void;
+  openGuideDoc: (name: string) => void;
 }
 
 export interface CredentialManagerController {
@@ -32,17 +33,22 @@ interface CredentialFieldDef {
   helpUrl?: string;
   linkUrl?: string;
   linkLabel?: string;
-  authorize?: { buttonLabel: string; usesFields: string[] };
+  authorize?: {
+    buttonLabel: string;
+    usesFields: string[];
+    provider: "box" | "graph";
+  };
   selectOptions?: { value: string; label: string }[];
 }
 
 export function mountCredentialManager(deps: CredentialManagerDeps): CredentialManagerController {
-  const { winAuth, openGuide } = deps;
+  const { winAuth, openGuide, openGuideDoc } = deps;
   const { ensureUnlocked } = winAuth;
 
   let cmEditingId: number | null = null;
   let cmFormBaseline: Record<string, string> = {};
   let cmBoxAuthMethod: "oauth" | "ccg" = "oauth";
+  let cmGraphAuthMethod: "app_only" | "delegated" = "app_only";
   let cmHiddenFieldStash: Record<string, string> = {};
 
   function credentialScopeFieldDefs(scope: CredentialScope): CredentialFieldDef[] {
@@ -54,12 +60,36 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
           key: "token", label: "Personal Access Token", secret: true,
           helpUrl: "https://airtable.com/create/tokens", linkUrl: "https://airtable.com/workspaces", linkLabel: "🌐 ワークスペース…",
         }];
-      case "graph":
-        return [
+      case "graph": {
+        const common: CredentialFieldDef[] = [
+          {
+            key: "auth_method", label: "認証方式", secret: false,
+            selectOptions: [
+              { value: "app_only", label: "アプリケーションの許可（クライアントシークレット）" },
+              { value: "delegated", label: "委任 OAuth（Microsoft にログインして認可）" },
+            ],
+          },
           { key: "tenant_id", label: "テナントID", secret: false, helpUrl: ENTRA_APPS_URL },
           { key: "client_id", label: "クライアントID", secret: false, helpUrl: ENTRA_APPS_URL },
+        ];
+        if (cmGraphAuthMethod === "delegated") {
+          return [
+            ...common,
+            {
+              key: "refresh_token", label: "Microsoft アカウントの認可", secret: true,
+              authorize: {
+                buttonLabel: "🔗 Microsoft にログインして認可…",
+                usesFields: ["tenant_id", "client_id"],
+                provider: "graph",
+              },
+            },
+          ];
+        }
+        return [
+          ...common,
           { key: "client_secret", label: "クライアントシークレット(値)", secret: true, helpUrl: ENTRA_APPS_URL },
         ];
+      }
       case "box": {
         const BOX_DEV_CONSOLE = "https://app.box.com/developers/console";
         const common: CredentialFieldDef[] = [
@@ -83,7 +113,11 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
           ...common,
           {
             key: "refresh_token", label: "Box アカウントの認可", secret: true,
-            authorize: { buttonLabel: "🔗 Box にログインして認可…", usesFields: ["client_id", "client_secret"] },
+            authorize: {
+              buttonLabel: "🔗 Box にログインして認可…",
+              usesFields: ["client_id", "client_secret"],
+              provider: "box",
+            },
           },
         ];
       }
@@ -120,13 +154,17 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
           optEl.textContent = opt.label;
           select.appendChild(optEl);
         }
-        select.value = cmBoxAuthMethod;
+        select.value = scope === "graph" ? cmGraphAuthMethod : cmBoxAuthMethod;
         select.onchange = () => {
           for (const [key, value] of Object.entries(currentCmFormValues())) {
             if (key === "label" || key === f.key || !value) continue;
             cmHiddenFieldStash[key] = value;
           }
-          cmBoxAuthMethod = select.value === "ccg" ? "ccg" : "oauth";
+          if (scope === "graph") {
+            cmGraphAuthMethod = select.value === "delegated" ? "delegated" : "app_only";
+          } else {
+            cmBoxAuthMethod = select.value === "ccg" ? "ccg" : "oauth";
+          }
           renderCredentialFormFields(scope);
           for (const [key, value] of Object.entries(cmHiddenFieldStash)) {
             const el = document.getElementById(`cmf-${key}`) as HTMLInputElement | null;
@@ -162,7 +200,10 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
         cancelBtn.className = "btn browse-btn";
         cancelBtn.textContent = "取消";
         cancelBtn.hidden = true;
-        cancelBtn.onclick = () => void invoke("box_oauth_cancel").catch(() => {});
+        cancelBtn.onclick = () => {
+          const cmd = f.authorize!.provider === "graph" ? "graph_oauth_cancel" : "box_oauth_cancel";
+          void invoke(cmd).catch(() => {});
+        };
         const renderAuthStatus = () => {
           if (input.value) {
             status.textContent = "✅ 認可済み";
@@ -173,12 +214,13 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
           }
         };
         authBtn.onclick = async () => {
+          const provider = f.authorize!.provider;
           const usedFields: Record<string, string> = {};
           for (const key of f.authorize!.usesFields) {
             const el = document.getElementById(`cmf-${key}`) as HTMLInputElement | null;
             usedFields[key] = el?.value.trim() ?? "";
           }
-          if (usedFields["client_secret"] === SECRET_PLACEHOLDER && cmEditingId !== null) {
+          if (provider === "box" && usedFields["client_secret"] === SECRET_PLACEHOLDER && cmEditingId !== null) {
             const unlocked = await ensureUnlocked();
             if (!unlocked) return;
             try {
@@ -189,23 +231,35 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
             }
           }
           if (Object.values(usedFields).some((v) => !v)) {
-            alert("先にクライアントID・クライアントシークレットを入力してください");
+            alert(
+              provider === "graph"
+                ? "先にテナントID・クライアントIDを入力してください"
+                : "先にクライアントID・クライアントシークレットを入力してください",
+            );
             return;
           }
           authBtn.disabled = true;
           authBtn.textContent = "ブラウザで認可待ち…";
           cancelBtn.hidden = false;
           try {
-            const res = await invoke<{ refresh_token: string }>("box_oauth_authorize", {
-              clientId: usedFields["client_id"],
-              clientSecret: usedFields["client_secret"],
-            });
+            const res = provider === "graph"
+              ? await invoke<{ refresh_token: string }>("graph_oauth_authorize", {
+                tenantId: usedFields["tenant_id"],
+                clientId: usedFields["client_id"],
+              })
+              : await invoke<{ refresh_token: string }>("box_oauth_authorize", {
+                clientId: usedFields["client_id"],
+                clientSecret: usedFields["client_secret"],
+              });
             input.value = res.refresh_token;
             renderAuthStatus();
             updateCmSaveButtonState();
           } catch (e) {
             if (!String(e).includes("キャンセルしました")) {
-              alert("Box の認可に失敗しました: " + String(e));
+              alert(
+                (provider === "graph" ? "Microsoft の認可に失敗しました: " : "Box の認可に失敗しました: ")
+                + String(e),
+              );
             }
           } finally {
             authBtn.disabled = false;
@@ -282,6 +336,7 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
     $<HTMLInputElement>("cm-label").value = "";
     const scope = $<HTMLSelectElement>("cm-scope").value as CredentialScope;
     if (scope === "box") cmBoxAuthMethod = "oauth";
+    if (scope === "graph") cmGraphAuthMethod = "app_only";
     renderCredentialFormFields(scope);
     updateCredentialListSelection();
     captureCmFormBaseline();
@@ -298,6 +353,7 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
       fields = res.fields;
     } catch { /* noop */ }
     if (scope === "box") cmBoxAuthMethod = fields["auth_method"] === "ccg" ? "ccg" : "oauth";
+    if (scope === "graph") cmGraphAuthMethod = fields["auth_method"] === "delegated" ? "delegated" : "app_only";
     renderCredentialFormFields(scope);
     updateCredentialListSelection();
     for (const [k, v] of Object.entries(fields)) {
@@ -461,10 +517,18 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
       const el = document.getElementById(`cmf-${f.key}`) as HTMLInputElement | null;
       if (el) fields[f.key] = el.value.trim();
     }
+    if (scope === "graph") fields["auth_method"] = cmGraphAuthMethod;
+    if (scope === "box") fields["auth_method"] = cmBoxAuthMethod;
     if (cmEditingId === null) {
-      const missing = defs.some((f) => !String(fields[f.key] ?? "").trim());
+      const missing = defs.some((f) => {
+        if (f.key === "auth_method") return false;
+        if (f.authorize) return !String(fields[f.key] ?? "").trim();
+        return !String(fields[f.key] ?? "").trim();
+      });
       if (missing) {
-        errEl.textContent = "すべての項目を入力してください";
+        errEl.textContent = defs.some((f) => f.authorize && !String(fields[f.key] ?? "").trim())
+          ? "先にログインして認可を完了してください"
+          : "すべての項目を入力してください";
         return;
       }
     }
@@ -487,7 +551,14 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
     resetCredentialForm();
     void refreshCredentialList();
   };
-  $<HTMLButtonElement>("cm-guide").onclick = () => openGuide(representativeTypeForScope($<HTMLSelectElement>("cm-scope").value as CredentialScope));
+  $<HTMLButtonElement>("cm-guide").onclick = () => {
+    const scope = $<HTMLSelectElement>("cm-scope").value as CredentialScope;
+    if (scope === "graph" && cmGraphAuthMethod === "delegated") {
+      openGuideDoc("microsoft365-delegated");
+      return;
+    }
+    openGuide(representativeTypeForScope(scope));
+  };
   $<HTMLButtonElement>("credential-manager-close").onclick = () => $<HTMLDialogElement>("credential-manager").close();
   $<HTMLButtonElement>("credential-manager-close-x").onclick = () => $<HTMLDialogElement>("credential-manager").close();
   $<HTMLButtonElement>("s-credential-manager").onclick = () => void openCredentialManager();

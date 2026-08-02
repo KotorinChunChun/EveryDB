@@ -152,6 +152,7 @@ pub fn browse_graph_site_resources_for_source(
         tenant_id: cfg_str(&cfg, "tenant_id"),
         client_id: cfg_str(&cfg, "client_id"),
         client_secret: cfg_str(&cfg, "client_secret"),
+        access_token: cfg_str(&cfg, "access_token"),
     };
     let site_url = cfg_str(&cfg, "site_url");
     if site_url.is_empty() {

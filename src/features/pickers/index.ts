@@ -595,20 +595,32 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
 
   let spMode: "sites" | "teams" = "sites";
 
-  async function graphAuthFromDialog(): Promise<{ tenant_id: string; client_id: string; client_secret: string } | null> {
+  type GraphPickerAuth = {
+    tenant_id: string;
+    client_id: string;
+    client_secret?: string;
+    access_token?: string;
+  };
+
+  async function graphAuthFromDialog(): Promise<GraphPickerAuth | null> {
     const tenant_id = (document.getElementById("fd-tenant_id") as HTMLInputElement | null)?.value.trim();
     const client_id = (document.getElementById("fd-client_id") as HTMLInputElement | null)?.value.trim();
     const secretEl = document.getElementById("fd-client_secret") as HTMLInputElement | null;
     if (!tenant_id || !client_id) return null;
-    let client_secret: string | undefined;
     if (secretEl?.dataset.credRef) {
-      client_secret = await invoke<string>("credential_secret_value", { id: Number(secretEl.dataset.credRef) });
+      try {
+        return await invoke<GraphPickerAuth>("resolve_graph_auth", { id: Number(secretEl.dataset.credRef) });
+      } catch (e) {
+        alert("Graph 認証情報の解決に失敗しました: " + String(e));
+        return null;
+      }
     }
+    const client_secret = secretEl?.value.trim();
     if (!client_secret) return null;
     return { tenant_id, client_id, client_secret };
   }
 
-  async function loadSpSourceList(auth: { tenant_id: string; client_id: string; client_secret: string }) {
+  async function loadSpSourceList(auth: GraphPickerAuth) {
     const listEl = $<HTMLDivElement>("sp-source-list");
     listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
     try {
@@ -626,7 +638,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
 
   function renderSpSourceList(
     items: { key: string; label: string }[],
-    auth: { tenant_id: string; client_id: string; client_secret: string },
+    auth: GraphPickerAuth,
     kind: "site" | "team",
   ) {
     const listEl = $<HTMLDivElement>("sp-source-list");
@@ -661,7 +673,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
   }
 
   async function openSpResourceStep(
-    auth: { tenant_id: string; client_id: string; client_secret: string },
+    auth: GraphPickerAuth,
     siteUrl: string,
     siteLabel: string,
   ) {

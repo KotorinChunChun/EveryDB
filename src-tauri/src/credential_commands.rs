@@ -139,3 +139,67 @@ pub async fn box_oauth_authorize(
 pub fn box_oauth_cancel(state: State<'_, AppState>) -> Result<(), String> {
     credential_service::request_box_oauth_cancel(&state).map_err(Into::into)
 }
+
+#[tauri::command]
+pub async fn graph_oauth_authorize(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    tenant_id: String,
+    client_id: String,
+) -> Result<serde_json::Value, String> {
+    let tenant_id = tenant_id.trim().to_string();
+    let client_id = client_id.trim().to_string();
+    if tenant_id.is_empty() || client_id.is_empty() {
+        return Err("テナントIDとクライアントIDを先に入力してください".to_string());
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut slot = state
+            .graph_oauth_cancel
+            .lock()
+            .map_err(|_| "lock poisoned")?;
+        *slot = Some(cancel.clone());
+    }
+    let handle = app.clone();
+    let cancel_for_task = cancel.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        crate::graph_oauth::authorize_interactive(
+            &handle,
+            &tenant_id,
+            &client_id,
+            &cancel_for_task,
+        )
+    })
+    .await
+    .map_err(|e| format!("内部エラー: {e}"))?;
+    if let Ok(mut slot) = state.graph_oauth_cancel.lock() {
+        *slot = None;
+    }
+    let (_access_token, refresh_token) = result.map_err(err_to_string)?;
+    if refresh_token.is_empty() {
+        return Err(
+            "Microsoft からリフレッシュトークンが返りませんでした。委任アクセス許可に offline_access が含まれているか確認してください"
+                .to_string(),
+        );
+    }
+    Ok(serde_json::json!({ "refresh_token": refresh_token }))
+}
+
+#[tauri::command]
+pub fn graph_oauth_cancel(state: State<'_, AppState>) -> Result<(), String> {
+    credential_service::request_graph_oauth_cancel(&state).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn resolve_graph_auth(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<serde_json::Value, String> {
+    let auth = credential_service::resolve_graph_auth(&state, id).map_err(Into::into)?;
+    Ok(serde_json::json!({
+        "tenant_id": auth.tenant_id,
+        "client_id": auth.client_id,
+        "client_secret": auth.client_secret,
+        "access_token": auth.access_token,
+    }))
+}

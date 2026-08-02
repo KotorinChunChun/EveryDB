@@ -1334,10 +1334,12 @@ name = "everydb"
 version = "0.0.6"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "calamine",
  "csv",
  "encoding_rs",
  "getrandom 0.3.4",
+ "hmac-sha256",
  "jsonwebtoken",
  "mysql",
  "native-tls",
@@ -1965,6 +1967,12 @@ checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
 dependencies = [
  "digest 0.11.3",
 ]
+
+[[package]]
+name = "hmac-sha256"
+version = "1.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec9d92d097f4749b64e8cc33d924d9f40a2d4eb91402b458014b781f5733d60f"
 
 [[package]]
 name = "html5ever"

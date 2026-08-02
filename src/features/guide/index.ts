@@ -7,6 +7,7 @@ const GUIDE_DOCS = import.meta.glob("/docs/guides/*.md", { query: "?raw", import
 export interface GuideViewerController {
   guideTextFor: (type_: string) => string | null;
   openGuide: (type_: string) => void;
+  openGuideDoc: (name: string) => void;
 }
 
 /** 接続先種別ごとの手順書ダイアログとショートカット一覧をマウントする。 */
@@ -19,14 +20,20 @@ export function mountGuideViewer(): GuideViewerController {
     return name ? GUIDE_DOCS[`/docs/guides/${name}.md`] ?? null : null;
   }
 
-  function openGuide(type_: string) {
-    const md = guideTextFor(type_);
+  function openGuideDoc(name: string) {
+    const md = GUIDE_DOCS[`/docs/guides/${name}.md`];
     if (!md) return;
     const firstH1 = /^#\s+(.*)$/m.exec(md);
     $<HTMLHeadingElement>("guide-title").textContent = firstH1 ? firstH1[1] : "接続手順書";
     renderMarkdownInto(guideBody, firstH1 ? md.replace(firstH1[0], "") : md);
     guideBody.scrollTop = 0;
     guideDialog.showModal();
+  }
+
+  function openGuide(type_: string) {
+    const name = guideNameForType(type_);
+    if (!name) return;
+    openGuideDoc(name);
   }
 
   $<HTMLButtonElement>("guide-close").onclick = () => guideDialog.close();
@@ -42,5 +49,5 @@ export function mountGuideViewer(): GuideViewerController {
     $<HTMLDialogElement>("shortcut-guide-dialog")?.close();
   });
 
-  return { guideTextFor, openGuide };
+  return { guideTextFor, openGuide, openGuideDoc };
 }

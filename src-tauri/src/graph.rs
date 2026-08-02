@@ -11,6 +11,13 @@ pub struct GraphClient {
 }
 
 impl GraphClient {
+    /// 既に取得済みのアクセストークンでクライアントを構築する（委任 OAuth 用）。
+    pub fn new_with_token(access_token: impl Into<String>) -> Self {
+        Self {
+            token: access_token.into(),
+        }
+    }
+
     /// クライアントクレデンシャルフローでアクセストークンを取得する。
     pub fn new(tenant_id: &str, client_id: &str, client_secret: &str) -> Result<Self> {
         let url = format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token");

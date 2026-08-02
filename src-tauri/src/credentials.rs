@@ -38,7 +38,7 @@ fn source_ref_key_of_scope(scope: &str) -> Option<&'static str> {
 fn protected_keys_of_scope(scope: &str) -> &'static [&'static str] {
     match scope {
         "notion" | "airtable" => &["token"],
-        "graph" => &["client_secret"],
+        "graph" => &["client_secret", "refresh_token"],
         "box" => &["client_secret", "refresh_token"],
         "postgres" | "mysql" => &["password"],
         _ => &[],
@@ -234,11 +234,12 @@ pub fn resolve_secret_value(conn: &Connection, id: i64) -> Result<String> {
         [id],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
-    // box は「コピー」の対象を client_secret（アプリ登録時に発行されたシークレット）とする。
-    // refresh_token はユーザー本人の認可情報そのものであり、また参照するたびにローテーション
-    // してしまうため、通常のコピー用途には向かない。
+    // box / graph(delegated) の refresh_token はコピー用途に向かない。
+    // graph は app_only の client_secret、または delegated でもコピー対象は client_secret キー
+    // （空の場合あり）とする。
     let key = match scope.as_str() {
         "box" => "client_secret",
+        "graph" => "client_secret",
         _ => source_ref_key_of_scope(&scope)
             .ok_or_else(|| anyhow!("秘密フィールドの無いスコープです: {scope}"))?,
     };
@@ -344,6 +345,42 @@ pub fn resolve_credentials(conn: &Connection, config_json: &str) -> Result<Strin
             obj.insert(key, Value::String(access_token));
             continue;
         }
+        if scope == "graph" {
+            let decrypted = secret::unprotect_config(&fields_json)?;
+            let cred_v: Value = serde_json::from_str(&decrypted)?;
+            let auth_method = cred_v
+                .get("auth_method")
+                .and_then(|x| x.as_str())
+                .unwrap_or("app_only");
+            if auth_method == "delegated" {
+                let access_token = graph_access_token_for_credential(conn, id, &fields_json)?;
+                // コネクタは access_token があれば client_credentials を使わない。
+                obj.insert("access_token".to_string(), Value::String(access_token));
+                obj.insert(key, Value::String(String::new()));
+                if let Some(cred_obj) = cred_v.as_object() {
+                    for copy_key in ["tenant_id", "client_id"] {
+                        if obj
+                            .get(copy_key)
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .is_empty()
+                        {
+                            if let Some(val) = cred_obj.get(copy_key) {
+                                obj.insert(copy_key.to_string(), val.clone());
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+            // app_only（既定）: client_secret を復号して埋め込む。
+            if let Some(cred_obj) = cred_v.as_object() {
+                if let Some(val) = cred_obj.get(&key) {
+                    obj.insert(key, val.clone());
+                }
+            }
+            continue;
+        }
         let decrypted = secret::unprotect_config(&fields_json)?;
         let cred_v: Value = serde_json::from_str(&decrypted)?;
         if let Some(cred_obj) = cred_v.as_object() {
@@ -353,6 +390,102 @@ pub fn resolve_credentials(conn: &Connection, config_json: &str) -> Result<Strin
         }
     }
     Ok(serde_json::to_string(&v)?)
+}
+
+/// graph: `auth_method=delegated` のとき refresh_token からアクセストークンを取得する。
+fn graph_access_token_for_credential(
+    conn: &Connection,
+    credential_id: i64,
+    protected_fields_json: &str,
+) -> Result<String> {
+    let decrypted = secret::unprotect_config(protected_fields_json)?;
+    let v: Value = serde_json::from_str(&decrypted)?;
+    let tenant_id = v
+        .get("tenant_id")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("テナントIDが未設定です"))?;
+    let client_id = v
+        .get("client_id")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("クライアントIDが未設定です"))?;
+    let refresh_token = v
+        .get("refresh_token")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            anyhow!(
+                "Microsoft の認可が完了していません。トークン管理画面で「Microsoft にログインして認可」を行ってください"
+            )
+        })?;
+    let (access_token, new_refresh_token) =
+        crate::graph_oauth::refresh(tenant_id, client_id, refresh_token)?;
+    if !new_refresh_token.is_empty() && new_refresh_token != refresh_token {
+        let mut updated = v.clone();
+        if let Some(obj) = updated.as_object_mut() {
+            obj.insert(
+                "refresh_token".to_string(),
+                Value::String(new_refresh_token),
+            );
+        }
+        let updated_json = serde_json::to_string(&updated)?;
+        let reprotected = secret::protect_json_keys(protected_keys_of_scope("graph"), &updated_json)?;
+        conn.execute(
+            "UPDATE credentials SET fields_json = ?2 WHERE id = ?1",
+            params![credential_id, reprotected],
+        )?;
+    }
+    Ok(access_token)
+}
+
+/// 保存済み Graph 認証情報からピッカー用の認証引数を解決する。
+pub fn resolve_graph_auth_args(conn: &Connection, id: i64) -> Result<crate::browse::GraphAuthArgs> {
+    let (scope, fields_json): (String, String) = conn.query_row(
+        "SELECT scope, fields_json FROM credentials WHERE id = ?1",
+        [id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    if scope != "graph" {
+        return Err(anyhow!("Graph 以外のトークンです: {scope}"));
+    }
+    let decrypted = secret::unprotect_config(&fields_json)?;
+    let v: Value = serde_json::from_str(&decrypted)?;
+    let tenant_id = v
+        .get("tenant_id")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let client_id = v
+        .get("client_id")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let auth_method = v
+        .get("auth_method")
+        .and_then(|x| x.as_str())
+        .unwrap_or("app_only");
+    if auth_method == "delegated" {
+        let access_token = graph_access_token_for_credential(conn, id, &fields_json)?;
+        Ok(crate::browse::GraphAuthArgs {
+            tenant_id,
+            client_id,
+            client_secret: String::new(),
+            access_token,
+        })
+    } else {
+        let client_secret = v
+            .get("client_secret")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        Ok(crate::browse::GraphAuthArgs {
+            tenant_id,
+            client_id,
+            client_secret,
+            access_token: String::new(),
+        })
+    }
 }
 
 /// box: `auth_method`（"oauth" 既定 / "ccg"）に応じてアクセストークンを取得する。
@@ -624,6 +757,31 @@ mod tests {
         assert_eq!(v["client_id"], "cid"); // 非秘密フィールドは平文のまま
         assert!(v["client_secret"].as_str().unwrap().starts_with("dpapi:"));
         assert!(v["refresh_token"].as_str().unwrap().starts_with("dpapi:"));
+    }
+
+    #[test]
+    fn public_fields_excludes_graph_refresh_token() {
+        let conn = open_test_db();
+        let id = add_credential(
+            &conn,
+            "graph",
+            "委任",
+            r#"{"auth_method":"delegated","tenant_id":"t","client_id":"c","refresh_token":"rtok"}"#,
+        )
+        .unwrap();
+        let (_label, fields) = public_fields(&conn, id).unwrap();
+        assert_eq!(
+            fields.get("auth_method").and_then(|v| v.as_str()),
+            Some("delegated")
+        );
+        assert!(fields.get("refresh_token").is_none());
+        assert!(fields.get("client_secret").is_none());
+    }
+
+    #[test]
+    fn protected_keys_of_graph_include_refresh_token() {
+        assert!(protected_keys_of_scope("graph").contains(&"refresh_token"));
+        assert!(protected_keys_of_scope("graph").contains(&"client_secret"));
     }
 
     #[test]

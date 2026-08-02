@@ -14,7 +14,20 @@ use crate::model::Record;
 struct GraphAuth {
     tenant_id: String,
     client_id: String,
+    #[serde(default)]
     client_secret: String,
+    #[serde(default)]
+    access_token: String,
+}
+
+impl GraphAuth {
+    fn client(&self) -> Result<GraphClient> {
+        if !self.access_token.is_empty() {
+            Ok(GraphClient::new_with_token(&self.access_token))
+        } else {
+            GraphClient::new(&self.tenant_id, &self.client_id, &self.client_secret)
+        }
+    }
 }
 
 /// Graph の JSON スカラー値（$select したフィールド）を表示用文字列へ。
