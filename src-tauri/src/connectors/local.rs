@@ -245,6 +245,13 @@ impl Connector for FolderConnector {
         }
         Ok(out)
     }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        Ok(["名前", "パス", "拡張子", "サイズ", "更新日時"]
+            .into_iter()
+            .map(String::from)
+            .collect())
+    }
 }
 
 // ---- IME 辞書（エクスポート済みテキスト）----
@@ -303,6 +310,14 @@ impl Connector for ImeConnector {
             out.push(make_record(pairs, &self.cfg.path, &cfg));
         }
         Ok(out)
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        let names: &[&str] = match self.flavor {
+            ImeFlavor::MsIme => &["読み", "語", "品詞"],
+            ImeFlavor::Google => &["読み", "単語", "品詞", "コメント"],
+        };
+        Ok(names.iter().map(|name| (*name).to_string()).collect())
     }
 }
 
@@ -433,6 +448,13 @@ impl Connector for BrowserHistoryConnector {
         let _ = std::fs::remove_file(&tmp);
         result
     }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        Ok(["タイトル", "URL", "訪問回数", "最終訪問"]
+            .into_iter()
+            .map(String::from)
+            .collect())
+    }
 }
 
 impl BrowserHistoryConnector {
@@ -502,6 +524,15 @@ impl Connector for BrowserBookmarksConnector {
         } else {
             self.fetch_chromium()
         }
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        let names: &[&str] = if self.browser == "firefox" {
+            &["名前", "URL", "追加日時"]
+        } else {
+            &["名前", "URL", "フォルダ", "追加日時"]
+        };
+        Ok(names.iter().map(|name| (*name).to_string()).collect())
     }
 }
 
@@ -652,6 +683,23 @@ impl Connector for BrowserDownloadsConnector {
         })();
         let _ = std::fs::remove_file(&tmp);
         result
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        let names: &[&str] = if self.browser == "firefox" {
+            &["ファイル名", "保存先パス", "URL", "タイトル", "追加日時"]
+        } else {
+            &[
+                "ファイル名",
+                "保存先パス",
+                "URL",
+                "状態",
+                "サイズ(バイト)",
+                "開始日時",
+                "完了日時",
+            ]
+        };
+        Ok(names.iter().map(|name| (*name).to_string()).collect())
     }
 }
 
@@ -1501,6 +1549,10 @@ impl Connector for ExcelSheetsConnector {
             .map(|name| make_record(vec![("シート名".to_string(), name)], &self.path, &cfg))
             .collect();
         Ok(out)
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        Ok(vec!["シート名".to_string()])
     }
 }
 

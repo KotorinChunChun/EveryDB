@@ -527,6 +527,67 @@ mod tests {
     }
 
     #[test]
+    fn fixed_schema_local_connectors_list_fields_without_reading_data() {
+        // path は意図的に存在しない。列名プレビューで実データの読み込みを行わないことを固定する。
+        let missing_path = "C:/not-a-real-path/for-field-preview";
+        let cases: [(&str, serde_json::Value, &[&str]); 7] = [
+            (
+                "folder",
+                serde_json::json!({ "path": missing_path }),
+                &["名前", "パス", "拡張子", "サイズ", "更新日時"],
+            ),
+            (
+                "ime_msime",
+                serde_json::json!({ "path": missing_path }),
+                &["読み", "語", "品詞"],
+            ),
+            (
+                "ime_google",
+                serde_json::json!({ "path": missing_path }),
+                &["読み", "単語", "品詞", "コメント"],
+            ),
+            (
+                "browser_history",
+                serde_json::json!({ "browser": "chrome", "path": missing_path }),
+                &["タイトル", "URL", "訪問回数", "最終訪問"],
+            ),
+            (
+                "browser_bookmarks",
+                serde_json::json!({ "browser": "firefox", "path": missing_path }),
+                &["名前", "URL", "追加日時"],
+            ),
+            (
+                "browser_downloads",
+                serde_json::json!({ "browser": "chrome", "path": missing_path }),
+                &[
+                    "ファイル名",
+                    "保存先パス",
+                    "URL",
+                    "状態",
+                    "サイズ(バイト)",
+                    "開始日時",
+                    "完了日時",
+                ],
+            ),
+            (
+                "excel_sheets",
+                serde_json::json!({ "path": missing_path }),
+                &["シート名"],
+            ),
+        ];
+
+        for (type_, config, expected) in cases {
+            assert_eq!(
+                raw_field_names(type_, &config.to_string()).unwrap(),
+                expected
+                    .iter()
+                    .map(|name| (*name).to_string())
+                    .collect::<Vec<_>>(),
+                "{type_}"
+            );
+        }
+    }
+    #[test]
     fn excel_range_single_cell() {
         // 単一セル "B2"(has_header 無効相当)は 1 レコード・列文字 B を見出しに。
         let recs = fetch(
