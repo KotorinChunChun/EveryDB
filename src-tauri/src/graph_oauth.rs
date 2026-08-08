@@ -19,9 +19,9 @@ const AUTHORIZE_TIMEOUT: Duration = Duration::from_secs(180);
 /// Entra アプリ登録・手順書と一致させる固定 Redirect URI。
 pub const REDIRECT_URI: &str = "http://localhost:58914/graph-callback";
 
-/// Graph 委任認可で要求するスコープ（SharePoint Phase 1）。
+/// Graph 委任認可で要求するスコープ（SharePoint / Teams ピッカー）。
 pub const DELEGATED_SCOPES: &str =
-    "https://graph.microsoft.com/Sites.Read.All offline_access User.Read";
+    "https://graph.microsoft.com/Sites.Read.All Team.ReadBasic.All offline_access User.Read";
 
 /// フロントが「ユーザー取消」と失敗を区別するための固定メッセージ。
 pub const CANCELLED_MESSAGE: &str = "Microsoft の認可をキャンセルしました";
@@ -340,6 +340,7 @@ mod tests {
                 || url.contains("Sites.Read.All".replace('.', "%2E").as_str())
                 || url.contains("graph.microsoft.com")
         );
+        assert!(url.contains("Team.ReadBasic.All"));
         assert!(url.contains("offline_access") || url.contains("offline_access"));
     }
 

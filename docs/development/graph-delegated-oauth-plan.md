@@ -37,7 +37,7 @@ Graph でも同様の二系統共存を目指す。
 | 既存方式 | クライアントシークレット + `client_credentials` は **維持**。credential manager が `auth_method` で分岐 |
 | Phase 1 対象 | **SharePoint リスト / ドキュメントライブラリ** の委任 OAuth パス |
 | Phase 2 以降 | その他 Graph 種別（Entra ID ユーザー、OneDrive、Outlook 予定表 等） |
-| 委任権限（SharePoint） | **`Sites.Read.All`（委任）**、**`offline_access`**、**`User.Read`**。将来 **`Sites.Selected`** による最小権限化を検討 |
+| 委任権限（SharePoint / Teams ピッカー） | **`Sites.Read.All`（委任）**、**`Team.ReadBasic.All`（委任）**、**`offline_access`**、**`User.Read`**。将来 **`Sites.Selected`** による最小権限化を検討 |
 | Redirect URI | Box と同様の **固定ポート + 専用パス**（後述） |
 
 ### 計画定数: Redirect URI
@@ -68,7 +68,7 @@ Box の `box_oauth.rs` をベースに、Microsoft 固有の差分を実装す�
 - **PKCE**: `code_verifier` / `code_challenge`（S256）を生成し、authorize URL と token 交換に付与
 - **Authorize URL**: `https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize`
   - `response_type=code`
-  - `scope`: `https://graph.microsoft.com/Sites.Read.All offline_access User.Read`（スペース区切り）
+  - `scope`: `https://graph.microsoft.com/Sites.Read.All Team.ReadBasic.All offline_access User.Read`（スペース区切り）
   - `redirect_uri`, `client_id`, `state`, `code_challenge`, `code_challenge_method=S256`
 - **Token URL**: `https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token`
   - Authorization Code 交換: `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, `code_verifier`（**client_secret なし**）

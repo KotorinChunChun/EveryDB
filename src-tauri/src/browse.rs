@@ -17,6 +17,11 @@ pub struct GraphAuthArgs {
     #[serde(default)]
     pub access_token: String,
 }
+impl GraphAuthArgs {
+    fn uses_delegated_oauth(&self) -> bool {
+        !self.access_token.is_empty()
+    }
+}
 
 fn graph_client(auth: &GraphAuthArgs) -> Result<GraphClient> {
     if !auth.access_token.is_empty() {
@@ -301,7 +306,7 @@ pub struct TeamEntry {
 
 pub fn graph_list_teams(auth: &GraphAuthArgs) -> Result<Vec<TeamEntry>> {
     let client = graph_client(auth)?;
-    let url = "https://graph.microsoft.com/v1.0/groups?$filter=resourceProvisioningOptions/Any(x:x%20eq%20'Team')&$select=id,displayName,description,createdDateTime&$top=999";
+    let url = graph_teams_url(auth);
     Ok(client
         .get_all(url)?
         .iter()
@@ -315,6 +320,16 @@ pub fn graph_list_teams(auth: &GraphAuthArgs) -> Result<Vec<TeamEntry>> {
             })
         })
         .collect())
+}
+
+/// 委任 OAuth ではサインインユーザー本人が直接参加している Teams のみを取得する。
+/// `/groups` はテナント全体を対象にするため、従来の app-only 認証でだけ使用する。
+fn graph_teams_url(auth: &GraphAuthArgs) -> &'static str {
+    if auth.uses_delegated_oauth() {
+        "https://graph.microsoft.com/v1.0/me/joinedTeams"
+    } else {
+        "https://graph.microsoft.com/v1.0/groups?$filter=resourceProvisioningOptions/Any(x:x%20eq%20'Team')&$select=id,displayName,description,createdDateTime&$top=999"
+    }
 }
 
 /// Teams チームの裏側にある SharePoint サイトの URL を解決する。
@@ -734,6 +749,31 @@ mod tests {
             .join(name)
             .to_string_lossy()
             .into_owned()
+    }
+
+    #[test]
+    fn graph_team_picker_uses_user_context_for_delegated_oauth() {
+        let delegated = GraphAuthArgs {
+            tenant_id: "tenant".to_string(),
+            client_id: "client".to_string(),
+            client_secret: String::new(),
+            access_token: "delegated-token".to_string(),
+        };
+        assert_eq!(
+            graph_teams_url(&delegated),
+            "https://graph.microsoft.com/v1.0/me/joinedTeams"
+        );
+    }
+
+    #[test]
+    fn graph_team_picker_keeps_tenant_query_for_app_only_auth() {
+        let app_only = GraphAuthArgs {
+            tenant_id: "tenant".to_string(),
+            client_id: "client".to_string(),
+            client_secret: "secret".to_string(),
+            access_token: String::new(),
+        };
+        assert!(graph_teams_url(&app_only).contains("/groups?"));
     }
 
     #[test]
