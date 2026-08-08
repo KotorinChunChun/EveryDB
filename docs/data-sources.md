@@ -41,10 +41,9 @@
 | 公開データ | PokéAPI (ポケモン)（`pokeapi`） | [pokeapi](guides/pokeapi.md) |
 <!-- source-catalog:end -->
 
-SharePoint を **ユーザー委任（ログインして認可）** で接続する手順は、上記の
-アプリケーションの許可手順とは別に
-[microsoft365-delegated](guides/microsoft365-delegated.md) を参照してください。
-既存の [microsoft365](guides/microsoft365.md)（クライアントシークレット方式）はそのまま有効です。
+Microsoft Graphには2つの認証方式があります。違いと選び方は
+[Microsoft Graph 接続方法の選択](guides/microsoft365.md)を参照してください。
+個別手順: [アプリケーション認証](guides/microsoft365-app-only.md) / [委任 OAuth](guides/microsoft365-delegated.md)。
 
 ## 検証レベル
 

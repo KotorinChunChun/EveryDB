@@ -2,9 +2,9 @@
 
 対象の EveryDB 種別: **SharePoint リスト / ドキュメントライブラリ**
 
-> 本ファイルは **ユーザー委任（Delegated）** の手順書です。
-> **アプリケーションの許可（app-only / クライアントシークレット）** の手順は、既存の
-> [Microsoft 365（Graph API）手順書](microsoft365.md) をそのまま使ってください（本ファイルはそちらを置き換えません）。
+> 本ファイルは **ユーザー委任（Delegated）** の個別手順です。
+> 方式の比較と選び方は [Microsoft Graph 接続方法の選択](microsoft365.md)、
+> app-only方式は [アプリケーション認証の接続手順](microsoft365-app-only.md) を参照してください。
 
 ## 概要
 
@@ -16,7 +16,7 @@ EveryDB から **「Microsoft にログインして認可…」** でブラウ�
 
 | 方式 | 手順書 | 認証 | Entra の許可の種類 |
 | :--- | :--- | :--- | :--- |
-| アプリケーションの許可（既存） | [microsoft365.md](microsoft365.md) | クライアントシークレット | **アプリケーションの許可** |
+| アプリケーションの許可 | [個別手順](microsoft365-app-only.md) | クライアントシークレット | **アプリケーションの許可** |
 | ユーザー委任（本手順） | 本ファイル | ブラウザでユーザーログイン | **委任されたアクセス許可** |
 
 ## 事前に必要なもの
@@ -150,4 +150,5 @@ EveryDB の委任 OAuth（Authorization Code + PKCE）には、
 - [Microsoft Graph のアクセス許可リファレンス](https://learn.microsoft.com/graph/permissions-reference)
 - [Microsoft identity platform の OAuth 2.0 認可コード フロー](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-auth-code-flow)
 - [アプリケーションの種類（パブリック クライアント）](https://learn.microsoft.com/entra/identity-platform/msal-client-applications)
-- アプリケーションの許可（既存手順）: [microsoft365.md](microsoft365.md)
+- [Microsoft Graph 接続方法の選択](microsoft365.md)
+- [アプリケーション認証の接続手順](microsoft365-app-only.md)

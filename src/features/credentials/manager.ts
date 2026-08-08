@@ -15,6 +15,10 @@ export interface CredentialManagerDeps {
   openGuideDoc: (name: string) => void;
 }
 
+export function graphGuideDocument(authMethod: "app_only" | "delegated"): string {
+  return authMethod === "delegated" ? "microsoft365-delegated" : "microsoft365-app-only";
+}
+
 export interface CredentialManagerController {
   openCredentialManager: (initialScope?: CredentialScope) => Promise<void>;
   copyCredentialSecretToClipboard: (id: number) => Promise<void>;
@@ -553,8 +557,8 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
   };
   $<HTMLButtonElement>("cm-guide").onclick = () => {
     const scope = $<HTMLSelectElement>("cm-scope").value as CredentialScope;
-    if (scope === "graph" && cmGraphAuthMethod === "delegated") {
-      openGuideDoc("microsoft365-delegated");
+    if (scope === "graph") {
+      openGuideDoc(graphGuideDocument(cmGraphAuthMethod));
       return;
     }
     openGuide(representativeTypeForScope(scope));

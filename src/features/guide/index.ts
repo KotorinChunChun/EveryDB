@@ -25,9 +25,11 @@ export function mountGuideViewer(): GuideViewerController {
     if (!md) return;
     const firstH1 = /^#\s+(.*)$/m.exec(md);
     $<HTMLHeadingElement>("guide-title").textContent = firstH1 ? firstH1[1] : "接続手順書";
-    renderMarkdownInto(guideBody, firstH1 ? md.replace(firstH1[0], "") : md);
+    renderMarkdownInto(guideBody, firstH1 ? md.replace(firstH1[0], "") : md, {
+      onOpenDocument: openGuideDoc,
+    });
     guideBody.scrollTop = 0;
-    guideDialog.showModal();
+    if (!guideDialog.open) guideDialog.showModal();
   }
 
   function openGuide(type_: string) {

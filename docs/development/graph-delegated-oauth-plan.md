@@ -168,7 +168,7 @@ sequenceDiagram
 | トークン管理 | 「Microsoft にログインして認可…」ボタン、取消ボタン、認可状態（✅ 認可済み） |
 | トークン管理 | Redirect URI ヘルプ文言（`http://localhost:58914/graph-callback`） |
 | 接続設定ピッカー | 委任プロファイル選択時も `cred:<id>` 参照で動作することを確認 |
-| 手順書リンク | 既存 `microsoft365.md`（アプリケーションの許可）は **変更しない**。ユーザー委任は別ファイル `microsoft365-delegated.md`。`data-sources.md` に注記済み。アプリ内の `guide` 配線は実装時に方針決定（既存ガイドを壊さない） |
+| 手順書リンク | `microsoft365.md`を方式比較メニューとし、`microsoft365-app-only.md`と`microsoft365-delegated.md`へ分離。credential managerは選択中の方式別ページを直接開く |
 | Tauri IPC | `graph_oauth_authorize` コマンド、キャンセルフラグ、アプリ終了時の OAuth 待機打ち切り |
 
 ## テスト計画
@@ -225,5 +225,6 @@ Box の `box_oauth.rs` テスト構成を踏襲する。
 ## 関連ドキュメント
 
 - エンドユーザー手順: [Microsoft 365 委任 OAuth 手順書](../guides/microsoft365-delegated.md)
-- 既存 app-only 手順: [Microsoft 365（Graph API）手順書](../guides/microsoft365.md)
+- 認証方式の比較: [Microsoft Graph 接続方法の選択](../guides/microsoft365.md)
+- app-only 手順: [Microsoft 365 アプリケーション認証手順書](../guides/microsoft365-app-only.md)
 - Box OAuth 参考: [Box 手順書](../guides/box.md)
