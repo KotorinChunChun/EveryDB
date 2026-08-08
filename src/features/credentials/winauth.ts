@@ -1,6 +1,5 @@
 import { invoke } from "../../app/ipc";
 import { appState, setWinAuthStatus } from "../../app/state";
-import type { WinAuthStatus } from "../../shared/types";
 
 export interface WinAuthController {
   refreshWinAuthStatus: () => Promise<void>;
@@ -10,7 +9,7 @@ export interface WinAuthController {
 /** Windows Hello 本人確認（シークレット閲覧・使用の前に呼ぶ）。 */
 export function createWinAuth(): WinAuthController {
   async function refreshWinAuthStatus() {
-    setWinAuthStatus(await invoke<WinAuthStatus>("winauth_status"));
+    setWinAuthStatus(await invoke("winauth_status"));
   }
 
   /** シークレットを表示/使用する操作の前に本人確認を保証する。
@@ -19,7 +18,7 @@ export function createWinAuth(): WinAuthController {
     await refreshWinAuthStatus();
     if (appState.winAuthStatus.unlocked) return true;
     try {
-      const ok = await invoke<boolean>("winauth_verify");
+      const ok = await invoke("winauth_verify");
       await refreshWinAuthStatus();
       return ok;
     } catch (e) {

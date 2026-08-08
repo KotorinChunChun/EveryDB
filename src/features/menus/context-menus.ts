@@ -1,9 +1,9 @@
 import { confirmDelete, positionContextMenu } from "../../app/dom";
 import { invoke } from "../../app/ipc";
 import { appState, clearContextMenuTargets } from "../../app/state";
-import type { Row, ReloadSummary, SourceDetail } from "../../shared/types";
-import type { ParentKind } from "../../source-types/registry";
-import { canOpenTable } from "./openable";
+import type { Row, ReloadSummary } from "../../shared/types";
+
+import { canOpenParent, canOpenTable } from "./openable";
 
 export interface ContextMenuElements {
   sourceMenu: HTMLDivElement;
@@ -13,7 +13,7 @@ export interface ContextMenuElements {
 
 export interface ContextMenuActions {
   parentLabel: (parentKey: string) => string;
-  parentKindOf: (type: string) => ParentKind;
+
   reloadSummaryMessage: (summary: ReloadSummary) => string;
   cellText: (row: Row, col: number) => string;
   getCellUrl: (text: string) => string | null;
@@ -45,7 +45,7 @@ async function openTableBySourceId(
   tableOpenUrl: (type: string, config: Record<string, unknown>) => string | null,
 ): Promise<void> {
   try {
-    const detail = await invoke<SourceDetail>("get_source_detail", { id });
+    const detail = await invoke("get_source_detail", { id });
     const url = tableOpenUrl(detail.type_, detail.config);
     if (url) {
       await invoke("open_ref", { target: url });
@@ -211,7 +211,7 @@ export function mountContextMenus(
       case "reload": {
         actions.setResultInfo("リロード中…");
         try {
-          const summary = await invoke<ReloadSummary>("reload_sources", { sourceIds: children.map((c) => c.id) });
+          const summary = await invoke("reload_sources", { sourceIds: children.map((c) => c.id) });
           actions.setResultInfo(actions.reloadSummaryMessage(summary));
         } catch (e) {
           actions.setResultInfo("リロード失敗: " + String(e));
@@ -221,8 +221,7 @@ export function mountContextMenus(
         break;
       }
       case "open": {
-        const kind = actions.parentKindOf(children[0].type_);
-        if (kind !== "path" && kind !== "sharepoint") {
+        if (!canOpenParent(children[0].type_)) {
           actions.setResultInfo("この接続先は直接開けません");
           break;
         }

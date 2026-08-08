@@ -1,5 +1,5 @@
 import { invoke } from "../../app/ipc";
-import type { SourceDetail, SourceInfo } from "../../shared/types";
+import type { SourceInfo } from "../../shared/types";
 import { GRAPH_ONE_CLICK_TYPES } from "./connection-kinds";
 
 export interface DuplicateSourceMatch {
@@ -73,7 +73,7 @@ export async function findDuplicateSource(
   if (candidates.length === 0) return null;
 
   for (const c of candidates) {
-    const detail = await invoke<SourceDetail>("get_source_detail", { id: c.id }).catch(() => null);
+    const detail = await invoke("get_source_detail", { id: c.id }).catch(() => null);
     if (!detail) continue;
     const other = detail.config;
     if (identityMatches(type_, config, detail.type_, other)) {

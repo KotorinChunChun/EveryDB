@@ -1,7 +1,7 @@
 import { $, confirmDelete, setPickerMessage } from "../../app/dom";
 import { invoke } from "../../app/ipc";
 import { appState } from "../../app/state";
-import type { SourceDetail, SourceInfo } from "../../shared/types";
+import type { SourceInfo } from "../../shared/types";
 import { TYPE_DEFS } from "../../source-types/forms";
 import type { FieldDef } from "../../source-types/forms";
 import type { ParentKind } from "../../source-types/registry";
@@ -167,11 +167,11 @@ export function mountParentSettingsDialog(
     try {
       if (kind === "sqlite" || kind === "accdb" || kind === "excel_table") {
         const cmd = kind === "sqlite" ? "browse_sqlite_tables" : kind === "accdb" ? "browse_accdb_tables" : "browse_excel_tables";
-        const names = await invoke<string[]>(cmd, { path: shared.path });
+        const names = await invoke(cmd, { path: shared.path });
         parentTableItems = names.map((n) => ({ key: n, label: n, type_: repType, extraConfig: { table: n } }));
       } else if (kind === "sharepoint") {
         // 秘密フィールド（client_secret）はマスクされている可能性があるため、保存済み設定を使う。
-        const resources = await invoke<{ display_name: string; kind: string }[]>(
+        const resources = await invoke(
           "browse_graph_site_resources_for_source",
           { id: siblingId, overridesJson: JSON.stringify(shared) },
         );
@@ -182,20 +182,20 @@ export function mountParentSettingsDialog(
           extraConfig: r.kind === "library" ? { library_name: r.display_name } : { list_name: r.display_name },
         }));
       } else if (kind === "notion") {
-        const dbs = await invoke<{ id: string; title: string }[]>(
+        const dbs = await invoke(
           "browse_notion_databases_for_source",
           { id: siblingId, overridesJson: JSON.stringify(shared) },
         );
         parentTableItems = dbs.map((d) => ({ key: d.id, label: d.title || "(無題)", type_: "notion", extraConfig: { database_id: d.id } }));
       } else if (kind === "airtable") {
-        const tbls = await invoke<{ id: string; name: string }[]>(
+        const tbls = await invoke(
           "browse_airtable_tables_for_source",
           { id: siblingId, overridesJson: JSON.stringify(shared), baseId: null },
         );
         // base_id/base_name は共有フィールド(token)には含めていないため、兄弟テーブルの設定から
         // 引き継ぐ。無いと新規テーブルがどの Base にも属さない扱いになり、汎用の「Airtable」
         // ツリーへ入ってしまう（実際に発生した不具合）。
-        const siblingDetail = await invoke<SourceDetail>("get_source_detail", { id: siblingId }).catch(() => null);
+        const siblingDetail = await invoke("get_source_detail", { id: siblingId }).catch(() => null);
         const baseId = siblingDetail ? String(siblingDetail.config.base_id ?? "") : "";
         const baseName = siblingDetail ? String(siblingDetail.config.base_name ?? "") : "";
         parentTableItems = tbls.map((t) => ({
@@ -224,7 +224,7 @@ export function mountParentSettingsDialog(
       }
     } else {
       const details = await Promise.all(
-        children.map((c) => invoke<SourceDetail>("get_source_detail", { id: c.id }).catch(() => null)),
+        children.map((c) => invoke("get_source_detail", { id: c.id }).catch(() => null)),
       );
       children.forEach((c, i) => {
         const cfg = details[i]?.config;
@@ -301,7 +301,7 @@ export function mountParentSettingsDialog(
     setLinkedCredentials({});
     if (fieldDefs.length > 0) {
       try {
-        const detail = await invoke<SourceDetail>("get_source_detail", { id: children[0].id });
+        const detail = await invoke("get_source_detail", { id: children[0].id });
         prefill = detail.config;
         setLinkedCredentials(detail.linked_credentials ?? {});
       } catch { /* noop */ }
@@ -321,7 +321,7 @@ export function mountParentSettingsDialog(
     if (el.dataset.credLabel) return;
     const ok = await actions.ensureUnlocked();
     if (ok) {
-      const detail = await invoke<SourceDetail>("get_source_detail", { id: parentDialogState.children[0].id });
+      const detail = await invoke("get_source_detail", { id: parentDialogState.children[0].id });
       el.value = String((detail.config as Record<string, unknown>)[el.id.replace("pf-", "")] ?? "");
     }
   });
@@ -373,7 +373,7 @@ export function mountParentSettingsDialog(
     if (toAdd.length === 0 && toRemove.length === 0 && !labelChanged) {
       let anySharedChange = false;
       for (const c of children) {
-        const detail = await invoke<SourceDetail>("get_source_detail", { id: c.id });
+        const detail = await invoke("get_source_detail", { id: c.id });
         if (sharedConfigWouldChange(detail.config, sharedValues, keys, actions.normalizePath)) {
           anySharedChange = true;
           break;
@@ -397,7 +397,7 @@ export function mountParentSettingsDialog(
       }
 
       for (const c of children) {
-        const detail = await invoke<SourceDetail>("get_source_detail", { id: c.id });
+        const detail = await invoke("get_source_detail", { id: c.id });
         if (!sharedConfigWouldChange(detail.config, sharedValues, keys, actions.normalizePath)) continue;
         const cfg = { ...detail.config };
         for (const k of keys) {

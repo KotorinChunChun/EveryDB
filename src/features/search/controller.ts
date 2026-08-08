@@ -46,7 +46,7 @@ export function mountSearchController(
     const ids = Array.from(appState.selectedSourceIds);
     let resp: SearchResponse;
     try {
-      resp = await invoke<SearchResponse>("search", { query, sourceIds: ids, seq, limit: currentRowLimit() });
+      resp = await invoke("search", { query, sourceIds: ids, seq, limit: currentRowLimit() });
     } catch (e) {
       elements.resultInfo.textContent = "検索エラー: " + String(e);
       return;
@@ -60,7 +60,7 @@ export function mountSearchController(
   async function showHistory(): Promise<void> {
     let items: string[] = [];
     try {
-      items = await invoke<string[]>("list_search_history");
+      items = await invoke("list_search_history");
     } catch { /* noop */ }
     renderHistoryPanel(elements.historyPanel, items, (query) => {
       elements.searchInput.value = query;
@@ -73,7 +73,7 @@ export function mountSearchController(
   async function showPresetPanel(): Promise<void> {
     let items: SearchPreset[] = [];
     try {
-      items = await invoke<SearchPreset[]>("list_search_presets");
+      items = await invoke("list_search_presets");
     } catch { /* noop */ }
     renderPresetPanel(elements.presetPanel, items, {
       onSelect: (preset) => {

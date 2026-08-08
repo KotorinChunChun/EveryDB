@@ -23,7 +23,7 @@ import { mountCredentials } from "../features/credentials";
 import { mountExportDialog } from "../features/export/dialog";
 import { mountGuideViewer } from "../features/guide";
 import { mountSettings } from "../features/settings";
-import type { ReloadSummary, Row, SourceInfo } from "../shared/types";
+import type { ReloadSummary, Row } from "../shared/types";
 import { parentKindForType } from "../source-types/registry";
 import type { ParentKind } from "../source-types/registry";
 import { mountGridView } from "../features/grid/view";
@@ -130,7 +130,6 @@ const contextMenus = mountContextMenus({
   parentMenu: $<HTMLDivElement>("parent-ctx-menu"),
 }, {
   parentLabel,
-  parentKindOf,
   reloadSummaryMessage,
   cellText: (row, col) => cellText(row, col),
   getCellUrl,
@@ -213,7 +212,7 @@ reloadOne = sourcesSidebar.reloadOne;
 // データソース一覧（サイドバー）
 // ============================================================
 export async function loadSources() {
-  const list = await invoke<SourceInfo[]>("list_sources");
+  const list = await invoke("list_sources");
   replaceSourcesList(list);
   saveSelectedSourcesState();
   renderSources();
@@ -221,7 +220,7 @@ export async function loadSources() {
 }
 
 export async function refreshSidebar() {
-  refreshSourcesList(await invoke<SourceInfo[]>("list_sources"));
+  refreshSourcesList(await invoke("list_sources"));
   renderSources();
 }
 
@@ -265,7 +264,7 @@ function handleVerticalDragOver(ev: DragEvent, el: HTMLElement): boolean {
 /** 接続先（ツリーの親）ノードのユーザー設定表示名（parentKey -> ラベル）。未設定なら自動導出する。 */
 export async function loadParentLabels() {
   try {
-    const entries = await invoke<[string, string][]>("list_parent_labels");
+    const entries = await invoke("list_parent_labels");
     appState.parentLabelOverrides = new Map(entries);
   } catch { /* noop */ }
 }

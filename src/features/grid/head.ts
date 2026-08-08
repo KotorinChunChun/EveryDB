@@ -5,7 +5,6 @@ import {
   clearSelectedCell,
   rebuildGridColumns,
 } from "../../app/state";
-import type { SourceDetail } from "../../shared/types";
 import {
   clearColumnDropHighlight,
   createColumnDropHighlight,
@@ -94,7 +93,7 @@ export function mountGridHead(
       done += 1;
       actions.setResultInfo(`列の並び順を保存中… (${done}/${targets.length}) ${source.name}`);
       try {
-        const detail = await invoke<SourceDetail>("get_source_detail", { id: source.id });
+        const detail = await invoke("get_source_detail", { id: source.id });
         const cfg = { ...detail.config } as Record<string, unknown>;
         const aliases = (cfg.column_aliases as Record<string, string> | undefined) ?? {};
         const sourceFields = toRawFieldNames(fieldIndex.get(source.id)!, aliases);

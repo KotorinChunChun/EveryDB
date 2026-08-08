@@ -74,6 +74,9 @@ pub fn raw_field_names(type_: &str, config_json: &str) -> Result<Vec<String>> {
 #[derive(Deserialize)]
 struct SourceTypeManifestEntry {
     id: String,
+    browse: Option<String>,
+    open: String,
+    guide: String,
 }
 
 #[cfg(test)]
@@ -85,8 +88,32 @@ fn source_type_manifest_matches_factory_registry() {
     let manifest_ids: Vec<&str> = manifest.iter().map(|entry| entry.id.as_str()).collect();
 
     assert_eq!(manifest_ids, SUPPORTED_SOURCE_TYPES);
+    for entry in &manifest {
+        assert!(
+            matches!(
+                entry.browse.as_deref(),
+                None | Some(
+                    "notion" | "sqlite" | "accdb" | "excel_table" | "sharepoint" | "airtable"
+                )
+            ),
+            "unknown browse capability for {}",
+            entry.id
+        );
+        assert!(
+            matches!(
+                entry.open.as_str(),
+                "none" | "table" | "parent" | "table-and-parent"
+            ),
+            "unknown open capability for {}",
+            entry.id
+        );
+        assert!(
+            !entry.guide.trim().is_empty(),
+            "guide is missing for {}",
+            entry.id
+        );
+    }
 }
-
 #[cfg(test)]
 #[test]
 fn every_registered_source_type_has_a_factory_branch() {

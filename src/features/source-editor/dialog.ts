@@ -2,7 +2,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { $, promptUrlInput } from "../../app/dom";
 import { invoke } from "../../app/ipc";
 import { appState } from "../../app/state";
-import type { SourceDetail } from "../../shared/types";
+
 import {
   parseAirtableUrl,
   parseGoogleSheetsUrl,
@@ -21,25 +21,6 @@ import { clearLinkedCredentials, setLinkedCredentials } from "./linked-credentia
 import type { RoleEditorController } from "./role-editor";
 import { configWithoutRoleKeys, roleStateFromConfig } from "./roles";
 import { makeApiKeyButton, makeLinkButton } from "./ui-buttons";
-
-interface AirtableBaseItem {
-  id: string;
-  name: string;
-  permission_level: string;
-}
-
-interface AirtableViewItem {
-  id: string;
-  name: string;
-  type_: string;
-}
-
-interface AirtableTableItem {
-  id: string;
-  name: string;
-  primary_field_id: string;
-  views: AirtableViewItem[];
-}
 
 export interface SourceEditorDialogElements {
   dialog: HTMLDialogElement;
@@ -241,7 +222,7 @@ export function mountSourceEditorDialog(
     let token = tokenEl?.value.trim() ?? "";
     if (tokenEl?.dataset.credRef) {
       try {
-        token = await invoke<string>("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
+        token = await invoke("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
       } catch {
         return; // 静かに諦める（ID は既に反映済みのため実害は無い）。
       }
@@ -249,13 +230,13 @@ export function mountSourceEditorDialog(
     if (!token || token === SECRET_PLACEHOLDER) return;
     try {
       if (baseId) {
-        const bases = await invoke<AirtableBaseItem[]>("browse_airtable_bases", { token });
+        const bases = await invoke("browse_airtable_bases", { token });
         const b = bases.find((x) => x.id === baseId);
         const nameEl = document.getElementById("fd-base_name") as HTMLInputElement | null;
         if (b && nameEl && !nameEl.value.trim()) nameEl.value = b.name;
       }
       if (baseId && tableId) {
-        const tables = await invoke<AirtableTableItem[]>("browse_airtable_tables", { token, baseId });
+        const tables = await invoke("browse_airtable_tables", { token, baseId });
         const t = tables.find((x) => x.id === tableId);
         const tNameEl = document.getElementById("fd-table_name") as HTMLInputElement | null;
         if (t && tNameEl && !tNameEl.value.trim()) tNameEl.value = t.name;
@@ -752,12 +733,12 @@ export function mountSourceEditorDialog(
       let names: string[];
       let fromCache = false;
       if (dialogMode === "edit" && editingId !== null) {
-        const preview = await invoke<{ names: string[]; from_cache: boolean }>("preview_source_fields_by_id", { id: editingId });
+        const preview = await invoke("preview_source_fields_by_id", { id: editingId });
         names = preview.names;
         fromCache = preview.from_cache;
       } else {
         const { config } = buildConfigFromFields();
-        names = await invoke<string[]>("preview_source_fields", { type: elements.typeSel.value, configJson: JSON.stringify(config) });
+        names = await invoke("preview_source_fields", { type: elements.typeSel.value, configJson: JSON.stringify(config) });
       }
       roleEditor.render(names);
       if (fromCache) {
@@ -804,7 +785,7 @@ export function mountSourceEditorDialog(
   });
 
   async function openEditDialog(id: number) {
-    const detail = await invoke<SourceDetail>("get_source_detail", { id });
+    const detail = await invoke("get_source_detail", { id });
     const info = appState.sources.find((s) => s.id === id);
     dialogMode = "edit";
     editingId = id;
@@ -900,7 +881,7 @@ export function mountSourceEditorDialog(
           }
           return;
         }
-        const newId = await invoke<number>("add_source", { type: type_, name, configJson: JSON.stringify(config) });
+        const newId = await invoke("add_source", { type: type_, name, configJson: JSON.stringify(config) });
         elements.typeSel.disabled = false;
         await actions.loadSources();
         elements.dialog.close();
@@ -957,7 +938,7 @@ export function mountSourceEditorDialog(
     if (el.dataset.credLabel) return;
     const ok = await actions.ensureUnlocked();
     if (ok && editingId !== null) {
-      const detail = await invoke<SourceDetail>("get_source_detail", { id: editingId });
+      const detail = await invoke("get_source_detail", { id: editingId });
       el.value = String((detail.config as Record<string, unknown>)[el.id.replace("fd-", "")] ?? "");
     }
   });

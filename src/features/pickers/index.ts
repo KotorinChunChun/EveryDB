@@ -41,7 +41,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     let token = tokenEl?.value.trim();
     if (tokenEl?.dataset.credRef) {
       try {
-        token = await invoke<string>("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
+        token = await invoke("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
       } catch (e) {
         alert("トークンの取得に失敗しました: " + String(e));
         return;
@@ -53,7 +53,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     const dlg = $<HTMLDialogElement>("notion-picker");
     dlg.showModal();
     try {
-      const dbs = await invoke<{ id: string; title: string }[]>("browse_notion_databases", { token });
+      const dbs = await invoke("browse_notion_databases", { token });
       listEl.innerHTML = "";
       if (dbs.length === 0) {
         listEl.innerHTML = "<div class='picker-empty'>アクセス可能なデータベースがありません（インテグレーションに共有してください）</div>";
@@ -84,7 +84,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     const dlg = $<HTMLDialogElement>("browser-profile-picker");
     dlg.showModal();
     try {
-      const entries = await invoke<{ label: string; path: string }[]>("browse_browser_profiles", { browser, target });
+      const entries = await invoke("browse_browser_profiles", { browser, target });
       listEl.innerHTML = "";
       if (entries.length === 0) {
         listEl.innerHTML = "<div class='picker-empty'>候補が見つかりませんでした</div>";
@@ -121,7 +121,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     const dlg = $<HTMLDialogElement>("sheet-picker");
     dlg.showModal();
     try {
-      const sheets = await invoke<string[]>("browse_excel_sheets", { path });
+      const sheets = await invoke("browse_excel_sheets", { path });
       listEl.innerHTML = "";
       if (sheets.length === 0) {
         listEl.innerHTML = "<div class='picker-empty'>シートが見つかりませんでした</div>";
@@ -157,7 +157,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     const dlg = $<HTMLDialogElement>("sheet-picker");
     dlg.showModal();
     try {
-      const tables = await invoke<string[]>("browse_excel_tables", { path });
+      const tables = await invoke("browse_excel_tables", { path });
       listEl.innerHTML = "";
       if (tables.length === 0) {
         listEl.innerHTML = "<div class='picker-empty'>テーブルが見つかりませんでした</div>";
@@ -183,8 +183,8 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
   async function fetchAirtableBasesForPicker(): Promise<AirtableBaseItem[]> {
     const tokenEl = (document.getElementById("fd-token") ?? document.getElementById("pf-token")) as HTMLInputElement | null;
     if (tokenEl?.dataset.credRef) {
-      const token = await invoke<string>("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
-      return await invoke<AirtableBaseItem[]>("browse_airtable_bases", { token });
+      const token = await invoke("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
+      return await invoke("browse_airtable_bases", { token });
     }
     const sourceEditor = getSourceEditor();
     const parentSettings = getParentSettings();
@@ -193,7 +193,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
       const overrides = sourceEditor.getEditingId() !== null
         ? JSON.stringify(sourceEditor.getConfigFromFields().config)
         : JSON.stringify(parentSettings.getParentSharedValues());
-      return await invoke<AirtableBaseItem[]>("browse_airtable_bases_for_source", { id: sid, overridesJson: overrides });
+      return await invoke("browse_airtable_bases_for_source", { id: sid, overridesJson: overrides });
     }
     alert("先にトークンを選択してください");
     throw new Error("トークン未選択");
@@ -208,8 +208,8 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
       throw new Error("Base ID 必須");
     }
     if (tokenEl?.dataset.credRef) {
-      const token = await invoke<string>("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
-      return await invoke<AirtableTableItem[]>("browse_airtable_tables", { token, baseId });
+      const token = await invoke("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
+      return await invoke("browse_airtable_tables", { token, baseId });
     }
     const sourceEditor = getSourceEditor();
     const parentSettings = getParentSettings();
@@ -218,7 +218,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
       const overrides = sourceEditor.getEditingId() !== null
         ? JSON.stringify(sourceEditor.getConfigFromFields().config)
         : JSON.stringify(parentSettings.getParentSharedValues());
-      return await invoke<AirtableTableItem[]>("browse_airtable_tables_for_source", { id: sid, overridesJson: overrides, baseId: baseId || null });
+      return await invoke("browse_airtable_tables_for_source", { id: sid, overridesJson: overrides, baseId: baseId || null });
     }
     alert("先にトークンを選択してください");
     throw new Error("トークン未選択");
@@ -385,7 +385,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     };
 
     try {
-      const res = await invoke<{ start_row: number; start_col: number; rows: string[][] }>("browse_excel_grid", { path, sheet, rows: 10, cols: 10, mode: typeof gridMode === "string" ? gridMode : "top" });
+      const res = await invoke("browse_excel_grid", { path, sheet, rows: 10, cols: 10, mode: typeof gridMode === "string" ? gridMode : "top" });
       wrapEl.innerHTML = "";
       const table = document.createElement("table");
       table.className = "cell-grid";
@@ -544,7 +544,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     const cmd = browse === "sqlite" ? "browse_sqlite_tables" : browse === "accdb" ? "browse_accdb_tables" : "browse_excel_tables";
     let names: string[];
     try {
-      names = await invoke<string[]>(cmd, { path });
+      names = await invoke(cmd, { path });
     } catch (e) {
       setPickerMessage(tablePickerList, `取得失敗: ${String(e)}`);
       return;
@@ -624,7 +624,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     if (!tenant_id || !client_id) return null;
     if (secretEl?.dataset.credRef) {
       try {
-        return await invoke<GraphPickerAuth>("resolve_graph_auth", { id: Number(secretEl.dataset.credRef) });
+        return await invoke("resolve_graph_auth", { id: Number(secretEl.dataset.credRef) });
       } catch (e) {
         alert("Graph 認証情報の解決に失敗しました: " + String(e));
         return null;
@@ -733,7 +733,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     const displayName = row.display_name || siteUrl;
     if (spPickerKind === "team") {
       try {
-        siteUrl = await invoke<string>("browse_graph_team_site_url", { auth: spPickerAuth, teamGroupId: row.id });
+        siteUrl = await invoke("browse_graph_team_site_url", { auth: spPickerAuth, teamGroupId: row.id });
       } catch (e) {
         alert("サイト解決に失敗: " + String(e));
         return;
@@ -752,7 +752,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     try {
       if (spMode === "sites") {
         spPickerKind = "site";
-        const sites = await invoke<{ id: string; display_name: string; web_url: string; description: string; created_date_time: string }[]>("browse_graph_sites", { auth });
+        const sites = await invoke("browse_graph_sites", { auth });
         spPickerRows = sites.map((s) => ({
           id: s.id,
           display_name: s.display_name || s.web_url,
@@ -762,7 +762,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
         }));
       } else {
         spPickerKind = "team";
-        const teams = await invoke<{ id: string; display_name: string; description: string; created_date_time: string }[]>("browse_graph_teams", { auth });
+        const teams = await invoke("browse_graph_teams", { auth });
         spPickerRows = teams.map((t) => ({
           id: t.id,
           display_name: t.display_name,

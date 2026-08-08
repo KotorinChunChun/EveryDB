@@ -15,6 +15,12 @@ describe("source type forms", () => {
         definition.label === SOURCE_TYPE_METADATA.find((metadata) => metadata.id === definition.value)!.label,
       ),
     ).toBe(true);
+    expect(
+      TYPE_DEFS.every((definition) =>
+        (definition.browse ?? null)
+          === SOURCE_TYPE_METADATA.find((metadata) => metadata.id === definition.value)!.browse,
+      ),
+    ).toBe(true);
   });
 
   it("keeps credential fields aligned with manifest credential scopes", () => {

@@ -55,7 +55,7 @@ export function mountCredentialSelector(deps: CredentialSelectorDeps): Credentia
       item.textContent = `${c.label}（作成: ${c.created_at}）`;
       item.onclick = async () => {
         try {
-          const res = await invoke<{ label: string; fields: Record<string, unknown> }>("credential_public_fields", { id: c.id });
+          const res = await invoke("credential_public_fields", { id: c.id });
           onPick(c.id, res.label, res.fields);
           $<HTMLDialogElement>("credential-select-picker").close();
         } catch (e) {
@@ -79,7 +79,7 @@ export function mountCredentialSelector(deps: CredentialSelectorDeps): Credentia
 
     dlg.showModal();
     try {
-      const items = await invoke<CredentialSummary[]>("list_credentials", { scope });
+      const items = await invoke("list_credentials", { scope });
       renderCredentialPickerList(items, onPick);
     } catch (e) {
       setPickerMessage(listEl, `取得失敗: ${String(e)}`);

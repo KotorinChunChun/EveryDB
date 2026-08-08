@@ -86,7 +86,7 @@ export function mountColumnMapDialog(
     elements.hintEl.textContent = "読み込み中…";
     const details = await Promise.all(
       sourceIds.map((sid) =>
-        invoke<SourceDetail>("get_source_detail", { id: sid }).catch((e) => {
+        invoke("get_source_detail", { id: sid }).catch((e) => {
           console.error(`列マッピング取得失敗 (source ${sid}):`, e);
           return null;
         }),

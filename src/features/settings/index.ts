@@ -81,7 +81,7 @@ export function mountSettings(deps: SettingsDeps): SettingsController {
     status.hidden = false;
     resultInfo.textContent = "リロード中…（完了まで操作をお待ちください）";
     try {
-      const summary = await invoke<ReloadSummary>("reload_sources", { sourceIds: [] });
+      const summary = await invoke("reload_sources", { sourceIds: [] });
       resultInfo.textContent = reloadSummaryMessage(summary);
     } catch (e) {
       resultInfo.textContent = "リロード失敗: " + String(e);
@@ -94,7 +94,7 @@ export function mountSettings(deps: SettingsDeps): SettingsController {
 
   $<HTMLButtonElement>("settings").onclick = async () => {
     try {
-      const enabled = await invoke<boolean>("autostart_status");
+      const enabled = await invoke("autostart_status");
       $<HTMLInputElement>("s-autostart").checked = enabled;
     } catch { /* noop */ }
     $<HTMLSelectElement>("s-theme").value = currentTheme;
@@ -222,7 +222,7 @@ export function mountSettings(deps: SettingsDeps): SettingsController {
 
   async function initTheme() {
     try {
-      const theme = await invoke<string>("get_theme");
+      const theme = await invoke("get_theme");
       applyTheme((theme as Theme) || "dark");
     } catch {
       applyTheme("dark");
@@ -231,7 +231,7 @@ export function mountSettings(deps: SettingsDeps): SettingsController {
 
   async function initHotkey() {
     try {
-      const hk = await invoke<string>("get_hotkey");
+      const hk = await invoke("get_hotkey");
       currentHotkey = hk || "Alt+Ctrl+D";
     } catch {
       currentHotkey = "Alt+Ctrl+D";
@@ -241,7 +241,7 @@ export function mountSettings(deps: SettingsDeps): SettingsController {
 
   async function initZoom() {
     try {
-      currentZoom = await invoke<number>("get_zoom");
+      currentZoom = await invoke("get_zoom");
     } catch {
       currentZoom = 1.0;
     }
@@ -251,7 +251,7 @@ export function mountSettings(deps: SettingsDeps): SettingsController {
   async function initSidebarWidth() {
     let width = 240;
     try {
-      width = await invoke<number>("get_sidebar_width");
+      width = await invoke("get_sidebar_width");
     } catch { /* noop */ }
     sidebarEl.style.width = width + "px";
   }

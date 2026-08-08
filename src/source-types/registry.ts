@@ -3,6 +3,8 @@ import type { CredentialScope } from "../shared/types";
 
 export type ParentKind = "path" | "sharepoint" | "notion" | "airtable" | "graph365" | "postgres" | "mysql" | "box" | "none";
 export type SourceCategory = "local" | "microsoft" | "cloud" | "database" | "public-data" | "web";
+export type BrowseCapability = "notion" | "sqlite" | "accdb" | "excel_table" | "sharepoint" | "airtable";
+export type OpenCapability = "none" | "table" | "parent" | "table-and-parent";
 
 export interface SourceTypeMetadata {
   id: string;
@@ -11,6 +13,8 @@ export interface SourceTypeMetadata {
   parentKind: ParentKind;
   guide: string;
   credentialScope?: CredentialScope;
+  browse: BrowseCapability | null;
+  open: OpenCapability;
 }
 
 export interface SourceTypeManifestEntry extends SourceTypeMetadata {
@@ -32,6 +36,14 @@ export function guideNameForType(type: string): string | null {
 
 export function parentKindForType(type: string): ParentKind {
   return sourceMetadataFor(type)?.parentKind ?? "none";
+}
+
+export function browseCapabilityForType(type: string): BrowseCapability | null {
+  return sourceMetadataFor(type)?.browse ?? null;
+}
+
+export function openCapabilityForType(type: string): OpenCapability {
+  return sourceMetadataFor(type)?.open ?? "none";
 }
 
 export function representativeTypeForCredentialScope(scope: CredentialScope): string {

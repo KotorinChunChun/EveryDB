@@ -224,7 +224,7 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
             const unlocked = await ensureUnlocked();
             if (!unlocked) return;
             try {
-              usedFields["client_secret"] = await invoke<string>("credential_secret_value", { id: cmEditingId });
+              usedFields["client_secret"] = await invoke("credential_secret_value", { id: cmEditingId });
             } catch (e) {
               alert("クライアントシークレットの取得に失敗しました: " + String(e));
               return;
@@ -243,11 +243,11 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
           cancelBtn.hidden = false;
           try {
             const res = provider === "graph"
-              ? await invoke<{ refresh_token: string }>("graph_oauth_authorize", {
+              ? await invoke("graph_oauth_authorize", {
                 tenantId: usedFields["tenant_id"],
                 clientId: usedFields["client_id"],
               })
-              : await invoke<{ refresh_token: string }>("box_oauth_authorize", {
+              : await invoke("box_oauth_authorize", {
                 clientId: usedFields["client_id"],
                 clientSecret: usedFields["client_secret"],
               });
@@ -349,7 +349,7 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
     const scope = c.scope as CredentialScope;
     let fields: Record<string, unknown> = {};
     try {
-      const res = await invoke<{ label: string; fields: Record<string, unknown> }>("credential_public_fields", { id: c.id });
+      const res = await invoke("credential_public_fields", { id: c.id });
       fields = res.fields;
     } catch { /* noop */ }
     if (scope === "box") cmBoxAuthMethod = fields["auth_method"] === "ccg" ? "ccg" : "oauth";
@@ -399,7 +399,7 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
     loadingEl.textContent = "読み込み中…";
     listEl.appendChild(loadingEl);
     try {
-      const items = await invoke<CredentialSummary[]>("list_credentials", { scope });
+      const items = await invoke("list_credentials", { scope });
       loadingEl.remove();
       if (items.length === 0) {
         const emptyEl = document.createElement("div");
@@ -470,7 +470,7 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
     const ok = await ensureUnlocked();
     if (!ok) return;
     try {
-      const value = await invoke<string>("credential_secret_value", { id });
+      const value = await invoke("credential_secret_value", { id });
       const copied = await writeClipboardText(value);
       showToast(copied.ok ? "トークンをコピーしました" : "コピーに失敗しました: " + String(copied.error));
     } catch (e) {
@@ -487,7 +487,7 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
     const ok = await ensureUnlocked();
     if (!ok) return;
     try {
-      const secretValue = await invoke<string>("credential_secret_value", { id });
+      const secretValue = await invoke("credential_secret_value", { id });
       const obj: Record<string, string> = {};
       for (const bf of bundleFields) {
         const el = document.getElementById(`${idPrefix}${bf}`) as HTMLInputElement | null;
@@ -538,7 +538,7 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
         await invoke("update_credential", { id: cmEditingId, label, fieldsJson: JSON.stringify(fields) });
         savedId = cmEditingId;
       } else {
-        savedId = await invoke<number>("add_credential", { scope, label, fieldsJson: JSON.stringify(fields) });
+        savedId = await invoke("add_credential", { scope, label, fieldsJson: JSON.stringify(fields) });
       }
       await refreshCredentialList();
       await startEditCredential({ id: savedId, scope, label, created_at: "", used_by: [] });
