@@ -2,7 +2,6 @@ import { $, setPickerMessage } from "../../app/dom";
 import { invoke } from "../../app/ipc";
 import { appState } from "../../app/state";
 import { colLetterOf, formatSelectedColumns, parseColumnSelection } from "../../shared/excel-columns";
-import { SECRET_PLACEHOLDER } from "../source-editor/constants";
 import type { SourcePickerDeps, SourcePickers } from "./types";
 
 export type { SourcePickerDeps, SourcePickers } from "./types";
@@ -38,22 +37,17 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
 
   async function openNotionPicker() {
     const tokenEl = document.getElementById("fd-token") as HTMLInputElement | null;
-    let token = tokenEl?.value.trim();
-    if (tokenEl?.dataset.credRef) {
-      try {
-        token = await invoke("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
-      } catch (e) {
-        alert("トークンの取得に失敗しました: " + String(e));
-        return;
-      }
+    const credentialId = Number(tokenEl?.dataset.credRef);
+    if (!Number.isSafeInteger(credentialId) || credentialId <= 0) {
+      alert("先に保存済みトークンを選択してください");
+      return;
     }
-    if (!token || token === SECRET_PLACEHOLDER) { alert("先にトークンを選択してください"); return; }
     const listEl = $<HTMLDivElement>("notion-picker-list");
     listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
     const dlg = $<HTMLDialogElement>("notion-picker");
     dlg.showModal();
     try {
-      const dbs = await invoke("browse_notion_databases", { token });
+      const dbs = await invoke("browse_notion_databases", { credentialId });
       listEl.innerHTML = "";
       if (dbs.length === 0) {
         listEl.innerHTML = "<div class='picker-empty'>アクセス可能なデータベースがありません（インテグレーションに共有してください）</div>";
@@ -183,8 +177,8 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
   async function fetchAirtableBasesForPicker(): Promise<AirtableBaseItem[]> {
     const tokenEl = (document.getElementById("fd-token") ?? document.getElementById("pf-token")) as HTMLInputElement | null;
     if (tokenEl?.dataset.credRef) {
-      const token = await invoke("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
-      return await invoke("browse_airtable_bases", { token });
+      const credentialId = Number(tokenEl.dataset.credRef);
+      return await invoke("browse_airtable_bases", { credentialId });
     }
     const sourceEditor = getSourceEditor();
     const parentSettings = getParentSettings();
@@ -208,8 +202,8 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
       throw new Error("Base ID 必須");
     }
     if (tokenEl?.dataset.credRef) {
-      const token = await invoke("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
-      return await invoke("browse_airtable_tables", { token, baseId });
+      const credentialId = Number(tokenEl.dataset.credRef);
+      return await invoke("browse_airtable_tables", { credentialId, baseId });
     }
     const sourceEditor = getSourceEditor();
     const parentSettings = getParentSettings();
@@ -595,12 +589,6 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
 
   let spMode: "sites" | "teams" = "sites";
 
-  type GraphPickerAuth = {
-    tenant_id: string;
-    client_id: string;
-    client_secret?: string;
-    access_token?: string;
-  };
 
   interface SpPickerRow {
     id: string;
@@ -614,25 +602,13 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
   let spSortKey: SpSortKey = "display_name";
   let spSortAsc = true;
   let spPickerRows: SpPickerRow[] = [];
-  let spPickerAuth: GraphPickerAuth | null = null;
+  let spPickerCredentialId: number | null = null;
   let spPickerKind: "site" | "team" = "site";
 
-  async function graphAuthFromDialog(): Promise<GraphPickerAuth | null> {
-    const tenant_id = (document.getElementById("fd-tenant_id") as HTMLInputElement | null)?.value.trim();
-    const client_id = (document.getElementById("fd-client_id") as HTMLInputElement | null)?.value.trim();
+  function graphCredentialIdFromDialog(): number | null {
     const secretEl = document.getElementById("fd-client_secret") as HTMLInputElement | null;
-    if (!tenant_id || !client_id) return null;
-    if (secretEl?.dataset.credRef) {
-      try {
-        return await invoke("resolve_graph_auth", { id: Number(secretEl.dataset.credRef) });
-      } catch (e) {
-        alert("Graph 認証情報の解決に失敗しました: " + String(e));
-        return null;
-      }
-    }
-    const client_secret = secretEl?.value.trim();
-    if (!client_secret) return null;
-    return { tenant_id, client_id, client_secret };
+    const credentialId = Number(secretEl?.dataset.credRef);
+    return Number.isSafeInteger(credentialId) && credentialId > 0 ? credentialId : null;
   }
 
   function formatSpCreatedAt(iso: string): string {
@@ -728,12 +704,12 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
   }
 
   async function onSpSourceRowClick(row: SpPickerRow) {
-    if (!spPickerAuth) return;
+    if (spPickerCredentialId === null) return;
     let siteUrl = row.key;
     const displayName = row.display_name || siteUrl;
     if (spPickerKind === "team") {
       try {
-        siteUrl = await invoke("browse_graph_team_site_url", { auth: spPickerAuth, teamGroupId: row.id });
+        siteUrl = await invoke("browse_graph_team_site_url", { credentialId: spPickerCredentialId, teamGroupId: row.id });
       } catch (e) {
         alert("サイト解決に失敗: " + String(e));
         return;
@@ -743,16 +719,16 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     $<HTMLDialogElement>("sp-picker").close();
   }
 
-  async function loadSpSourceList(auth: GraphPickerAuth) {
+  async function loadSpSourceList(credentialId: number) {
     const listEl = $<HTMLDivElement>("sp-source-list");
     listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
-    spPickerAuth = auth;
+    spPickerCredentialId = credentialId;
     spSortKey = "display_name";
     spSortAsc = true;
     try {
       if (spMode === "sites") {
         spPickerKind = "site";
-        const sites = await invoke("browse_graph_sites", { auth });
+        const sites = await invoke("browse_graph_sites", { credentialId });
         spPickerRows = sites.map((s) => ({
           id: s.id,
           display_name: s.display_name || s.web_url,
@@ -762,7 +738,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
         }));
       } else {
         spPickerKind = "team";
-        const teams = await invoke("browse_graph_teams", { auth });
+        const teams = await invoke("browse_graph_teams", { credentialId });
         spPickerRows = teams.map((t) => ({
           id: t.id,
           display_name: t.display_name,
@@ -781,14 +757,14 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
   }
 
   async function openSharePointPicker() {
-    const auth = await graphAuthFromDialog();
-    if (!auth) { alert("先にトークンを選択してください（テナントID/クライアントID/クライアントシークレット）"); return; }
+    const credentialId = graphCredentialIdFromDialog();
+    if (credentialId === null) { alert("先に保存済みトークンを選択してください"); return; }
     spMode = "sites";
     $<HTMLDivElement>("sp-step-source").hidden = false;
     $<HTMLDivElement>("sp-step-resources").hidden = true;
     $<HTMLButtonElement>("sp-picker-add").hidden = true;
     $<HTMLDialogElement>("sp-picker").showModal();
-    await loadSpSourceList(auth);
+    await loadSpSourceList(credentialId);
   }
 
   // ---- dialog close button handlers ----
@@ -810,15 +786,15 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     spMode = "sites";
     $<HTMLButtonElement>("sp-tab-sites").classList.add("active");
     $<HTMLButtonElement>("sp-tab-teams").classList.remove("active");
-    const auth = await graphAuthFromDialog();
-    if (auth) await loadSpSourceList(auth);
+    const credentialId = graphCredentialIdFromDialog();
+    if (credentialId !== null) await loadSpSourceList(credentialId);
   };
   $<HTMLButtonElement>("sp-tab-teams").onclick = async () => {
     spMode = "teams";
     $<HTMLButtonElement>("sp-tab-teams").classList.add("active");
     $<HTMLButtonElement>("sp-tab-sites").classList.remove("active");
-    const auth = await graphAuthFromDialog();
-    if (auth) await loadSpSourceList(auth);
+    const credentialId = graphCredentialIdFromDialog();
+    if (credentialId !== null) await loadSpSourceList(credentialId);
   };
   $<HTMLButtonElement>("sp-picker-cancel").onclick = () => $<HTMLDialogElement>("sp-picker").close();
 

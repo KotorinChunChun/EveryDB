@@ -104,15 +104,6 @@ pub fn cancel_graph_oauth_on_shutdown(state: &AppState) {
     }
 }
 
-pub fn resolve_graph_auth(
-    state: &AppState,
-    id: i64,
-) -> ServiceResult<crate::browse::GraphAuthArgs> {
-    let conn = lock_db(state)?;
-    credentials::resolve_graph_auth_args(&conn, id)
-        .map_err(|e| ServiceError::external("Graph 認証情報の解決に失敗しました", e))
-}
-
 #[cfg(test)]
 mod tests {
     use super::{add_credential, list_credentials};

@@ -26,12 +26,6 @@ export interface OAuthTokenResult {
   refresh_token: string;
 }
 
-export interface GraphAuthPayload {
-  tenant_id: string;
-  client_id: string;
-  client_secret?: string;
-  access_token?: string;
-}
 
 export interface NotionDatabaseItem {
   id: string;
@@ -143,20 +137,19 @@ export interface IpcContract {
     result: OAuthTokenResult;
   };
   graph_oauth_cancel: { args: undefined; result: void };
-  resolve_graph_auth: { args: { id: number }; result: GraphAuthPayload };
 
-  browse_notion_databases: { args: { token: string }; result: NotionDatabaseItem[] };
+  browse_notion_databases: { args: { credentialId: number }; result: NotionDatabaseItem[] };
   browse_notion_databases_for_source: {
     args: { id: number; overridesJson: string };
     result: NotionDatabaseItem[];
   };
-  browse_airtable_bases: { args: { token: string }; result: AirtableBaseItem[] };
+  browse_airtable_bases: { args: { credentialId: number }; result: AirtableBaseItem[] };
   browse_airtable_bases_for_source: {
     args: { id: number; overridesJson: string };
     result: AirtableBaseItem[];
   };
   browse_airtable_tables: {
-    args: { token: string; baseId: string };
+    args: { credentialId: number; baseId: string };
     result: AirtableTableItem[];
   };
   browse_airtable_tables_for_source: {
@@ -167,14 +160,14 @@ export interface IpcContract {
     args: { id: number; overridesJson: string };
     result: SiteResourceItem[];
   };
-  browse_graph_sites: { args: { auth: GraphAuthPayload }; result: GraphSiteItem[] };
-  browse_graph_teams: { args: { auth: GraphAuthPayload }; result: GraphTeamItem[] };
+  browse_graph_sites: { args: { credentialId: number }; result: GraphSiteItem[] };
+  browse_graph_teams: { args: { credentialId: number }; result: GraphTeamItem[] };
   browse_graph_team_site_url: {
-    args: { auth: GraphAuthPayload; teamGroupId: string };
+    args: { credentialId: number; teamGroupId: string };
     result: string;
   };
   browse_graph_site_resources: {
-    args: { auth: GraphAuthPayload; siteUrl: string };
+    args: { credentialId: number; siteUrl: string };
     result: SiteResourceItem[];
   };
   browse_excel_sheets: { args: { path: string }; result: string[] };

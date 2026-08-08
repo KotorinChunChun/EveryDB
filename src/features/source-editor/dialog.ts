@@ -219,24 +219,17 @@ export function mountSourceEditorDialog(
    * トークン未入力・未解錠・API失敗時は静かに諦める（ID自体は既に埋まっているため実害はない）。 */
   async function resolveAirtableCaptions(baseId?: string, tableId?: string, viewId?: string) {
     const tokenEl = document.getElementById("fd-token") as HTMLInputElement | null;
-    let token = tokenEl?.value.trim() ?? "";
-    if (tokenEl?.dataset.credRef) {
-      try {
-        token = await invoke("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
-      } catch {
-        return; // 静かに諦める（ID は既に反映済みのため実害は無い）。
-      }
-    }
-    if (!token || token === SECRET_PLACEHOLDER) return;
+    const credentialId = Number(tokenEl?.dataset.credRef);
+    if (!Number.isSafeInteger(credentialId) || credentialId <= 0) return;
     try {
       if (baseId) {
-        const bases = await invoke("browse_airtable_bases", { token });
+        const bases = await invoke("browse_airtable_bases", { credentialId });
         const b = bases.find((x) => x.id === baseId);
         const nameEl = document.getElementById("fd-base_name") as HTMLInputElement | null;
         if (b && nameEl && !nameEl.value.trim()) nameEl.value = b.name;
       }
       if (baseId && tableId) {
-        const tables = await invoke("browse_airtable_tables", { token, baseId });
+        const tables = await invoke("browse_airtable_tables", { credentialId, baseId });
         const t = tables.find((x) => x.id === tableId);
         const tNameEl = document.getElementById("fd-table_name") as HTMLInputElement | null;
         if (t && tNameEl && !tNameEl.value.trim()) tNameEl.value = t.name;

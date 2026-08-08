@@ -184,17 +184,3 @@ pub async fn graph_oauth_authorize(
 pub fn graph_oauth_cancel(state: State<'_, AppState>) -> Result<(), String> {
     credential_service::request_graph_oauth_cancel(&state).map_err(Into::into)
 }
-
-#[tauri::command]
-pub fn resolve_graph_auth(
-    state: State<'_, AppState>,
-    id: i64,
-) -> Result<serde_json::Value, String> {
-    let auth = credential_service::resolve_graph_auth(&state, id).map_err(err_to_string)?;
-    Ok(serde_json::json!({
-        "tenant_id": auth.tenant_id,
-        "client_id": auth.client_id,
-        "client_secret": auth.client_secret,
-        "access_token": auth.access_token,
-    }))
-}
