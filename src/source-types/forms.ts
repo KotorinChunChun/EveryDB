@@ -128,7 +128,7 @@ export const TYPE_DEFS: TypeDef[] = [
   { value: "ime_google", label: "IME辞書: Google 日本語入力", fields: [pathField(TEXT_FILTERS)] },
   { value: "notion", label: "Notion データベース", fields: [
     { key: "token", label: "インテグレーショントークン", kind: "password", placeholder: "ntn_...", helpUrl: NOTION_INTEGRATIONS_URL, credentialScope: "notion" },
-    { key: "url_helper", label: "Notion データベース URL (ペーストで自動設定)", kind: "text", placeholder: "https://www.notion.so/.../a86724d5...", optional: true },
+    { key: "url_helper", label: "URL から自動設定", kind: "text", optional: true },
     { key: "database_id", label: "データベースID", kind: "text", placeholder: "URL 内の 32 桁 ID" },
   ], browse: "notion" },
   { value: "graph_entra_users", label: "EntraID ユーザー一覧", fields: [...GRAPH_AUTH_FIELDS] },
@@ -136,14 +136,16 @@ export const TYPE_DEFS: TypeDef[] = [
   { value: "graph_teams", label: "Teams チーム一覧", fields: [...GRAPH_AUTH_FIELDS] },
   { value: "graph_sharepoint_list", label: "SharePoint リスト", fields: [
     ...GRAPH_AUTH_FIELDS,
-    { key: "url_helper", label: "SharePoint リスト URL (ペーストで自動設定)", kind: "text", placeholder: "https://～/sites/サイト名/Lists/リスト名/...", optional: true },
+    { key: "url_helper", label: "URL から自動設定", kind: "text", optional: true },
     { key: "site_url", label: "サイトURL", kind: "text", placeholder: "https://～/sites/サイト名" },
+    { key: "site_display_name", label: "サイト表示名 (自動)", kind: "text", optional: true },
     { key: "list_name", label: "リスト名", kind: "text", placeholder: "SampleList" },
   ], browse: "sharepoint" },
   { value: "graph_sharepoint_library", label: "SharePoint ドキュメントライブラリ", fields: [
     ...GRAPH_AUTH_FIELDS,
-    { key: "url_helper", label: "SharePoint ライブラリ URL (ペーストで自動設定)", kind: "text", placeholder: "https://～/sites/サイト名/...", optional: true },
+    { key: "url_helper", label: "URL から自動設定", kind: "text", optional: true },
     { key: "site_url", label: "サイトURL", kind: "text", placeholder: "https://～/sites/サイト名" },
+    { key: "site_display_name", label: "サイト表示名 (自動)", kind: "text", optional: true },
     { key: "library_name", label: "ライブラリ名(空欄=既定)", kind: "text", placeholder: "空欄で既定ライブラリ", optional: true },
   ], browse: "sharepoint" },
   { value: "graph_entra_devices", label: "EntraID デバイス一覧", fields: [...GRAPH_AUTH_FIELDS] },
@@ -166,7 +168,7 @@ export const TYPE_DEFS: TypeDef[] = [
   ] },
   { value: "google_sheets", label: "Google スプレッドシート", fields: [
     { key: "key_path", label: "サービスアカウント鍵(JSON)のパス", kind: "text", placeholder: "C:\\path\\to\\service-account.json", browse: "file", dialogFilters: JSON_FILTERS, helpUrl: "https://console.cloud.google.com/apis/credentials" },
-    { key: "url_helper", label: "Google スプレッドシート URL (ペーストで自動設定)", kind: "text", placeholder: "https://docs.google.com/spreadsheets/d/.../edit", optional: true },
+    { key: "url_helper", label: "URL から自動設定", kind: "text", optional: true },
     { key: "spreadsheet_id", label: "スプレッドシートID", kind: "text", placeholder: "URL の /d/ と /edit の間の文字列" },
     { key: "range", label: "範囲(任意)", kind: "text", placeholder: "Sheet1!A1:D50 / 空欄=先頭シート全域", optional: true },
     { key: "has_header", label: "先頭行はヘッダー", kind: "checkbox", default: true },
@@ -176,7 +178,7 @@ export const TYPE_DEFS: TypeDef[] = [
   ] },
   { value: "airtable", label: "Airtable", fields: [
     { key: "token", label: "Personal Access Token", kind: "password", placeholder: "pat...", helpUrl: "https://airtable.com/create/tokens", linkUrl: "https://airtable.com/workspaces", linkLabel: "🌐 ワークスペース…", credentialScope: "airtable" },
-    { key: "url_helper", label: "Airtable URL (ペーストで自動設定)", kind: "text", placeholder: "https://airtable.com/app.../tbl.../viw...", optional: true },
+    { key: "url_helper", label: "URL から自動設定", kind: "text", optional: true },
     { key: "base_id", label: "Base ID (実際の接続用)", kind: "text", placeholder: "app...", browseAirtableBase: true },
     { key: "base_name", label: "Base名 (キャプション・確認用)", kind: "text", placeholder: "選択時に自動補完されます", optional: true },
     { key: "table", label: "テーブル ID (実際の接続用)", kind: "text", placeholder: "tbl... または テーブル名", browseAirtableTable: true },

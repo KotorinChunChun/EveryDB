@@ -1,5 +1,5 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { $ } from "../../app/dom";
+import { $, promptUrlInput } from "../../app/dom";
 import { invoke } from "../../app/ipc";
 import { appState } from "../../app/state";
 import type { SourceDetail } from "../../shared/types";
@@ -15,6 +15,8 @@ import type { ParentKind } from "../../source-types/registry";
 import { SECRET_PLACEHOLDER } from "./constants";
 import { isConfigIncomplete } from "./config-rules";
 import { deriveDefaultName } from "./default-name";
+import { parentBrowseKind } from "./connection-kinds";
+import { duplicateConfirmMessage, findDuplicateSource } from "./source-identity";
 import { clearLinkedCredentials, setLinkedCredentials } from "./linked-credentials";
 import type { RoleEditorController } from "./role-editor";
 import { configWithoutRoleKeys, roleStateFromConfig } from "./roles";
@@ -69,6 +71,7 @@ export interface SourceEditorDialogActions {
   sharedKeysFor: (kind: ParentKind) => string[];
   tableOpenUrl: (type: string, cfg: Record<string, unknown>) => string | null;
   loadSources: () => Promise<void>;
+  openParentSettingsDialog: (parentKey: string) => Promise<void>;
   ensureUnlocked: () => Promise<boolean>;
   guideTextFor: (type: string) => string | null;
   openGuide: (type: string) => void;
@@ -99,8 +102,15 @@ export interface SourceEditorDialogActions {
   };
 }
 
+export interface OpenAddDialogOptions {
+  type?: string;
+  title?: string;
+  /** 接続先追加フロー（保存後に接続設定ダイアログを開く） */
+  connectionAdd?: boolean;
+}
+
 export interface SourceEditorDialogController {
-  openAddDialog: () => void;
+  openAddDialog: (options?: OpenAddDialogOptions) => void;
   openEditDialog: (id: number) => Promise<void>;
   getEditingId: () => number | null;
   getDialogMode: () => "add" | "edit";
@@ -109,6 +119,7 @@ export interface SourceEditorDialogController {
   maybeAutoFillName: (path?: string) => void;
   maybeFetchAndRenderFields: () => void;
   autoFillDefaultName: (force?: boolean) => void;
+  applySharePointSiteSelection: (siteUrl: string, displayName: string) => Promise<void>;
   resolveAirtableCaptions: (baseId?: string, tableId?: string, viewId?: string) => Promise<void>;
 }
 
@@ -127,6 +138,8 @@ export function mountSourceEditorDialog(
   let hiddenSharedValues: Record<string, unknown> = {};
   /** 追加時、表示名をユーザーが手動で編集したら以後はファイルパスからの自動入力で上書きしない。 */
   let nameManuallyEdited = false;
+  /** 接続先追加フロー（保存後にテーブル選択ダイアログへ進む） */
+  let connectionAddMode = false;
 
   for (const t of TYPE_DEFS) {
     const opt = document.createElement("option");
@@ -368,9 +381,8 @@ export function mountSourceEditorDialog(
     toggleField("end_mode", "end_cell", "end_ref_column");
   }
 
-  function renderBrowseArea(def: TypeDef) {
-    elements.browseAreaEl.innerHTML = "";
-    if (!def.browse) return;
+  function createBrowseButton(def: TypeDef): HTMLButtonElement | null {
+    if (!def.browse) return null;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn";
@@ -392,7 +404,7 @@ export function mountSourceEditorDialog(
         btn.onclick = () => pickers.openTablePicker("excel_table");
         break;
       case "sharepoint":
-        btn.textContent = "サイト/チームから選択…";
+        btn.textContent = "サイト・チームから選択…";
         btn.onclick = pickers.openSharePointPicker;
         break;
       case "airtable":
@@ -403,7 +415,61 @@ export function mountSourceEditorDialog(
         };
         break;
     }
-    elements.browseAreaEl.appendChild(btn);
+    return btn;
+  }
+
+  function renderAutoSetupRow(def: TypeDef) {
+    const field = document.createElement("div");
+    field.className = "field auto-setup-row";
+    const labelSpan = document.createElement("span");
+    labelSpan.textContent = "自動設定";
+    field.appendChild(labelSpan);
+
+    const btnRow = document.createElement("div");
+    btnRow.className = "zoom-row";
+    const urlBtn = document.createElement("button");
+    urlBtn.type = "button";
+    urlBtn.className = "btn";
+    urlBtn.textContent = "URLから自動入力";
+    urlBtn.onclick = async () => {
+      const url = await promptUrlInput();
+      if (url) tryApplyUrlOrFileDropHelper(url);
+    };
+    btnRow.appendChild(urlBtn);
+    if (dialogMode === "add" && def.browse === "sharepoint") {
+      const browseBtn = createBrowseButton(def);
+      if (browseBtn) btnRow.appendChild(browseBtn);
+    }
+    field.appendChild(btnRow);
+    elements.dynamicEl.appendChild(field);
+  }
+
+  function renderBrowseArea(def: TypeDef) {
+    elements.browseAreaEl.innerHTML = "";
+    if (!def.browse || def.browse === "sharepoint") return;
+    const btn = createBrowseButton(def);
+    if (btn) elements.browseAreaEl.appendChild(btn);
+  }
+
+  async function applySharePointSiteSelection(siteUrl: string, displayName: string) {
+    const siteEl = document.getElementById("fd-site_url") as HTMLInputElement | null;
+    if (siteEl) siteEl.value = siteUrl;
+    const siteNameEl = document.getElementById("fd-site_display_name") as HTMLInputElement | null;
+    if (siteNameEl) siteNameEl.value = displayName;
+    const listEl = document.getElementById("fd-list_name") as HTMLInputElement | null;
+    if (listEl) listEl.value = "";
+    const libEl = document.getElementById("fd-library_name") as HTMLInputElement | null;
+    if (libEl) libEl.value = "";
+    if (displayName) {
+      try {
+        await invoke("set_parent_label", { parentKey: siteUrl, label: displayName });
+        appState.parentLabelOverrides.set(siteUrl, displayName);
+      } catch (e) {
+        console.warn("接続先ラベルの保存に失敗:", e);
+      }
+    }
+    autoFillDefaultName();
+    maybeFetchAndRenderFields();
   }
 
   function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] = []) {
@@ -422,6 +488,21 @@ export function mountSourceEditorDialog(
     }
     for (const f of def.fields) {
       if (hideKeys.includes(f.key)) continue;
+      if (f.key === "site_display_name") {
+        const hidden = document.createElement("input");
+        hidden.type = "text";
+        hidden.id = `fd-${f.key}`;
+        hidden.hidden = true;
+        if (prefill && prefill[f.key] !== undefined && prefill[f.key] !== null) {
+          hidden.value = String(prefill[f.key]);
+        }
+        elements.dynamicEl.appendChild(hidden);
+        continue;
+      }
+      if (f.key === "url_helper") {
+        renderAutoSetupRow(def);
+        continue;
+      }
       const isCredOwner = !!f.credentialScope;
       const isCredManagedSibling = !isCredOwner && credentialManagedKeys.has(f.key);
       const label = document.createElement("label");
@@ -485,16 +566,8 @@ export function mountSourceEditorDialog(
           elements.dynamicEl.appendChild(input);
           continue;
         }
-        input.addEventListener("input", () => {
-          tryApplyUrlOrFileDropHelper(input.value);
-          autoFillDefaultName();
-        });
-        input.addEventListener("paste", (e) => {
-          const text = e.clipboardData?.getData("text") || "";
-          if (text) tryApplyUrlOrFileDropHelper(text);
-        });
+        input.addEventListener("input", () => autoFillDefaultName());
         input.addEventListener("change", () => {
-          tryApplyUrlOrFileDropHelper(input.value);
           autoFillDefaultName();
           maybeFetchAndRenderFields();
           // URL貼り付けが ID 欄より先にトークンより先行した場合など、トークン確定時点で
@@ -705,7 +778,7 @@ export function mountSourceEditorDialog(
     roleEditor.render([...roleEditor.getLastFieldNames()]);
   };
 
-  function openAddDialog() {
+  function openAddDialog(options: OpenAddDialogOptions = {}) {
     dialogMode = "add";
     editingId = null;
     roleEditor.setRoleState(null);
@@ -713,11 +786,12 @@ export function mountSourceEditorDialog(
     hiddenSharedKeys = [];
     hiddenSharedValues = {};
     nameManuallyEdited = false;
+    connectionAddMode = options.connectionAdd ?? false;
     elements.belongsToEl.hidden = true;
     elements.lastLoadedEl.hidden = true;
-    elements.addDialogTitle.textContent = "テーブル追加";
+    elements.addDialogTitle.textContent = options.title ?? (connectionAddMode ? "接続先を追加" : "テーブル追加");
     elements.nameInput.value = "";
-    elements.typeSel.value = "csv";
+    elements.typeSel.value = options.type ?? "csv";
     elements.typeSel.disabled = false;
     setConfigAccordionOpen(true);
     renderTypeFields();
@@ -783,7 +857,6 @@ export function mountSourceEditorDialog(
     }
   }
 
-  elements.addBtn.onclick = () => openAddDialog();
   elements.addCancelBtn.onclick = () => elements.dialog.close("cancel");
 
   elements.addForm.addEventListener("submit", async (e) => {
@@ -813,13 +886,29 @@ export function mountSourceEditorDialog(
     try {
       if (dialogMode === "edit" && editingId !== null) {
         await invoke("update_source", { id: editingId, name, configJson: JSON.stringify(config) });
+        elements.typeSel.disabled = false;
+        await actions.loadSources();
+        elements.dialog.close();
       } else {
         const type_ = elements.typeSel.value;
-        await invoke("add_source", { type: type_, name, configJson: JSON.stringify(config) });
+        const dup = await findDuplicateSource(type_, config, appState.sources);
+        if (dup) {
+          if (window.confirm(duplicateConfirmMessage(dup.name))) {
+            await invoke("reload_sources", { sourceIds: [dup.id] });
+            await actions.loadSources();
+            elements.dialog.close();
+          }
+          return;
+        }
+        const newId = await invoke<number>("add_source", { type: type_, name, configJson: JSON.stringify(config) });
+        elements.typeSel.disabled = false;
+        await actions.loadSources();
+        elements.dialog.close();
+        const added = appState.sources.find((s) => s.id === newId);
+        if (connectionAddMode && added && parentBrowseKind(type_) !== null) {
+          await actions.openParentSettingsDialog(added.parent);
+        }
       }
-      elements.typeSel.disabled = false;
-      await actions.loadSources();
-      elements.dialog.close();
     } catch (err) {
       alert("保存に失敗: " + String(err));
     } finally {
@@ -843,7 +932,6 @@ export function mountSourceEditorDialog(
       const path = actions.normalizePath(rawPath);
       const pathEl = document.getElementById("fd-path") as HTMLInputElement | null;
       const keyPathEl = document.getElementById("fd-key_path") as HTMLInputElement | null;
-      const urlHelperEl = document.getElementById("fd-url_helper") as HTMLInputElement | null;
       if (pathEl) {
         pathEl.value = path;
         autoFillDefaultName();
@@ -852,8 +940,7 @@ export function mountSourceEditorDialog(
         keyPathEl.value = path;
         autoFillDefaultName();
         maybeFetchAndRenderFields();
-      } else if (urlHelperEl) {
-        urlHelperEl.value = path;
+      } else {
         tryApplyUrlOrFileDropHelper(path);
       }
     }
@@ -887,6 +974,7 @@ export function mountSourceEditorDialog(
     maybeAutoFillName,
     maybeFetchAndRenderFields,
     autoFillDefaultName,
+    applySharePointSiteSelection,
     resolveAirtableCaptions,
   };
 }

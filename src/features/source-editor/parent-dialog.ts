@@ -10,28 +10,10 @@ import { SECRET_PLACEHOLDER } from "./constants";
 import type { FieldRendererActions } from "./field-renderer";
 import { renderFieldsInto } from "./field-renderer";
 import { setLinkedCredentials } from "./linked-credentials";
+import { GRAPH_ONE_CLICK_TYPES, parentBrowseKind, type ParentBrowseKind } from "./connection-kinds";
+import { duplicateConfirmMessage, findDuplicateSource } from "./source-identity";
+import { sharedConfigWouldChange } from "./shared-values-diff";
 import { currentFieldRawValue, parentKindLabel, sharedKeysFor } from "./shared-config";
-
-type ParentBrowseKind = "sqlite" | "accdb" | "excel_table" | "sharepoint" | "notion" | "graph365" | "airtable";
-
-/** 接続先ダイアログから配下テーブルを一覧取得して追加/削除できる種別。それ以外は非対応（個別に追加/削除）。 */
-function parentBrowseKind(repType: string): ParentBrowseKind | null {
-  if (repType === "sqlite") return "sqlite";
-  if (repType === "accdb") return "accdb";
-  if (repType === "excel_table") return "excel_table";
-  if (repType.startsWith("graph_sharepoint")) return "sharepoint";
-  if (repType === "notion") return "notion";
-  if (repType === "airtable") return "airtable";
-  // Microsoft 365(Graph) は API での一覧取得ではなく、実装済みの種別そのものを一覧に出す。
-  if (repType.startsWith("graph")) return "graph365";
-  return null;
-}
-
-/** Microsoft 365: 接続情報（テナント/クライアント/シークレット）だけで使える＝ワンクリックで追加できる種別。 */
-const GRAPH_ONE_CLICK_TYPES = [
-  "graph_entra_users", "graph_entra_groups", "graph_entra_devices",
-  "graph_intune_devices", "graph_licenses", "graph_teams",
-];
 /** Microsoft 365: 対象ユーザーやグループ ID など追加入力が要るため一覧からは追加できない種別。 */
 const GRAPH_PARAMETERIZED_TYPES = ["graph_calendar", "graph_onedrive", "graph_planner"];
 
@@ -386,17 +368,37 @@ export function mountParentSettingsDialog(
       if (!ok) return;
     }
 
+    const prevLabel = appState.parentLabelOverrides.get(parentKey) ?? "";
+    const labelChanged = newLabel !== prevLabel;
+    if (toAdd.length === 0 && toRemove.length === 0 && !labelChanged) {
+      let anySharedChange = false;
+      for (const c of children) {
+        const detail = await invoke<SourceDetail>("get_source_detail", { id: c.id });
+        if (sharedConfigWouldChange(detail.config, sharedValues, keys, actions.normalizePath)) {
+          anySharedChange = true;
+          break;
+        }
+      }
+      if (!anySharedChange) {
+        elements.errorEl.textContent = "変更はありません";
+        return;
+      }
+    }
+
     elements.saveBtn.disabled = true;
     elements.cancelBtn.disabled = true;
     elements.closeXBtn.disabled = true;
     elements.saveStatusEl.hidden = false;
     try {
-      await invoke("set_parent_label", { parentKey, label: newLabel });
-      if (newLabel) appState.parentLabelOverrides.set(parentKey, newLabel);
-      else appState.parentLabelOverrides.delete(parentKey);
+      if (labelChanged) {
+        await invoke("set_parent_label", { parentKey, label: newLabel });
+        if (newLabel) appState.parentLabelOverrides.set(parentKey, newLabel);
+        else appState.parentLabelOverrides.delete(parentKey);
+      }
 
       for (const c of children) {
         const detail = await invoke<SourceDetail>("get_source_detail", { id: c.id });
+        if (!sharedConfigWouldChange(detail.config, sharedValues, keys, actions.normalizePath)) continue;
         const cfg = { ...detail.config };
         for (const k of keys) {
           if (!(k in sharedValues)) continue;
@@ -411,6 +413,13 @@ export function mountParentSettingsDialog(
         const config: Record<string, unknown> = { ...item.extraConfig };
         for (const k of keys) {
           if (sharedValues[k] !== undefined) config[k] = sharedValues[k];
+        }
+        const dup = await findDuplicateSource(item.type_, config, appState.sources);
+        if (dup) {
+          if (window.confirm(duplicateConfirmMessage(dup.name))) {
+            await invoke("reload_sources", { sourceIds: [dup.id] });
+          }
+          continue;
         }
         try {
           // 秘密フィールドがマスクされたままでも壊れないよう、既存テーブルの暗号化済み設定を引き継ぐ。

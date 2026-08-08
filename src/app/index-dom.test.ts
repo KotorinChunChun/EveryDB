@@ -6,7 +6,7 @@ import { mountSimplePickerDialogs, SIMPLE_PICKER_DIALOGS } from "./simple-picker
 const requiredIds = [
   "app", "search", "sources", "status", "grid", "grid-head", "grid-viewport", "grid-rows", "result-info",
   "add-dialog", "parent-dialog", "column-map-dialog", "settings-dialog", "credential-manager",
-  "guide-dialog", "confirm-dialog", "export-dialog", "shortcut-guide-dialog",
+  "guide-dialog", "confirm-dialog", "url-auto-input-dialog", "export-dialog", "shortcut-guide-dialog",
   "simple-picker-dialog-template",
 ];
 

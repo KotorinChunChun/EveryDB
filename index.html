@@ -23,7 +23,7 @@
           <div class="sidebar-title-row">
             <div class="sidebar-title">データソース(接続先 > テーブル)</div>
             <button id="add" class="title-row-btn" type="button"
-                    title="テーブルを追加（新しい接続先の場合は接続情報もあわせて入力）">＋追加</button>
+                    title="接続先を追加（Microsoft 365 / SharePoint / Notion 等）">＋接続先</button>
             <button id="manage-toggle" class="title-row-btn manage-toggle" type="button" aria-pressed="false"
                     title="管理モード: 幅を広げて更新間隔・最終更新日時・更新/編集/削除ボタンを表示します">管理</button>
             <button id="source-guide-btn" class="title-row-btn square-btn" type="button"
@@ -100,6 +100,15 @@
       <button data-action="export">エクスポート（配下の全テーブル）</button>
       <button data-action="delete" class="danger">削除（配下の全テーブル）</button>
     </div>
+
+    <!-- 接続先種別の選択（＋接続先 ボタン） -->
+    <dialog id="connection-chooser" class="dialog" aria-labelledby="connection-chooser-title">
+      <h3 id="connection-chooser-title">接続先を追加</h3>
+      <div id="connection-chooser-list" class="picker-list"></div>
+      <div class="dialog-actions">
+        <button id="connection-chooser-cancel" class="btn" type="button">キャンセル</button>
+      </div>
+    </dialog>
 
     <!-- テーブル追加/編集ダイアログ（種別ごとの動的フィールド + フィールド役割編集。新規の接続先の場合は接続情報もここで入力） -->
     <dialog id="add-dialog" class="dialog wide" aria-labelledby="add-dialog-title">
@@ -202,7 +211,7 @@
           <button type="button" id="sp-tab-teams" class="sp-tab">Teams チーム</button>
         </div>
         <input id="sp-filter" class="search" type="text" placeholder="絞り込み…" />
-        <div id="sp-source-list" class="picker-list"></div>
+        <div id="sp-source-list" class="picker-table-wrap"></div>
       </div>
       <div id="sp-step-resources" class="sp-step" hidden>
         <div class="sp-selected-site"></div>
@@ -281,13 +290,14 @@
           <option value="night">ナイト（高コントラスト）</option>
         </select>
       </label>
-      <label>起動ショートカットキー
+      <div class="field">
+        <label for="s-hotkey">起動ショートカットキー</label>
         <div class="zoom-row">
           <input id="s-hotkey" type="text" class="row-limit" style="width: 170px; text-align: center; cursor: pointer;" value="Alt+Ctrl+D" readonly placeholder="キーを押して設定" title="ここをクリックしてから、設定したいキーボードの組み合わせ（Alt, Ctrl, Shift 等 + キー）を押してください" />
           <button type="button" id="s-hotkey-reset" class="btn" title="既定の Alt+Ctrl+D に戻す">既定に戻す</button>
         </div>
         <span id="s-hotkey-hint" class="roles-hint">入力欄をクリックし、設定したいキーを押してください（例: Alt+Ctrl+D）</span>
-      </label>
+      </div>
       <!-- ボタン群の見出しに <label> を使うと、最初のボタンが「関連コントロール」になり、
            ラベルの余白をホバーしただけでボタンが反応し、クリックすると発火してしまう。
            単なる見出しなので div にする。 -->
@@ -300,9 +310,10 @@
         </div>
         <span class="roles-hint">Ctrl++ / Ctrl+- / Ctrl+0 でも変更できます</span>
       </div>
-      <label class="limit-label-row" title="検索結果の最大行数">検索結果の上限件数
+      <div class="field" title="検索結果の最大行数">
+        <label for="row-limit">検索結果の上限件数</label>
         <input id="row-limit" class="row-limit" type="number" min="1" max="1000000" value="10000" />
-      </label>
+      </div>
       <div class="field">データ更新
         <div class="zoom-row">
           <button type="button" id="s-reload" class="btn">今すぐ全ソースを更新</button>
@@ -378,6 +389,17 @@
       <div id="guide-body" class="guide-body"></div>
       <div class="dialog-actions">
         <button id="guide-close" class="btn primary" type="button">閉じる</button>
+      </div>
+    </dialog>
+
+    <!-- URL から接続フィールドを自動入力 -->
+    <dialog id="url-auto-input-dialog" class="dialog" aria-labelledby="url-auto-input-dialog-title">
+      <h3 id="url-auto-input-dialog-title">URLから自動入力</h3>
+      <p id="url-auto-input-dialog-hint" class="dialog-note">URL を貼り付けまたは入力してください</p>
+      <input id="url-auto-input-dialog-input" type="text" autocomplete="off" spellcheck="false" />
+      <div class="dialog-actions">
+        <button id="url-auto-input-dialog-cancel" class="btn" type="button">キャンセル</button>
+        <button id="url-auto-input-dialog-ok" class="btn primary" type="button">OK（自動入力）</button>
       </div>
     </dialog>
 

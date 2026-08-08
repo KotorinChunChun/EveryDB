@@ -602,6 +602,21 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     access_token?: string;
   };
 
+  interface SpPickerRow {
+    id: string;
+    display_name: string;
+    description: string;
+    created_date_time: string;
+    key: string;
+  }
+
+  type SpSortKey = "display_name" | "id" | "description" | "created_date_time";
+  let spSortKey: SpSortKey = "display_name";
+  let spSortAsc = true;
+  let spPickerRows: SpPickerRow[] = [];
+  let spPickerAuth: GraphPickerAuth | null = null;
+  let spPickerKind: "site" | "team" = "site";
+
   async function graphAuthFromDialog(): Promise<GraphPickerAuth | null> {
     const tenant_id = (document.getElementById("fd-tenant_id") as HTMLInputElement | null)?.value.trim();
     const client_id = (document.getElementById("fd-client_id") as HTMLInputElement | null)?.value.trim();
@@ -620,113 +635,148 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     return { tenant_id, client_id, client_secret };
   }
 
+  function formatSpCreatedAt(iso: string): string {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString("ja-JP");
+  }
+
+  function compareSpRows(a: SpPickerRow, b: SpPickerRow): number {
+    if (spSortKey === "created_date_time") {
+      const ad = Date.parse(a.created_date_time) || 0;
+      const bd = Date.parse(b.created_date_time) || 0;
+      return spSortAsc ? ad - bd : bd - ad;
+    }
+    const av = (a[spSortKey] || "").toLowerCase();
+    const bv = (b[spSortKey] || "").toLowerCase();
+    const cmp = av.localeCompare(bv, "ja");
+    return spSortAsc ? cmp : -cmp;
+  }
+
+  function renderSpSourceTable() {
+    const listEl = $<HTMLDivElement>("sp-source-list");
+    const filterEl = $<HTMLInputElement>("sp-filter");
+    const q = filterEl.value.trim().toLowerCase();
+    const filtered = spPickerRows.filter((row) => {
+      if (!q) return true;
+      const hay = [row.display_name, row.id, row.description, row.key].join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+    filtered.sort(compareSpRows);
+
+    listEl.innerHTML = "";
+    const table = document.createElement("table");
+    table.className = "picker-table";
+    const thead = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+    const columns: { key: SpSortKey; label: string }[] = [
+      { key: "display_name", label: "表示名" },
+      { key: "id", label: "ID" },
+      { key: "description", label: "概要" },
+      { key: "created_date_time", label: "作成日" },
+    ];
+    for (const col of columns) {
+      const th = document.createElement("th");
+      th.className = "sortable" + (spSortKey === col.key ? (spSortAsc ? " sort-asc" : " sort-desc") : "");
+      th.textContent = col.label;
+      th.onclick = () => {
+        if (spSortKey === col.key) spSortAsc = !spSortAsc;
+        else {
+          spSortKey = col.key;
+          spSortAsc = true;
+        }
+        renderSpSourceTable();
+      };
+      headerRow.appendChild(th);
+    }
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    if (filtered.length === 0) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 4;
+      td.className = "picker-empty";
+      td.textContent = "見つかりませんでした";
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    } else {
+      for (const row of filtered) {
+        const tr = document.createElement("tr");
+        tr.title = row.key;
+        const nameTd = document.createElement("td");
+        nameTd.textContent = row.display_name || row.key;
+        const idTd = document.createElement("td");
+        idTd.className = "col-id";
+        idTd.textContent = row.id;
+        idTd.title = row.id;
+        const descTd = document.createElement("td");
+        descTd.className = "col-desc";
+        descTd.textContent = row.description;
+        descTd.title = row.description;
+        const dateTd = document.createElement("td");
+        dateTd.textContent = formatSpCreatedAt(row.created_date_time);
+        tr.append(nameTd, idTd, descTd, dateTd);
+        tr.onclick = () => void onSpSourceRowClick(row);
+        tbody.appendChild(tr);
+      }
+    }
+    table.appendChild(tbody);
+    listEl.appendChild(table);
+  }
+
+  async function onSpSourceRowClick(row: SpPickerRow) {
+    if (!spPickerAuth) return;
+    let siteUrl = row.key;
+    const displayName = row.display_name || siteUrl;
+    if (spPickerKind === "team") {
+      try {
+        siteUrl = await invoke<string>("browse_graph_team_site_url", { auth: spPickerAuth, teamGroupId: row.id });
+      } catch (e) {
+        alert("サイト解決に失敗: " + String(e));
+        return;
+      }
+    }
+    await getSourceEditor().applySharePointSiteSelection(siteUrl, displayName);
+    $<HTMLDialogElement>("sp-picker").close();
+  }
+
   async function loadSpSourceList(auth: GraphPickerAuth) {
     const listEl = $<HTMLDivElement>("sp-source-list");
     listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
+    spPickerAuth = auth;
+    spSortKey = "display_name";
+    spSortAsc = true;
     try {
       if (spMode === "sites") {
-        const sites = await invoke<{ web_url: string; display_name: string }[]>("browse_graph_sites", { auth });
-        renderSpSourceList(sites.map((s) => ({ key: s.web_url, label: s.display_name || s.web_url })), auth, "site");
+        spPickerKind = "site";
+        const sites = await invoke<{ id: string; display_name: string; web_url: string; description: string; created_date_time: string }[]>("browse_graph_sites", { auth });
+        spPickerRows = sites.map((s) => ({
+          id: s.id,
+          display_name: s.display_name || s.web_url,
+          description: s.description,
+          created_date_time: s.created_date_time,
+          key: s.web_url,
+        }));
       } else {
-        const teams = await invoke<{ group_id: string; display_name: string }[]>("browse_graph_teams", { auth });
-        renderSpSourceList(teams.map((t) => ({ key: t.group_id, label: t.display_name })), auth, "team");
+        spPickerKind = "team";
+        const teams = await invoke<{ id: string; display_name: string; description: string; created_date_time: string }[]>("browse_graph_teams", { auth });
+        spPickerRows = teams.map((t) => ({
+          id: t.id,
+          display_name: t.display_name,
+          description: t.description,
+          created_date_time: t.created_date_time,
+          key: t.id,
+        }));
       }
+      const filterEl = $<HTMLInputElement>("sp-filter");
+      filterEl.oninput = () => renderSpSourceTable();
+      filterEl.value = "";
+      renderSpSourceTable();
     } catch (e) {
       setPickerMessage(listEl, `取得失敗: ${String(e)}`);
-    }
-  }
-
-  function renderSpSourceList(
-    items: { key: string; label: string }[],
-    auth: GraphPickerAuth,
-    kind: "site" | "team",
-  ) {
-    const listEl = $<HTMLDivElement>("sp-source-list");
-    const filterEl = $<HTMLInputElement>("sp-filter");
-    const draw = () => {
-      const q = filterEl.value.trim().toLowerCase();
-      listEl.innerHTML = "";
-      const filtered = items.filter((it) => it.label.toLowerCase().includes(q));
-      if (filtered.length === 0) listEl.innerHTML = "<div class='picker-empty'>見つかりませんでした</div>";
-      for (const it of filtered) {
-        const row = document.createElement("div");
-        row.className = "picker-item";
-        row.textContent = it.label;
-        row.onclick = async () => {
-          let siteUrl = it.key;
-          if (kind === "team") {
-            try {
-              siteUrl = await invoke<string>("browse_graph_team_site_url", { auth, teamGroupId: it.key });
-            } catch (e) {
-              alert("サイト解決に失敗: " + String(e));
-              return;
-            }
-          }
-          await openSpResourceStep(auth, siteUrl, it.label);
-        };
-        listEl.appendChild(row);
-      }
-    };
-    filterEl.oninput = draw;
-    filterEl.value = "";
-    draw();
-  }
-
-  async function openSpResourceStep(
-    auth: GraphPickerAuth,
-    siteUrl: string,
-    siteLabel: string,
-  ) {
-    $<HTMLDivElement>("sp-step-source").hidden = true;
-    const stepRes = $<HTMLDivElement>("sp-step-resources");
-    stepRes.hidden = false;
-    $<HTMLDivElement>("sp-picker").querySelector(".sp-selected-site")!.textContent = `サイト: ${siteLabel} (${siteUrl})`;
-    const resList = $<HTMLDivElement>("sp-resource-list");
-    resList.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
-    const addBtn = $<HTMLButtonElement>("sp-picker-add");
-    addBtn.hidden = false;
-
-    const wantKind = $<HTMLSelectElement>("f-type").value === "graph_sharepoint_library" ? "library" : "list";
-    try {
-      const all = await invoke<{ display_name: string; kind: string }[]>("browse_graph_site_resources", { auth, siteUrl });
-      const filtered = all.filter((r) => r.kind === wantKind);
-      resList.innerHTML = "";
-      if (filtered.length === 0) {
-        resList.innerHTML = `<div class='picker-empty'>${wantKind === "library" ? "ライブラリ" : "リスト"}が見つかりませんでした</div>`;
-      }
-      for (const r of filtered) {
-        const item = document.createElement("div");
-        item.className = "picker-item";
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.value = r.display_name;
-        const span = document.createElement("span");
-        span.textContent = r.display_name;
-        item.append(cb, span);
-        resList.appendChild(item);
-      }
-      addBtn.onclick = async () => {
-        const checked = Array.from(resList.querySelectorAll("input:checked")) as HTMLInputElement[];
-        if (checked.length === 0) { $<HTMLDialogElement>("sp-picker").close(); return; }
-        const type_ = $<HTMLSelectElement>("f-type").value;
-        for (const cb of checked) {
-          const displayName = cb.value;
-          const config: Record<string, unknown> =
-            type_ === "graph_sharepoint_library"
-              ? { ...auth, site_url: siteUrl, library_name: displayName }
-              : { ...auth, site_url: siteUrl, list_name: displayName };
-          try {
-            await invoke("add_source", { type: type_, name: displayName, configJson: JSON.stringify(config) });
-          } catch (e) {
-            console.error(`追加失敗 (${displayName}):`, e);
-          }
-        }
-        $<HTMLDialogElement>("sp-picker").close();
-        $<HTMLDialogElement>("add-dialog").close();
-        await loadSources();
-      };
-    } catch (e) {
-      setPickerMessage(resList, `取得失敗: ${String(e)}`);
     }
   }
 

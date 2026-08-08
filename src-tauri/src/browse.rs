@@ -257,27 +257,34 @@ pub fn airtable_list_tables(token: &str, base_id: &str) -> Result<Vec<AirtableTa
 // ---- SharePoint: サイト一覧 ----
 #[derive(Serialize)]
 pub struct SiteEntry {
-    pub web_url: String,
+    pub id: String,
     pub display_name: String,
+    pub web_url: String,
+    pub description: String,
+    pub created_date_time: String,
+}
+
+fn graph_str(v: &Value, key: &str) -> String {
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 pub fn graph_list_sites(auth: &GraphAuthArgs) -> Result<Vec<SiteEntry>> {
     let client = graph_client(auth)?;
-    let url =
-        "https://graph.microsoft.com/v1.0/sites?search=*&$select=id,displayName,webUrl&$top=200";
+    let url = "https://graph.microsoft.com/v1.0/sites?search=*&$select=id,displayName,webUrl,description,createdDateTime&$top=200";
     Ok(client
         .get_all(url)?
         .iter()
         .filter_map(|s| {
             let web_url = s.get("webUrl").and_then(|v| v.as_str())?.to_string();
-            let display_name = s
-                .get("displayName")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
             Some(SiteEntry {
+                id: graph_str(s, "id"),
+                display_name: graph_str(s, "displayName"),
                 web_url,
-                display_name,
+                description: graph_str(s, "description"),
+                created_date_time: graph_str(s, "createdDateTime"),
             })
         })
         .collect())
@@ -286,26 +293,25 @@ pub fn graph_list_sites(auth: &GraphAuthArgs) -> Result<Vec<SiteEntry>> {
 // ---- Teams: チーム一覧(ピッカー用の軽量版) ----
 #[derive(Serialize)]
 pub struct TeamEntry {
-    pub group_id: String,
+    pub id: String,
     pub display_name: String,
+    pub description: String,
+    pub created_date_time: String,
 }
 
 pub fn graph_list_teams(auth: &GraphAuthArgs) -> Result<Vec<TeamEntry>> {
     let client = graph_client(auth)?;
-    let url = "https://graph.microsoft.com/v1.0/groups?$filter=resourceProvisioningOptions/Any(x:x%20eq%20'Team')&$select=id,displayName&$top=999";
+    let url = "https://graph.microsoft.com/v1.0/groups?$filter=resourceProvisioningOptions/Any(x:x%20eq%20'Team')&$select=id,displayName,description,createdDateTime&$top=999";
     Ok(client
         .get_all(url)?
         .iter()
         .filter_map(|t| {
-            let group_id = t.get("id").and_then(|v| v.as_str())?.to_string();
-            let display_name = t
-                .get("displayName")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            let id = t.get("id").and_then(|v| v.as_str())?.to_string();
             Some(TeamEntry {
-                group_id,
-                display_name,
+                id,
+                display_name: graph_str(t, "displayName"),
+                description: graph_str(t, "description"),
+                created_date_time: graph_str(t, "createdDateTime"),
             })
         })
         .collect())
@@ -807,7 +813,7 @@ mod tests {
         println!("teams = {}", teams.len());
         assert!(!teams.is_empty());
 
-        let team_site = graph_team_site_url(&auth, &teams[0].group_id).unwrap();
+        let team_site = graph_team_site_url(&auth, &teams[0].id).unwrap();
         println!("team[0] site url = {team_site}");
         assert!(team_site.starts_with("http"));
 

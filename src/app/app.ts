@@ -15,6 +15,7 @@ import {
 } from "../shared/storage";
 import { getCellUrl } from "../shared/urls";
 import { mountRoleEditor } from "../features/source-editor/role-editor";
+import { mountConnectionChooser } from "../features/source-editor/connection-chooser";
 import { mountSourceEditorDialogFromDom, type SourceEditorDialogController } from "../features/source-editor/dialog";
 import { mountParentSettingsDialogFromDom, type ParentSettingsDialogController } from "../features/source-editor/parent-dialog";
 import { sharedKeysFor } from "../features/source-editor/shared-config";
@@ -373,6 +374,7 @@ sourceEditor = mountSourceEditorDialogFromDom({
   sharedKeysFor,
   tableOpenUrl,
   loadSources,
+  openParentSettingsDialog: (key) => openParentSettingsDialog(key),
   ensureUnlocked,
   guideTextFor,
   openGuide,
@@ -404,6 +406,11 @@ parentSettings = mountParentSettingsDialogFromDom({
 });
 
 openParentSettingsDialog = parentSettings.openParentSettingsDialog;
+
+mountConnectionChooser({
+  openAddDialog: (opts) => sourceEditor.openAddDialog(opts),
+  openParentSettingsDialog: (key) => openParentSettingsDialog(key),
+});
 
 const settings = mountSettings({
   searchInput,

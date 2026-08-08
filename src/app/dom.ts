@@ -15,6 +15,54 @@ export function setPickerMessage(el: HTMLElement, message: string): void {
   el.appendChild(d);
 }
 
+/** URL 入力モーダル。キャンセル時は null、OK 時は trim 済み文字列（空文字の可能性あり）。 */
+export function promptUrlInput(message?: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const dlg = $<HTMLDialogElement>("url-auto-input-dialog");
+    const hintEl = $<HTMLParagraphElement>("url-auto-input-dialog-hint");
+    const inputEl = $<HTMLInputElement>("url-auto-input-dialog-input");
+    const okBtn = $<HTMLButtonElement>("url-auto-input-dialog-ok");
+    const cancelBtn = $<HTMLButtonElement>("url-auto-input-dialog-cancel");
+
+    hintEl.textContent = message ?? "URL を貼り付けまたは入力してください";
+    inputEl.value = "";
+
+    const cleanup = () => {
+      okBtn.onclick = null;
+      cancelBtn.onclick = null;
+      dlg.onclose = null;
+      inputEl.onkeydown = null;
+    };
+
+    okBtn.onclick = () => {
+      cleanup();
+      dlg.close();
+      resolve(inputEl.value.trim());
+    };
+    cancelBtn.onclick = () => {
+      cleanup();
+      dlg.close();
+      resolve(null);
+    };
+    dlg.onclose = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    inputEl.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        cleanup();
+        dlg.close();
+        resolve(inputEl.value.trim());
+      }
+    };
+
+    dlg.showModal();
+    inputEl.focus();
+  });
+}
+
 export function confirmDelete(message: string): Promise<boolean> {
   return new Promise((resolve) => {
     const dlg = $<HTMLDialogElement>("confirm-dialog");

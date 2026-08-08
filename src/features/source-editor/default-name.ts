@@ -70,11 +70,15 @@ export function deriveDefaultName(type_: string, config: Record<string, unknown>
     case "graph_sharepoint_list": {
       const l = str("list_name");
       if (l) return l;
+      const site = str("site_display_name");
+      if (site) return site;
       break;
     }
     case "graph_sharepoint_library": {
       const l = str("library_name");
       if (l) return l;
+      const site = str("site_display_name");
+      if (site) return site;
       return "ドキュメントライブラリ";
     }
     case "postgres":
