@@ -163,12 +163,7 @@ pub async fn graph_oauth_authorize(
     let handle = app.clone();
     let cancel_for_task = cancel.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        crate::graph_oauth::authorize_interactive(
-            &handle,
-            &tenant_id,
-            &client_id,
-            &cancel_for_task,
-        )
+        crate::graph_oauth::authorize_interactive(&handle, &tenant_id, &client_id, &cancel_for_task)
     })
     .await
     .map_err(|e| format!("内部エラー: {e}"))?;
@@ -195,7 +190,7 @@ pub fn resolve_graph_auth(
     state: State<'_, AppState>,
     id: i64,
 ) -> Result<serde_json::Value, String> {
-    let auth = credential_service::resolve_graph_auth(&state, id).map_err(Into::into)?;
+    let auth = credential_service::resolve_graph_auth(&state, id).map_err(err_to_string)?;
     Ok(serde_json::json!({
         "tenant_id": auth.tenant_id,
         "client_id": auth.client_id,

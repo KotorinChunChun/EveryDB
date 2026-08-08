@@ -430,7 +430,8 @@ fn graph_access_token_for_credential(
             );
         }
         let updated_json = serde_json::to_string(&updated)?;
-        let reprotected = secret::protect_json_keys(protected_keys_of_scope("graph"), &updated_json)?;
+        let reprotected =
+            secret::protect_json_keys(protected_keys_of_scope("graph"), &updated_json)?;
         conn.execute(
             "UPDATE credentials SET fields_json = ?2 WHERE id = ?1",
             params![credential_id, reprotected],

@@ -281,11 +281,7 @@ pub fn authorize_interactive(
 }
 
 /// refresh_token から access_token を再取得する。新しい refresh_token が返った場合は呼び出し側で保存すること。
-pub fn refresh(
-    tenant_id: &str,
-    client_id: &str,
-    refresh_token: &str,
-) -> Result<(String, String)> {
+pub fn refresh(tenant_id: &str, client_id: &str, refresh_token: &str) -> Result<(String, String)> {
     token_request(
         tenant_id,
         &[
@@ -330,16 +326,20 @@ mod tests {
             "st ate",
             "challenge+",
         );
-        assert!(url.starts_with(
-            "https://login.microsoftonline.com/tenant-1/oauth2/v2.0/authorize?"
-        ));
+        assert!(
+            url.starts_with("https://login.microsoftonline.com/tenant-1/oauth2/v2.0/authorize?")
+        );
         assert!(url.contains("response_type=code"));
         assert!(url.contains("client_id=cid%201"));
         assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A58914%2Fgraph-callback"));
         assert!(url.contains("code_challenge_method=S256"));
         assert!(url.contains("code_challenge=challenge%2B"));
         assert!(url.contains("state=st%20ate"));
-        assert!(url.contains("Sites.Read.All") || url.contains("Sites.Read.All".replace('.', "%2E").as_str()) || url.contains("graph.microsoft.com"));
+        assert!(
+            url.contains("Sites.Read.All")
+                || url.contains("Sites.Read.All".replace('.', "%2E").as_str())
+                || url.contains("graph.microsoft.com")
+        );
         assert!(url.contains("offline_access") || url.contains("offline_access"));
     }
 
@@ -374,14 +374,18 @@ mod tests {
             callback_result("/graph-callback?code=issued&state=expected", "expected").unwrap(),
             "issued"
         );
-        assert!(callback_result("/graph-callback?code=issued&state=other", "expected")
-            .unwrap_err()
-            .to_string()
-            .contains("state が一致"));
-        assert!(callback_result("/graph-callback?error=access_denied", "expected")
-            .unwrap_err()
-            .to_string()
-            .contains("access_denied"));
+        assert!(
+            callback_result("/graph-callback?code=issued&state=other", "expected")
+                .unwrap_err()
+                .to_string()
+                .contains("state が一致")
+        );
+        assert!(
+            callback_result("/graph-callback?error=access_denied", "expected")
+                .unwrap_err()
+                .to_string()
+                .contains("access_denied")
+        );
     }
 
     #[test]

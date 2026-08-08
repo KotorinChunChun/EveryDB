@@ -94,11 +94,7 @@ pub(crate) struct GraphUsersConnector {
 }
 impl Connector for GraphUsersConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let url = "https://graph.microsoft.com/v1.0/users?$select=displayName,userPrincipalName,mail,jobTitle,department,officeLocation,mobilePhone,id&$top=999";
         let fields = [
             "displayName",
@@ -139,11 +135,7 @@ pub(crate) struct GraphGroupsConnector {
 }
 impl Connector for GraphGroupsConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let url = "https://graph.microsoft.com/v1.0/groups?$select=displayName,mail,description,visibility,id&$top=999";
         let fields = ["displayName", "mail", "description", "visibility"];
         Ok(client
@@ -168,11 +160,7 @@ pub(crate) struct GraphTeamsConnector {
 }
 impl Connector for GraphTeamsConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let url = "https://graph.microsoft.com/v1.0/groups?$filter=resourceProvisioningOptions/Any(x:x eq 'Team')&$select=displayName,mail,description,id&$top=999";
         let fields = ["displayName", "mail", "description"];
         Ok(client
@@ -246,11 +234,7 @@ impl GraphSharePointListConnector {
 
 impl Connector for GraphSharePointListConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let sid = graph_site_id(&client, &self.site_url)?;
         let lid = self.resolve_list_id(&client, &sid)?;
 
@@ -284,11 +268,7 @@ impl Connector for GraphSharePointListConnector {
     }
 
     fn field_names(&self) -> Result<Vec<String>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let sid = graph_site_id(&client, &self.site_url)?;
         let lid = self.resolve_list_id(&client, &sid)?;
         let cols = client.get(&format!(
@@ -332,11 +312,7 @@ pub(crate) struct GraphSharePointLibraryConnector {
 }
 impl Connector for GraphSharePointLibraryConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let sid = graph_site_id(&client, &self.site_url)?;
         // ライブラリ名指定があれば drives から一致検索、無ければ既定ライブラリ /drive。
         let did = match self.library_name.as_deref().filter(|s| !s.is_empty()) {
@@ -456,11 +432,7 @@ pub(crate) struct GraphDevicesConnector {
 }
 impl Connector for GraphDevicesConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let url = "https://graph.microsoft.com/v1.0/devices?$select=displayName,operatingSystem,operatingSystemVersion,isCompliant,trustType,approximateLastSignInDateTime&$top=999";
         let fields = [
             "displayName",
@@ -499,11 +471,7 @@ pub(crate) struct GraphIntuneDevicesConnector {
 }
 impl Connector for GraphIntuneDevicesConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let url = "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$select=deviceName,operatingSystem,osVersion,complianceState,userPrincipalName,lastSyncDateTime&$top=999";
         let fields = [
             "deviceName",
@@ -542,11 +510,7 @@ pub(crate) struct GraphLicensesConnector {
 }
 impl Connector for GraphLicensesConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let url = "https://graph.microsoft.com/v1.0/subscribedSkus?$select=skuPartNumber,skuId,consumedUnits,prepaidUnits,capabilityStatus";
         let mut out = Vec::new();
         for sku in client.get_all(url)? {
@@ -612,11 +576,7 @@ pub(crate) struct GraphCalendarConnector {
 }
 impl Connector for GraphCalendarConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let user = urlencoding_light(&self.user);
         let url = format!(
             "https://graph.microsoft.com/v1.0/users/{user}/events?$select=subject,start,end,location,organizer,attendees,webLink&$top=250&$orderby=start/dateTime desc"
@@ -701,11 +661,7 @@ pub(crate) struct GraphOneDriveConnector {
 }
 impl Connector for GraphOneDriveConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let user = urlencoding_light(&self.user);
         let mut out = Vec::new();
         walk_drive(
@@ -735,11 +691,7 @@ pub(crate) struct GraphPlannerConnector {
 }
 impl Connector for GraphPlannerConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let plans = client.get(&format!(
             "https://graph.microsoft.com/v1.0/groups/{}/planner/plans?$select=id,title",
             self.group_id
