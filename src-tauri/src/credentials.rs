@@ -12,6 +12,173 @@ use serde_json::{Map, Value};
 
 use crate::secret;
 
+pub const GRAPH_CAPABILITY_SHAREPOINT: &str = "sharepoint";
+pub const GRAPH_CAPABILITY_CALENDAR_SELF: &str = "calendar_self";
+pub const GRAPH_CAPABILITY_ONEDRIVE_SELF: &str = "onedrive_self";
+const GRAPH_CAPABILITIES: &[&str] = &[
+    GRAPH_CAPABILITY_SHAREPOINT,
+    GRAPH_CAPABILITY_CALENDAR_SELF,
+    GRAPH_CAPABILITY_ONEDRIVE_SELF,
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GraphAuthMethod {
+    AppOnly,
+    Delegated,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GraphCredentialProfile {
+    auth_method: GraphAuthMethod,
+    capabilities: Vec<String>,
+}
+
+fn graph_profile(fields: &Value) -> Result<GraphCredentialProfile> {
+    let auth_method = match fields
+        .get("auth_method")
+        .and_then(Value::as_str)
+        .unwrap_or("app_only")
+    {
+        "app_only" => GraphAuthMethod::AppOnly,
+        "delegated" => GraphAuthMethod::Delegated,
+        value => {
+            return Err(anyhow!(
+                "Graph資格情報の認証方式が不正です: {value}（app_only または delegated を指定してください）"
+            ))
+        }
+    };
+
+    let capabilities = match fields.get("capabilities") {
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|value| {
+                value.as_str().map(str::to_string).ok_or_else(|| {
+                    anyhow!("Graph資格情報の capability は文字列の配列で指定してください")
+                })
+            })
+            .collect::<Result<Vec<_>>>()?,
+        Some(Value::Null) | None if auth_method == GraphAuthMethod::Delegated => {
+            vec![GRAPH_CAPABILITY_SHAREPOINT.to_string()]
+        }
+        Some(Value::Null) | None => Vec::new(),
+        Some(_) => {
+            return Err(anyhow!(
+                "Graph資格情報の capability は文字列の配列で指定してください"
+            ))
+        }
+    };
+    for capability in &capabilities {
+        if !GRAPH_CAPABILITIES.contains(&capability.as_str()) {
+            return Err(anyhow!(
+                "Graph資格情報に未対応の capability が含まれています: {capability}"
+            ));
+        }
+    }
+    Ok(GraphCredentialProfile {
+        auth_method,
+        capabilities,
+    })
+}
+
+fn delegated_capability_for_source(type_: &str) -> Option<&'static str> {
+    match type_ {
+        "graph_sharepoint_list" | "graph_sharepoint_library" => Some(GRAPH_CAPABILITY_SHAREPOINT),
+        "graph_calendar" => Some(GRAPH_CAPABILITY_CALENDAR_SELF),
+        "graph_onedrive" => Some(GRAPH_CAPABILITY_ONEDRIVE_SELF),
+        _ => None,
+    }
+}
+
+fn validate_graph_profile_for_source(
+    type_: &str,
+    source_name: Option<&str>,
+    profile: &GraphCredentialProfile,
+) -> Result<()> {
+    if !type_.starts_with("graph") || profile.auth_method == GraphAuthMethod::AppOnly {
+        return Ok(());
+    }
+    let source = source_name
+        .map(|name| format!("「{name}」({type_})"))
+        .unwrap_or_else(|| type_.to_string());
+    let Some(required) = delegated_capability_for_source(type_) else {
+        return Err(anyhow!(
+            "Graph資格情報の互換性エラー: {source} は委任 OAuth に対応していません。アプリケーション認証を選択してください"
+        ));
+    };
+    if !profile
+        .capabilities
+        .iter()
+        .any(|capability| capability == required)
+    {
+        return Err(anyhow!(
+            "Graph資格情報の互換性エラー: {source} には capability「{required}」が必要です。資格情報を再認可してください"
+        ));
+    }
+    Ok(())
+}
+
+fn credential_record(conn: &Connection, id: i64) -> Result<(String, String)> {
+    conn.query_row(
+        "SELECT scope, fields_json FROM credentials WHERE id = ?1",
+        [id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .map_err(|_| anyhow!("保存済みトークン(id={id})が見つかりません（削除された可能性があります）"))
+}
+
+fn credential_reference_id(config_json: &str, scope: &str) -> Result<Option<i64>> {
+    let Some(key) = source_ref_key_of_scope(scope) else {
+        return Ok(None);
+    };
+    let value: Value = serde_json::from_str(config_json)?;
+    let Some(reference) = value.get(key).and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let Some(id) = reference.strip_prefix(secret::CRED_MARKER) else {
+        return Ok(None);
+    };
+    Ok(Some(id.parse().map_err(|_| {
+        anyhow!("保存済みトークン参照が不正です: {reference}")
+    })?))
+}
+
+/// ソース種別とリンクされた保存済み資格情報の認証方式・capabilityが適合するかを検証する。
+/// 秘密値の復号やネットワークアクセスより前に呼び、誤設定を保存・実行させない。
+pub fn validate_source_credential_compatibility(
+    conn: &Connection,
+    type_: &str,
+    config_json: &str,
+) -> Result<()> {
+    let Some(expected_scope) = scope_of_type(type_) else {
+        return Ok(());
+    };
+    let Some(id) = credential_reference_id(config_json, expected_scope)? else {
+        return Ok(());
+    };
+    let (actual_scope, protected_fields) = credential_record(conn, id)?;
+    if actual_scope != expected_scope {
+        return Err(anyhow!(
+            "保存済みトークンの種別が一致しません（期待: {expected_scope}、実際: {actual_scope}）"
+        ));
+    }
+    if actual_scope == "graph" {
+        let decrypted = secret::unprotect_config(&protected_fields)?;
+        let fields: Value = serde_json::from_str(&decrypted)?;
+        validate_graph_profile_for_source(type_, None, &graph_profile(&fields)?)?;
+    }
+    Ok(())
+}
+
+/// source type を伴う資格情報解決。Graphでは互換性検証を必須化する。
+pub fn resolve_credentials_for_source_type(
+    conn: &Connection,
+    type_: &str,
+    config_json: &str,
+) -> Result<String> {
+    validate_source_credential_compatibility(conn, type_, config_json)?;
+    resolve_credentials(conn, config_json)
+}
+
 /// 対応スコープ（`sharedKeysFor` と同じ発想でフィールドをひとまとめにする単位）。
 pub const SCOPES: &[&str] = &["notion", "airtable", "graph", "box", "postgres", "mysql"];
 
@@ -125,6 +292,10 @@ pub fn add_credential(
     fields_json: &str,
 ) -> Result<i64> {
     validate_scope(scope)?;
+    if scope == "graph" {
+        let fields: Value = serde_json::from_str(fields_json)?;
+        graph_profile(&fields)?;
+    }
     let protected = secret::protect_json_keys(protected_keys_of_scope(scope), fields_json)?;
     conn.execute(
         "INSERT INTO credentials(scope, label, fields_json) VALUES(?1, ?2, ?3)",
@@ -143,6 +314,28 @@ pub fn update_credential(conn: &Connection, id: i64, label: &str, fields_json: &
     )?;
     let keys = protected_keys_of_scope(&scope);
     let merged = secret::merge_preserving_placeholder_keys(keys, &old_fields_json, fields_json)?;
+    if scope == "graph" {
+        let decrypted = secret::unprotect_config(&merged)?;
+        let fields: Value = serde_json::from_str(&decrypted)?;
+        let profile = graph_profile(&fields)?;
+        let mut stmt =
+            conn.prepare("SELECT id, type, name, config_json FROM sources ORDER BY id")?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        for (_source_id, type_, source_name, config_json) in rows {
+            if credential_reference_id(&config_json, "graph")? == Some(id) {
+                validate_graph_profile_for_source(&type_, Some(&source_name), &profile)?;
+            }
+        }
+    }
     let protected = secret::protect_json_keys(keys, &merged)?;
     conn.execute(
         "UPDATE credentials SET label = ?2, fields_json = ?3 WHERE id = ?1",
@@ -352,6 +545,28 @@ pub fn resolve_credentials(conn: &Connection, config_json: &str) -> Result<Strin
                 .get("auth_method")
                 .and_then(|x| x.as_str())
                 .unwrap_or("app_only");
+            let profile = graph_profile(&cred_v)?;
+            obj.insert(
+                "auth_method".to_string(),
+                Value::String(
+                    match profile.auth_method {
+                        GraphAuthMethod::AppOnly => "app_only",
+                        GraphAuthMethod::Delegated => "delegated",
+                    }
+                    .to_string(),
+                ),
+            );
+            obj.insert(
+                "capabilities".to_string(),
+                Value::Array(
+                    profile
+                        .capabilities
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect(),
+                ),
+            );
             if auth_method == "delegated" {
                 let access_token = graph_access_token_for_credential(conn, id, &fields_json)?;
                 // コネクタは access_token があれば client_credentials を使わない。
@@ -441,7 +656,11 @@ fn graph_access_token_for_credential(
 }
 
 /// 保存済み Graph 認証情報からピッカー用の認証引数を解決する。
-pub fn resolve_graph_auth_args(conn: &Connection, id: i64) -> Result<crate::browse::GraphAuthArgs> {
+pub fn resolve_graph_auth_args(
+    conn: &Connection,
+    id: i64,
+    required_capability: &str,
+) -> Result<crate::browse::GraphAuthArgs> {
     let (scope, fields_json): (String, String) = conn.query_row(
         "SELECT scope, fields_json FROM credentials WHERE id = ?1",
         [id],
@@ -466,6 +685,17 @@ pub fn resolve_graph_auth_args(conn: &Connection, id: i64) -> Result<crate::brow
         .get("auth_method")
         .and_then(|x| x.as_str())
         .unwrap_or("app_only");
+    let profile = graph_profile(&v)?;
+    if profile.auth_method == GraphAuthMethod::Delegated
+        && !profile
+            .capabilities
+            .iter()
+            .any(|capability| capability == required_capability)
+    {
+        return Err(anyhow!(
+            "Graph資格情報の互換性エラー: この操作には capability「{required_capability}」が必要です。資格情報を再認可してください"
+        ));
+    }
     if auth_method == "delegated" {
         let access_token = graph_access_token_for_credential(conn, id, &fields_json)?;
         Ok(crate::browse::GraphAuthArgs {
@@ -473,6 +703,7 @@ pub fn resolve_graph_auth_args(conn: &Connection, id: i64) -> Result<crate::brow
             client_id,
             client_secret: String::new(),
             access_token,
+            auth_method: "delegated".to_string(),
         })
     } else {
         let client_secret = v
@@ -485,6 +716,7 @@ pub fn resolve_graph_auth_args(conn: &Connection, id: i64) -> Result<crate::brow
             client_id,
             client_secret,
             access_token: String::new(),
+            auth_method: "app_only".to_string(),
         })
     }
 }
@@ -777,6 +1009,115 @@ mod tests {
         );
         assert!(fields.get("refresh_token").is_none());
         assert!(fields.get("client_secret").is_none());
+    }
+
+    #[test]
+    fn graph_profile_preserves_legacy_defaults() {
+        let app_only = graph_profile(&serde_json::json!({})).unwrap();
+        assert_eq!(app_only.auth_method, GraphAuthMethod::AppOnly);
+        assert!(app_only.capabilities.is_empty());
+
+        let delegated = graph_profile(&serde_json::json!({ "auth_method": "delegated" })).unwrap();
+        assert_eq!(delegated.auth_method, GraphAuthMethod::Delegated);
+        assert_eq!(delegated.capabilities, vec![GRAPH_CAPABILITY_SHAREPOINT]);
+    }
+
+    #[test]
+    fn delegated_graph_sources_require_the_matching_capability() {
+        let conn = open_test_db();
+        let id = add_credential(
+            &conn,
+            "graph",
+            "委任",
+            r#"{"auth_method":"delegated","tenant_id":"t","client_id":"c","capabilities":["sharepoint"],"refresh_token":"rt"}"#,
+        )
+        .unwrap();
+        let config = serde_json::json!({ "client_secret": format!("cred:{id}") }).to_string();
+
+        validate_source_credential_compatibility(&conn, "graph_sharepoint_list", &config).unwrap();
+        let error = validate_source_credential_compatibility(&conn, "graph_calendar", &config)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("calendar_self"));
+        let error = validate_source_credential_compatibility(&conn, "graph_teams", &config)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("委任 OAuth に対応していません"));
+    }
+
+    #[test]
+    fn app_only_graph_credentials_remain_compatible_with_all_graph_sources() {
+        let conn = open_test_db();
+        let id = add_credential(
+            &conn,
+            "graph",
+            "アプリ",
+            r#"{"tenant_id":"t","client_id":"c","client_secret":"s"}"#,
+        )
+        .unwrap();
+        let config = serde_json::json!({ "client_secret": format!("cred:{id}") }).to_string();
+        for type_ in [
+            "graph_entra_users",
+            "graph_teams",
+            "graph_sharepoint_library",
+            "graph_calendar",
+            "graph_onedrive",
+            "graph_planner",
+        ] {
+            validate_source_credential_compatibility(&conn, type_, &config).unwrap();
+        }
+    }
+
+    #[test]
+    fn credential_update_is_rejected_before_breaking_a_linked_source() {
+        let conn = open_test_db();
+        let id = add_credential(
+            &conn,
+            "graph",
+            "アプリ",
+            r#"{"auth_method":"app_only","tenant_id":"t","client_id":"c","client_secret":"s"}"#,
+        )
+        .unwrap();
+        crate::db::insert_source(
+            &conn,
+            "graph_teams",
+            "全社Teams",
+            &serde_json::json!({ "client_secret": format!("cred:{id}") }).to_string(),
+        )
+        .unwrap();
+
+        let error = update_credential(
+            &conn,
+            id,
+            "委任へ変更",
+            r#"{"auth_method":"delegated","tenant_id":"t","client_id":"c","capabilities":["sharepoint"],"refresh_token":"rt"}"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("全社Teams"));
+        assert!(error.contains("委任 OAuth に対応していません"));
+
+        let (_, fields) = public_fields(&conn, id).unwrap();
+        assert_eq!(
+            fields.get("auth_method").and_then(Value::as_str),
+            Some("app_only")
+        );
+    }
+
+    #[test]
+    fn graph_browse_rejects_missing_capability_before_token_refresh() {
+        let conn = open_test_db();
+        let id = add_credential(
+            &conn,
+            "graph",
+            "予定表のみ",
+            r#"{"auth_method":"delegated","tenant_id":"t","client_id":"c","capabilities":["calendar_self"],"refresh_token":"not-used"}"#,
+        )
+        .unwrap();
+        let error = resolve_graph_auth_args(&conn, id, GRAPH_CAPABILITY_SHAREPOINT)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("sharepoint"));
     }
 
     #[test]

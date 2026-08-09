@@ -19,8 +19,13 @@ pub fn add_credential(
     fields_json: &str,
 ) -> ServiceResult<i64> {
     let conn = lock_db(state)?;
-    credentials::add_credential(&conn, scope, label, fields_json)
-        .map_err(|e| ServiceError::external("トークンの追加に失敗しました", e))
+    credentials::add_credential(&conn, scope, label, fields_json).map_err(|error| {
+        if error.to_string().starts_with("Graph資格情報") {
+            ServiceError::validation(error.to_string())
+        } else {
+            ServiceError::external("トークンの追加に失敗しました", error)
+        }
+    })
 }
 
 pub fn update_credential(
@@ -30,8 +35,13 @@ pub fn update_credential(
     fields_json: &str,
 ) -> ServiceResult<()> {
     let conn = lock_db(state)?;
-    credentials::update_credential(&conn, id, label, fields_json)
-        .map_err(|e| ServiceError::external("トークンの更新に失敗しました", e))
+    credentials::update_credential(&conn, id, label, fields_json).map_err(|error| {
+        if error.to_string().starts_with("Graph資格情報") {
+            ServiceError::validation(error.to_string())
+        } else {
+            ServiceError::external("トークンの更新に失敗しました", error)
+        }
+    })
 }
 
 pub fn delete_credential(state: &AppState, id: i64) -> ServiceResult<()> {

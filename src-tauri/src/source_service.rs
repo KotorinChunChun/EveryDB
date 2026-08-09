@@ -4,7 +4,16 @@ use crate::app_state::AppState;
 use crate::model::SourceInfo;
 use crate::refresh_service::{reload_many_for_state, reload_one_source, ReloadSummary};
 use crate::service_error::{lock_db, ServiceError, ServiceResult};
-use crate::{db, secret};
+use crate::{credentials, db, secret};
+
+fn validate_credential_compatibility(
+    conn: &rusqlite::Connection,
+    type_: &str,
+    config_json: &str,
+) -> ServiceResult<()> {
+    credentials::validate_source_credential_compatibility(conn, type_, config_json)
+        .map_err(|error| ServiceError::validation(error.to_string()))
+}
 
 pub fn list_sources(state: &AppState) -> ServiceResult<Vec<SourceInfo>> {
     let conn = lock_db(state)?;
@@ -20,6 +29,7 @@ pub fn add_source(
 ) -> ServiceResult<i64> {
     let id = {
         let conn = lock_db(state)?;
+        validate_credential_compatibility(&conn, &type_, &config_json)?;
         let config_json = secret::protect_config(&type_, &config_json)
             .map_err(|e| ServiceError::external("接続情報の保存に失敗しました", e))?;
         db::insert_source(&conn, &type_, &name, &config_json)
@@ -64,6 +74,7 @@ pub fn add_source_from_sibling(
         let (_, sibling_json) = db::get_source_config(&conn, sibling_id)
             .map_err(|e| ServiceError::external("兄弟ソースの取得に失敗しました", e))?;
         let merged = fill_shared_from_sibling(&config_json, &sibling_json, &shared_keys)?;
+        validate_credential_compatibility(&conn, &type_, &merged)?;
         let protected = secret::protect_config(&type_, &merged)
             .map_err(|e| ServiceError::external("接続情報の保存に失敗しました", e))?;
         db::insert_source(&conn, &type_, &name, &protected)
@@ -117,6 +128,7 @@ pub fn update_source(
             .map_err(|e| ServiceError::external("データソース設定の取得に失敗しました", e))?;
         let merged = secret::merge_preserving_placeholder(&type_, &old_config_json, &config_json)
             .map_err(|e| ServiceError::external("接続情報の更新に失敗しました", e))?;
+        validate_credential_compatibility(&conn, &type_, &merged)?;
         let protected = secret::protect_config(&type_, &merged)
             .map_err(|e| ServiceError::external("接続情報の保存に失敗しました", e))?;
         db::update_source(&conn, id, &name, &protected)
@@ -146,7 +158,8 @@ pub fn preview_source_fields(
 ) -> ServiceResult<Vec<String>> {
     let resolved = {
         let conn = lock_db(state)?;
-        crate::credentials::resolve_credentials(&conn, &config_json)
+        validate_credential_compatibility(&conn, &type_, &config_json)?;
+        crate::credentials::resolve_credentials_for_source_type(&conn, &type_, &config_json)
             .map_err(|e| ServiceError::external("接続情報の解決に失敗しました", e))?
     };
     crate::connectors::raw_field_names(&type_, &resolved)
@@ -164,8 +177,10 @@ pub fn preview_source_fields_by_id(state: &AppState, id: i64) -> ServiceResult<F
         let conn = lock_db(state)?;
         let (type_, config_json) = db::get_source_config(&conn, id)
             .map_err(|e| ServiceError::external("データソース設定の取得に失敗しました", e))?;
-        let resolved = crate::credentials::resolve_credentials(&conn, &config_json)
-            .map_err(|e| ServiceError::external("接続情報の解決に失敗しました", e))?;
+        validate_credential_compatibility(&conn, &type_, &config_json)?;
+        let resolved =
+            crate::credentials::resolve_credentials_for_source_type(&conn, &type_, &config_json)
+                .map_err(|e| ServiceError::external("接続情報の解決に失敗しました", e))?;
         (type_, resolved)
     };
     match crate::connectors::raw_field_names(&type_, &config_json) {
@@ -216,7 +231,8 @@ pub fn reload_sources(state: &AppState, source_ids: Vec<i64>) -> ServiceResult<R
 
 #[cfg(test)]
 mod source_service_tests {
-    use super::fill_shared_from_sibling;
+    use super::{add_source, fill_shared_from_sibling};
+    use crate::app_state::AppState;
     use crate::secret::SECRET_PLACEHOLDER;
 
     #[test]
@@ -236,5 +252,31 @@ mod source_service_tests {
         let out = fill_shared_from_sibling(new_cfg, sibling, &["token".to_string()]).unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["token"], "ntn_typed_by_user");
+    }
+
+    #[test]
+    fn add_source_rejects_incompatible_graph_credential_before_insert() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::init_schema(&conn).unwrap();
+        let credential_id = crate::credentials::add_credential(
+            &conn,
+            "graph",
+            "SharePoint委任",
+            r#"{"auth_method":"delegated","tenant_id":"t","client_id":"c","capabilities":["sharepoint"],"refresh_token":"rt"}"#,
+        )
+        .unwrap();
+        let state = AppState::new(conn);
+        let error = add_source(
+            &state,
+            "graph_teams".to_string(),
+            "Teams".to_string(),
+            serde_json::json!({ "client_secret": format!("cred:{credential_id}") }).to_string(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("委任 OAuth に対応していません"));
+        assert!(crate::db::list_sources(&state.db.lock().unwrap())
+            .unwrap()
+            .is_empty());
     }
 }

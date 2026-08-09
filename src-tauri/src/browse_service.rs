@@ -14,8 +14,8 @@ use crate::db;
 use crate::secret;
 use crate::service_error::{lock_db, ServiceError, ServiceResult};
 
-fn resolve_and_decrypt(conn: &Connection, config_json: &str) -> ServiceResult<String> {
-    let resolved = credentials::resolve_credentials(conn, config_json)
+fn resolve_and_decrypt(conn: &Connection, type_: &str, config_json: &str) -> ServiceResult<String> {
+    let resolved = credentials::resolve_credentials_for_source_type(conn, type_, config_json)
         .map_err(|e| ServiceError::external("接続情報の解決に失敗しました", e))?;
     secret::unprotect_config(&resolved)
         .map_err(|e| ServiceError::external("接続情報の復号に失敗しました", e))
@@ -45,13 +45,17 @@ pub fn effective_config(
     id: i64,
     overrides_json: &str,
 ) -> ServiceResult<Map<String, serde_json::Value>> {
-    let (_, config_json) = db::get_source_config(conn, id)
+    let (type_, config_json) = db::get_source_config(conn, id)
         .map_err(|e| ServiceError::external("ソース設定の取得に失敗しました", e))?;
-    let decrypted = resolve_and_decrypt(conn, &config_json)?;
+    credentials::validate_source_credential_compatibility(conn, &type_, &config_json)
+        .map_err(|error| ServiceError::validation(error.to_string()))?;
+    let decrypted = resolve_and_decrypt(conn, &type_, &config_json)?;
     let merged = merge_overrides(&decrypted, overrides_json)?;
     let merged_json = serde_json::to_string(&merged)
         .map_err(|e| ServiceError::internal("設定の合成に失敗しました", e))?;
-    let merged_decrypted = resolve_and_decrypt(conn, &merged_json)?;
+    credentials::validate_source_credential_compatibility(conn, &type_, &merged_json)
+        .map_err(|error| ServiceError::validation(error.to_string()))?;
+    let merged_decrypted = resolve_and_decrypt(conn, &type_, &merged_json)?;
     serde_json::from_str(&merged_decrypted)
         .map_err(|e| ServiceError::external("設定 JSON の解析に失敗しました", e))
 }
@@ -220,6 +224,14 @@ pub fn browse_graph_site_resources_for_source(
         client_id: cfg_str(&cfg, "client_id"),
         client_secret: cfg_str(&cfg, "client_secret"),
         access_token: cfg_str(&cfg, "access_token"),
+        auth_method: {
+            let method = cfg_str(&cfg, "auth_method");
+            if method.is_empty() {
+                "app_only".to_string()
+            } else {
+                method
+            }
+        },
     };
     let site_url = cfg_str(&cfg, "site_url");
     if site_url.is_empty() {
@@ -230,8 +242,12 @@ pub fn browse_graph_site_resources_for_source(
 
 fn graph_auth_for_credential(state: &AppState, credential_id: i64) -> ServiceResult<GraphAuthArgs> {
     let conn = lock_db(state)?;
-    credentials::resolve_graph_auth_args(&conn, credential_id)
-        .map_err(|e| ServiceError::external("Graph 認証情報の解決に失敗しました", e))
+    credentials::resolve_graph_auth_args(
+        &conn,
+        credential_id,
+        credentials::GRAPH_CAPABILITY_SHAREPOINT,
+    )
+    .map_err(|e| ServiceError::external("Graph 認証情報の解決に失敗しました", e))
 }
 
 pub fn browse_graph_sites_for_credential(

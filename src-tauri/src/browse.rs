@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::graph::GraphClient;
 
 /// Graph 系ピッカーで共通の認証情報。
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct GraphAuthArgs {
     pub tenant_id: String,
     pub client_id: String,
@@ -16,15 +16,23 @@ pub struct GraphAuthArgs {
     pub client_secret: String,
     #[serde(default)]
     pub access_token: String,
+    #[serde(default = "default_graph_auth_method")]
+    pub auth_method: String,
+}
+fn default_graph_auth_method() -> String {
+    "app_only".to_string()
 }
 impl GraphAuthArgs {
     fn uses_delegated_oauth(&self) -> bool {
-        !self.access_token.is_empty()
+        self.auth_method == "delegated"
     }
 }
 
 fn graph_client(auth: &GraphAuthArgs) -> Result<GraphClient> {
-    if !auth.access_token.is_empty() {
+    if auth.uses_delegated_oauth() {
+        if auth.access_token.is_empty() {
+            return Err(anyhow!("委任 OAuth のアクセストークンがありません"));
+        }
         Ok(GraphClient::new_with_token(&auth.access_token))
     } else {
         GraphClient::new(&auth.tenant_id, &auth.client_id, &auth.client_secret)
@@ -758,6 +766,7 @@ mod tests {
             client_id: "client".to_string(),
             client_secret: String::new(),
             access_token: "delegated-token".to_string(),
+            auth_method: "delegated".to_string(),
         };
         assert_eq!(
             graph_teams_url(&delegated),
@@ -772,6 +781,7 @@ mod tests {
             client_id: "client".to_string(),
             client_secret: "secret".to_string(),
             access_token: String::new(),
+            auth_method: "app_only".to_string(),
         };
         assert!(graph_teams_url(&app_only).contains("/groups?"));
     }
@@ -844,6 +854,7 @@ mod tests {
             client_id: env("EVERYDB_GRAPH_CLIENT").expect("EVERYDB_GRAPH_CLIENT"),
             client_secret: env("EVERYDB_GRAPH_SECRET").expect("EVERYDB_GRAPH_SECRET"),
             access_token: String::new(),
+            auth_method: "app_only".to_string(),
         };
         let sites = graph_list_sites(&auth).unwrap();
         println!("sites = {}", sites.len());

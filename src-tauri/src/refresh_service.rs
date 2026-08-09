@@ -89,7 +89,7 @@ fn set_status_or_log(conn: &Connection, id: i64, status: &str, error: Option<&st
 pub fn reload_one(conn: &mut Connection, id: i64) -> anyhow::Result<()> {
     let (type_, cfg) = db::get_source_config(conn, id)?;
     let prepared = (|| -> anyhow::Result<Box<dyn connectors::Connector>> {
-        let resolved_cfg = credentials::resolve_credentials(conn, &cfg)?;
+        let resolved_cfg = credentials::resolve_credentials_for_source_type(conn, &type_, &cfg)?;
         connectors::build_connector(&type_, &resolved_cfg)
     })();
     let connector = match prepared {
@@ -125,7 +125,8 @@ pub fn reload_one_for_state(state: &AppState, id: i64) -> anyhow::Result<ReloadO
             .map_err(|_| anyhow::anyhow!("lock poisoned"))?;
         let prepared = (|| -> anyhow::Result<Box<dyn connectors::Connector>> {
             let (type_, cfg) = db::get_source_config(&conn, id)?;
-            let resolved_cfg = credentials::resolve_credentials(&conn, &cfg)?;
+            let resolved_cfg =
+                credentials::resolve_credentials_for_source_type(&conn, &type_, &cfg)?;
             connectors::build_connector(&type_, &resolved_cfg)
         })();
         record_test_snapshot_lock(snapshot_started.elapsed());
@@ -377,5 +378,38 @@ mod tests {
             info.last_error.unwrap_or_default().contains("9999"),
             "どのトークンが見つからないかがエラーに残ること"
         );
+    }
+
+    #[test]
+    fn reload_rejects_incompatible_graph_auth_before_network_access() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        db::init_schema(&conn).unwrap();
+        let credential_id = crate::credentials::add_credential(
+            &conn,
+            "graph",
+            "SharePoint委任",
+            r#"{"auth_method":"delegated","tenant_id":"t","client_id":"c","capabilities":["sharepoint"],"refresh_token":"not-used"}"#,
+        )
+        .unwrap();
+        let id = db::insert_source(
+            &conn,
+            "graph_entra_users",
+            "ユーザー一覧",
+            &serde_json::json!({ "client_secret": format!("cred:{credential_id}") }).to_string(),
+        )
+        .unwrap();
+
+        let error = reload_one(&mut conn, id).unwrap_err().to_string();
+        assert!(error.contains("委任 OAuth に対応していません"));
+        let info = db::list_sources(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|source| source.id == id)
+            .unwrap();
+        assert_eq!(info.status.as_deref(), Some("error"));
+        assert!(info
+            .last_error
+            .unwrap_or_default()
+            .contains("委任 OAuth に対応していません"));
     }
 }
