@@ -18,11 +18,24 @@ struct GraphAuth {
     client_secret: String,
     #[serde(default)]
     access_token: String,
+    #[serde(default = "default_graph_auth_method")]
+    auth_method: String,
+}
+
+fn default_graph_auth_method() -> String {
+    "app_only".to_string()
 }
 
 impl GraphAuth {
+    fn uses_delegated_oauth(&self) -> bool {
+        self.auth_method == "delegated"
+    }
+
     fn client(&self) -> Result<GraphClient> {
-        if !self.access_token.is_empty() {
+        if self.uses_delegated_oauth() {
+            if self.access_token.is_empty() {
+                return Err(anyhow!("委任 OAuth のアクセストークンがありません"));
+            }
             Ok(GraphClient::new_with_token(&self.access_token))
         } else {
             GraphClient::new(&self.tenant_id, &self.client_id, &self.client_secret)
@@ -577,10 +590,7 @@ pub(crate) struct GraphCalendarConnector {
 impl Connector for GraphCalendarConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
         let client = self.auth.client()?;
-        let user = urlencoding_light(&self.user);
-        let url = format!(
-            "https://graph.microsoft.com/v1.0/users/{user}/events?$select=subject,start,end,location,organizer,attendees,webLink&$top=250&$orderby=start/dateTime desc"
-        );
+        let url = calendar_events_url(&self.auth, &self.user)?;
         let mut out = Vec::new();
         for ev in client.get_all(&url)? {
             let subject = ev
@@ -646,6 +656,24 @@ impl Connector for GraphCalendarConnector {
 
     fn field_names(&self) -> Result<Vec<String>> {
         static_field_names(&["件名", "開始", "終了", "場所", "主催者", "参加者"])
+    }
+}
+
+fn calendar_events_url(auth: &GraphAuth, user: &str) -> Result<String> {
+    const QUERY: &str = "events?$select=subject,start,end,location,organizer,attendees,webLink&$top=250&$orderby=start/dateTime desc";
+    if auth.uses_delegated_oauth() {
+        Ok(format!("https://graph.microsoft.com/v1.0/me/{QUERY}"))
+    } else {
+        let user = user.trim();
+        if user.is_empty() {
+            return Err(anyhow!(
+                "アプリケーション認証では対象ユーザー(UPN/メール)が必要です"
+            ));
+        }
+        Ok(format!(
+            "https://graph.microsoft.com/v1.0/users/{}/{QUERY}",
+            urlencoding_light(user)
+        ))
     }
 }
 
@@ -875,5 +903,43 @@ mod graph_live_tests {
             println!("sharepoint library = {}", lib.len());
             assert!(!lib.is_empty());
         }
+    }
+}
+
+#[cfg(test)]
+mod graph_delegated_endpoint_tests {
+    use super::*;
+
+    fn auth(method: &str) -> GraphAuth {
+        GraphAuth {
+            tenant_id: "tenant".to_string(),
+            client_id: "client".to_string(),
+            client_secret: if method == "app_only" { "secret" } else { "" }.to_string(),
+            access_token: if method == "delegated" { "token" } else { "" }.to_string(),
+            auth_method: method.to_string(),
+        }
+    }
+
+    #[test]
+    fn delegated_calendar_uses_signed_in_users_me_endpoint() {
+        let url = calendar_events_url(&auth("delegated"), "ignored@example.com").unwrap();
+        assert!(url.starts_with("https://graph.microsoft.com/v1.0/me/events?"));
+        assert!(!url.contains("ignored@example.com"));
+    }
+
+    #[test]
+    fn app_only_calendar_keeps_upn_endpoint_and_encoding() {
+        let url = calendar_events_url(&auth("app_only"), "user+calendar@example.com").unwrap();
+        assert!(url.starts_with(
+            "https://graph.microsoft.com/v1.0/users/user%2Bcalendar@example.com/events?"
+        ));
+    }
+
+    #[test]
+    fn app_only_calendar_requires_upn_before_network_access() {
+        let error = calendar_events_url(&auth("app_only"), " ")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("UPN"));
     }
 }

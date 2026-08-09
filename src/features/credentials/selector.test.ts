@@ -1,7 +1,12 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FieldDef } from "../../source-types/forms";
-import { graphCredentialCompatibility, mountCredentialSelector } from "./selector";
+import {
+  graphCredentialCompatibility,
+  graphUsesSignedInUser,
+  mountCredentialSelector,
+  updateGraphSelfSubjectUi,
+} from "./selector";
 
 beforeEach(() => {
   vi.mocked(tauriInvoke).mockReset();
@@ -100,5 +105,17 @@ describe("Graph credential compatibility in the picker", () => {
       compatible: false,
       reason: expect.stringContaining("onedrive_self"),
     });
+  });
+
+  it("disables UPN and explains signed-in-user scope for delegated Calendar", () => {
+    document.body.innerHTML = `<label>対象ユーザー<input id="fd-user"></label>`;
+    expect(graphUsesSignedInUser("graph_calendar", { auth_method: "delegated" })).toBe(true);
+    updateGraphSelfSubjectUi("graph_calendar", "fd-", { auth_method: "delegated" });
+    const input = document.getElementById("fd-user") as HTMLInputElement;
+    expect(input.disabled).toBe(true);
+    expect(input.closest("label")?.textContent).toContain("サインインした本人");
+
+    updateGraphSelfSubjectUi("graph_calendar", "fd-", { auth_method: "app_only" });
+    expect(input.disabled).toBe(false);
   });
 });

@@ -184,6 +184,7 @@
 .credential-capability-options { display: flex; flex-direction: column; gap: 6px; width: 100%; }
 .credential-capability-option { display: flex; align-items: flex-start; gap: 7px; margin: 0; }
 .credential-capability-option input { flex: 0 0 auto; margin-top: 2px; }
+.graph-self-subject-hint { display: block; margin-top: 4px; }
 
 .connection-kind-item {
   display: block; width: 100%; text-align: left;

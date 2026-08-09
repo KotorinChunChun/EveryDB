@@ -35,6 +35,37 @@ export interface GraphCredentialCompatibility {
   reason: string | null;
 }
 
+export function graphUsesSignedInUser(
+  sourceType: string,
+  fields: Record<string, unknown>,
+): boolean {
+  return (sourceType === "graph_calendar" || sourceType === "graph_onedrive")
+    && fields.auth_method === "delegated";
+}
+
+export function updateGraphSelfSubjectUi(
+  sourceType: string,
+  idPrefix: string,
+  fields: Record<string, unknown>,
+): void {
+  if (sourceType !== "graph_calendar" && sourceType !== "graph_onedrive") return;
+  const input = document.getElementById(`${idPrefix}user`) as HTMLInputElement | null;
+  if (!input) return;
+  const delegated = graphUsesSignedInUser(sourceType, fields);
+  input.disabled = delegated;
+  let hint = document.getElementById(`${idPrefix}graph-self-subject-hint`);
+  if (!hint) {
+    hint = document.createElement("small");
+    hint.id = `${idPrefix}graph-self-subject-hint`;
+    hint.className = "roles-hint graph-self-subject-hint";
+    input.closest("label")?.appendChild(hint);
+  }
+  hint.textContent = delegated ? "委任 OAuth: サインインした本人を取得します" : "";
+  hint.hidden = !delegated;
+  if (delegated) input.setAttribute("aria-describedby", hint.id);
+  else input.removeAttribute("aria-describedby");
+}
+
 export function graphCredentialCompatibility(
   sourceType: string,
   fields: Record<string, unknown>,
@@ -221,6 +252,7 @@ export function mountCredentialSelector(deps: CredentialSelectorDeps): Credentia
         const v = fields[bf];
         if (bfEl && v !== undefined) bfEl.value = String(v);
       }
+      updateGraphSelfSubjectUi(sourceType, idPrefix, fields);
       renderState();
       const sourceEditor = getSourceEditor();
       if (f.key === "token" && idPrefix === "fd-" && $<HTMLSelectElement>("f-type").value === "airtable") {
@@ -264,6 +296,14 @@ export function mountCredentialSelector(deps: CredentialSelectorDeps): Credentia
     const known = getLinkedCredentials()[f.key];
     if (known) input.dataset.credLabel = known.label;
     renderState();
+    const knownId = currentCredentialId();
+    if (scope === "graph" && knownId !== null) {
+      void invoke("credential_public_fields", { id: knownId }).then((details) => {
+        if (currentCredentialId() === knownId) {
+          updateGraphSelfSubjectUi(sourceType, idPrefix, details.fields);
+        }
+      }).catch(() => {});
+    }
   }
 
   return { wireCredentialSelector };
