@@ -29,6 +29,29 @@ describe("personal Microsoft credential manager", () => {
     document.documentElement.innerHTML = html;
   });
 
+  it("shows delegated Entra capabilities and their administrator requirements", async () => {
+    const manager = mountCredentialManager({
+      winAuth: {
+        refreshWinAuthStatus: vi.fn(async () => {}),
+        ensureUnlocked: vi.fn(async () => true),
+      },
+      openGuide: vi.fn(),
+      openGuideDoc: vi.fn(),
+    });
+
+    await manager.openCredentialManager("graph");
+    const authMethod = document.getElementById("cmf-auth_method") as HTMLSelectElement;
+    authMethod.value = "delegated";
+    authMethod.dispatchEvent(new Event("change"));
+
+    const formText = document.getElementById("cm-form-fields")?.textContent ?? "";
+    expect(formText).toContain("Entra ID ユーザー一覧（User.Read.All）");
+    expect(formText).toContain("Intune デバイス一覧（DeviceManagementManagedDevices.Read.All）");
+    expect(formText).toContain("Microsoft 365 ライセンス一覧（LicenseAssignment.Read.All）");
+    expect(formText).toContain("管理者同意が必要");
+    expect(formText).toContain("Intuneライセンス");
+  });
+
   it("authorizes with the bundled client ID without showing or sending an input value", async () => {
     const manager = mountCredentialManager({
       winAuth: {

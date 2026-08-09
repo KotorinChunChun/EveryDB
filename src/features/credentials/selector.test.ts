@@ -115,6 +115,17 @@ describe("Graph credential compatibility in the picker", () => {
       compatible: false,
       reason: expect.stringContaining("onedrive_self"),
     });
+    expect(graphCredentialCompatibility("graph_entra_users", {
+      auth_method: "delegated",
+      capabilities: ["directory_users"],
+    }).compatible).toBe(true);
+    expect(graphCredentialCompatibility("graph_licenses", {
+      auth_method: "delegated",
+      capabilities: ["directory_users"],
+    })).toMatchObject({
+      compatible: false,
+      reason: expect.stringContaining("licenses"),
+    });
   });
 
   it("disables UPN and explains signed-in-user scope for delegated Calendar", () => {

@@ -4,6 +4,7 @@ import type { CredentialScope, CredentialSummary } from "../../shared/types";
 import type { FieldDef } from "../../source-types/forms";
 import {
   graphCredentialRequirementsFor,
+  isGraphCapability,
   type GraphAuthMethod,
   type GraphCapability,
 } from "../../source-types/registry";
@@ -82,9 +83,7 @@ export function graphCredentialCompatibility(
       ? "delegated"
       : "unknown";
   const capabilities = Array.isArray(fields.capabilities)
-    ? fields.capabilities.filter((value): value is GraphCapability => (
-      value === "sharepoint" || value === "calendar_self" || value === "onedrive_self"
-    ))
+    ? fields.capabilities.filter(isGraphCapability)
     : authMethod === "delegated"
       ? ["sharepoint" as const]
       : [];

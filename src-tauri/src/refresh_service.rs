@@ -606,8 +606,8 @@ mod tests {
         .unwrap();
         let id = db::insert_source(
             &conn,
-            "graph_entra_users",
-            "ユーザー一覧",
+            "graph_teams",
+            "Teams一覧",
             &serde_json::json!({ "client_secret": format!("cred:{credential_id}") }).to_string(),
         )
         .unwrap();

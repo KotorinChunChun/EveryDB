@@ -32,38 +32,37 @@ export interface ConnectionKindOption {
 }
 
 export interface ConnectionKindGroup {
+  id: SourceCategory | "entra";
   category: SourceCategory;
   label: string;
   options: ConnectionKindOption[];
 }
 
-const CONNECTION_CATEGORY_LABELS: ReadonlyArray<{ category: SourceCategory; label: string }> = [
-  { category: "microsoft", label: "Microsoft 365 / OneDrive" },
-  { category: "local", label: "ローカルファイル・PC" },
-  { category: "cloud", label: "クラウドサービス" },
-  { category: "database", label: "データベース" },
-  { category: "public-data", label: "公開データ" },
-  { category: "web", label: "Web" },
-];
-
-const MICROSOFT_FIRST_TYPES = [
+const ENTRA_ID_TYPES = [
   "graph_entra_users",
   "graph_entra_groups",
   "graph_entra_devices",
+  "graph_intune_devices",
+  "graph_licenses",
 ] as const;
 
-function orderWithinCategory(options: ConnectionKindOption[]): ConnectionKindOption[] {
-  return options
-    .map((option, originalIndex) => ({ option, originalIndex }))
-    .sort((left, right) => {
-      const leftPriority = MICROSOFT_FIRST_TYPES.indexOf(left.option.id as typeof MICROSOFT_FIRST_TYPES[number]);
-      const rightPriority = MICROSOFT_FIRST_TYPES.indexOf(right.option.id as typeof MICROSOFT_FIRST_TYPES[number]);
-      const leftOrder = leftPriority < 0 ? MICROSOFT_FIRST_TYPES.length : leftPriority;
-      const rightOrder = rightPriority < 0 ? MICROSOFT_FIRST_TYPES.length : rightPriority;
-      return leftOrder - rightOrder || left.originalIndex - right.originalIndex;
-    })
-    .map(({ option }) => option);
+interface ConnectionKindGroupDefinition {
+  id: ConnectionKindGroup["id"];
+  category: SourceCategory;
+  label: string;
+  include?: readonly string[];
+  exclude?: readonly string[];
 }
+
+const CONNECTION_KIND_GROUP_DEFINITIONS: readonly ConnectionKindGroupDefinition[] = [
+  { id: "entra", category: "microsoft", label: "Entra ID", include: ENTRA_ID_TYPES },
+  { id: "microsoft", category: "microsoft", label: "Microsoft 365", exclude: ENTRA_ID_TYPES },
+  { id: "local", category: "local", label: "ローカルファイル・PC" },
+  { id: "cloud", category: "cloud", label: "クラウドサービス" },
+  { id: "database", category: "database", label: "データベース" },
+  { id: "public-data", category: "public-data", label: "公開データ" },
+  { id: "web", category: "web", label: "Web" },
+];
 
 /**
  * 「接続先を追加」に表示する選択肢。
@@ -80,8 +79,14 @@ export const CONNECTION_KIND_OPTIONS: ConnectionKindOption[] = SOURCE_TYPE_METAD
   openExistingGraphParent: GRAPH_ONE_CLICK_TYPES.includes(metadata.id),
 }));
 
-export const CONNECTION_KIND_GROUPS: ConnectionKindGroup[] = CONNECTION_CATEGORY_LABELS.map(({ category, label }) => ({
-  category,
-  label,
-  options: orderWithinCategory(CONNECTION_KIND_OPTIONS.filter((option) => option.category === category)),
+export const CONNECTION_KIND_GROUPS: ConnectionKindGroup[] = CONNECTION_KIND_GROUP_DEFINITIONS.map((definition) => ({
+  id: definition.id,
+  category: definition.category,
+  label: definition.label,
+  options: CONNECTION_KIND_OPTIONS.filter((option) => {
+    if (option.category !== definition.category) return false;
+    if (definition.include && !definition.include.includes(option.id)) return false;
+    if (definition.exclude?.includes(option.id)) return false;
+    return true;
+  }),
 })).filter((group) => group.options.length > 0);

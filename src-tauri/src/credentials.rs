@@ -16,10 +16,20 @@ use crate::secret;
 pub const GRAPH_CAPABILITY_SHAREPOINT: &str = "sharepoint";
 pub const GRAPH_CAPABILITY_CALENDAR_SELF: &str = "calendar_self";
 pub const GRAPH_CAPABILITY_ONEDRIVE_SELF: &str = "onedrive_self";
+pub const GRAPH_CAPABILITY_DIRECTORY_USERS: &str = "directory_users";
+pub const GRAPH_CAPABILITY_DIRECTORY_GROUPS: &str = "directory_groups";
+pub const GRAPH_CAPABILITY_DIRECTORY_DEVICES: &str = "directory_devices";
+pub const GRAPH_CAPABILITY_INTUNE_DEVICES: &str = "intune_devices";
+pub const GRAPH_CAPABILITY_LICENSES: &str = "licenses";
 const GRAPH_CAPABILITIES: &[&str] = &[
     GRAPH_CAPABILITY_SHAREPOINT,
     GRAPH_CAPABILITY_CALENDAR_SELF,
     GRAPH_CAPABILITY_ONEDRIVE_SELF,
+    GRAPH_CAPABILITY_DIRECTORY_USERS,
+    GRAPH_CAPABILITY_DIRECTORY_GROUPS,
+    GRAPH_CAPABILITY_DIRECTORY_DEVICES,
+    GRAPH_CAPABILITY_INTUNE_DEVICES,
+    GRAPH_CAPABILITY_LICENSES,
 ];
 pub const MICROSOFT_ACCOUNT_SCOPE: &str = "microsoft_account";
 pub const MICROSOFT_ACCOUNT_ONEDRIVE_TYPE: &str = "microsoft_account_onedrive";
@@ -110,6 +120,11 @@ fn delegated_capability_for_source(type_: &str) -> Option<&'static str> {
         "graph_sharepoint_list" | "graph_sharepoint_library" => Some(GRAPH_CAPABILITY_SHAREPOINT),
         "graph_calendar" => Some(GRAPH_CAPABILITY_CALENDAR_SELF),
         "graph_onedrive" => Some(GRAPH_CAPABILITY_ONEDRIVE_SELF),
+        "graph_entra_users" => Some(GRAPH_CAPABILITY_DIRECTORY_USERS),
+        "graph_entra_groups" => Some(GRAPH_CAPABILITY_DIRECTORY_GROUPS),
+        "graph_entra_devices" => Some(GRAPH_CAPABILITY_DIRECTORY_DEVICES),
+        "graph_intune_devices" => Some(GRAPH_CAPABILITY_INTUNE_DEVICES),
+        "graph_licenses" => Some(GRAPH_CAPABILITY_LICENSES),
         _ => None,
     }
 }
@@ -1396,6 +1411,55 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("委任 OAuth に対応していません"));
+    }
+
+    #[test]
+    fn delegated_entra_sources_require_their_least_privilege_capabilities() {
+        let conn = open_test_db();
+        let capabilities = [
+            GRAPH_CAPABILITY_DIRECTORY_USERS,
+            GRAPH_CAPABILITY_DIRECTORY_GROUPS,
+            GRAPH_CAPABILITY_DIRECTORY_DEVICES,
+            GRAPH_CAPABILITY_INTUNE_DEVICES,
+            GRAPH_CAPABILITY_LICENSES,
+        ];
+        let fields = serde_json::json!({
+            "auth_method": "delegated",
+            "tenant_id": "t",
+            "client_id": "c",
+            "capabilities": capabilities,
+            "refresh_token": "rt",
+        })
+        .to_string();
+        let id = add_credential(&conn, "graph", "Entra委任", &fields).unwrap();
+        let config = serde_json::json!({ "client_secret": format!("cred:{id}") }).to_string();
+
+        for type_ in [
+            "graph_entra_users",
+            "graph_entra_groups",
+            "graph_entra_devices",
+            "graph_intune_devices",
+            "graph_licenses",
+        ] {
+            validate_source_credential_compatibility(&conn, type_, &config).unwrap();
+        }
+
+        let limited_id = add_credential(
+            &conn,
+            "graph",
+            "ユーザーのみ",
+            r#"{"auth_method":"delegated","tenant_id":"t","client_id":"c","capabilities":["directory_users"],"refresh_token":"rt"}"#,
+        )
+        .unwrap();
+        let limited_config =
+            serde_json::json!({ "client_secret": format!("cred:{limited_id}") }).to_string();
+        validate_source_credential_compatibility(&conn, "graph_entra_users", &limited_config)
+            .unwrap();
+        let error =
+            validate_source_credential_compatibility(&conn, "graph_licenses", &limited_config)
+                .unwrap_err()
+                .to_string();
+        assert!(error.contains(GRAPH_CAPABILITY_LICENSES));
     }
 
     #[test]

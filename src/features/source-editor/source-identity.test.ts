@@ -28,12 +28,40 @@ describe("connection-kinds", () => {
     });
   });
 
-  it("groups Entra ID sources at the start of the Microsoft section", () => {
-    const microsoft = CONNECTION_KIND_GROUPS.find((group) => group.category === "microsoft")!;
-    expect(microsoft.options.slice(0, 3).map((option) => option.id)).toEqual([
+  it("separates Microsoft sources into exact Entra ID and Microsoft 365 groups", () => {
+    const entra = CONNECTION_KIND_GROUPS.find((group) => group.id === "entra")!;
+    const microsoft = CONNECTION_KIND_GROUPS.find((group) => group.id === "microsoft")!;
+
+    expect(entra.label).toBe("Entra ID");
+    expect(entra.options.map((option) => option.id)).toEqual([
       "graph_entra_users",
       "graph_entra_groups",
       "graph_entra_devices",
+      "graph_intune_devices",
+      "graph_licenses",
+    ]);
+    expect(microsoft.label).toBe("Microsoft 365");
+    expect(microsoft.options.map((option) => option.id)).toEqual([
+      "graph_teams",
+      "graph_sharepoint_list",
+      "graph_sharepoint_library",
+      "graph_calendar",
+      "graph_onedrive",
+      "microsoft_account_onedrive",
+      "graph_planner",
+    ]);
+
+    const groupedIds = CONNECTION_KIND_GROUPS.flatMap((group) => group.options.map((option) => option.id));
+    expect(groupedIds).toHaveLength(CONNECTION_KIND_OPTIONS.length);
+    expect(new Set(groupedIds).size).toBe(CONNECTION_KIND_OPTIONS.length);
+  });
+
+  it("uses the official Entra ID spelling in source labels", () => {
+    expect(CONNECTION_KIND_OPTIONS.filter((option) => option.id.startsWith("graph_entra"))
+      .map((option) => option.label)).toEqual([
+      "Entra ID ユーザー一覧",
+      "Entra ID グループ一覧",
+      "Entra ID デバイス一覧",
     ]);
   });
 });

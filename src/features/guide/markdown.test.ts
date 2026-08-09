@@ -13,12 +13,12 @@ describe("guide document navigation", () => {
 
     renderMarkdownInto(
       container,
-      "[アプリケーション認証](microsoft365-app-only.md)",
+      "[アプリケーション認証](microsoft365-entra-app.md)",
       { onOpenDocument },
     );
     container.querySelector("a")?.click();
 
-    expect(onOpenDocument).toHaveBeenCalledWith("microsoft365-app-only");
+    expect(onOpenDocument).toHaveBeenCalledWith("microsoft365-entra-app");
   });
 
   it("does not treat parent paths as in-app guide names", () => {

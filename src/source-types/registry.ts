@@ -6,7 +6,21 @@ export type SourceCategory = "local" | "microsoft" | "cloud" | "database" | "pub
 export type BrowseCapability = "notion" | "sqlite" | "accdb" | "excel_table" | "sharepoint" | "airtable";
 export type OpenCapability = "none" | "table" | "parent" | "table-and-parent";
 export type GraphAuthMethod = "app_only" | "delegated";
-export type GraphCapability = "sharepoint" | "calendar_self" | "onedrive_self";
+export const GRAPH_CAPABILITIES = [
+  "sharepoint",
+  "calendar_self",
+  "onedrive_self",
+  "directory_users",
+  "directory_groups",
+  "directory_devices",
+  "intune_devices",
+  "licenses",
+] as const;
+export type GraphCapability = typeof GRAPH_CAPABILITIES[number];
+
+export function isGraphCapability(value: unknown): value is GraphCapability {
+  return typeof value === "string" && GRAPH_CAPABILITIES.some((capability) => capability === value);
+}
 
 export interface SourceTypeMetadata {
   id: string;

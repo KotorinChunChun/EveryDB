@@ -4,6 +4,7 @@ import { showToast } from "../../app/notifications";
 import { writeClipboardText } from "../../shared/clipboard";
 import type { CredentialScope, CredentialSummary } from "../../shared/types";
 import {
+  isGraphCapability,
   representativeTypeForCredentialScope as representativeTypeForScope,
   type GraphCapability,
 } from "../../source-types/registry";
@@ -23,7 +24,7 @@ export interface CredentialManagerDeps {
 }
 
 export function graphGuideDocument(authMethod: "app_only" | "delegated"): string {
-  return authMethod === "delegated" ? "microsoft365-delegated" : "microsoft365-app-only";
+  return authMethod === "delegated" ? "microsoft365-entra-user" : "microsoft365-entra-app";
 }
 
 export const GRAPH_CAPABILITY_OPTIONS: readonly {
@@ -31,6 +32,11 @@ export const GRAPH_CAPABILITY_OPTIONS: readonly {
   label: string;
   scopes: string;
 }[] = [
+  { value: "directory_users", label: "Entra ID ユーザー一覧", scopes: "User.Read.All" },
+  { value: "directory_groups", label: "Entra ID グループ一覧", scopes: "Group.Read.All" },
+  { value: "directory_devices", label: "Entra ID デバイス一覧", scopes: "Device.Read.All" },
+  { value: "intune_devices", label: "Intune デバイス一覧", scopes: "DeviceManagementManagedDevices.Read.All" },
+  { value: "licenses", label: "Microsoft 365 ライセンス一覧", scopes: "LicenseAssignment.Read.All" },
   { value: "sharepoint", label: "SharePoint サイト・リスト / Teams選択", scopes: "Sites.Read.All, Team.ReadBasic.All" },
   { value: "calendar_self", label: "本人の Outlook 予定表", scopes: "Calendars.ReadBasic" },
   { value: "onedrive_self", label: "本人の OneDrive", scopes: "Files.Read" },
@@ -39,9 +45,7 @@ export const GRAPH_CAPABILITY_OPTIONS: readonly {
 export function graphCapabilitiesFromFields(fields: Record<string, unknown>): GraphCapability[] {
   const values = Array.isArray(fields.capabilities) ? fields.capabilities : null;
   if (!values && fields.auth_method === "delegated") return ["sharepoint"];
-  const supported = (values ?? []).filter((value): value is GraphCapability => (
-    value === "sharepoint" || value === "calendar_self" || value === "onedrive_self"
-  ));
+  const supported = (values ?? []).filter(isGraphCapability);
   return supported.length > 0 ? supported : ["sharepoint"];
 }
 
@@ -288,7 +292,7 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
         syncValue();
         const hint = document.createElement("small");
         hint.className = "roles-hint";
-        hint.textContent = "選択を変更すると再認可が必要です。共通で User.Read / offline_access を要求します。";
+        hint.textContent = "選択を変更すると再認可が必要です。共通で User.Read / offline_access を要求します。Entra ID・Intune・ライセンス一覧の権限には管理者同意が必要で、サインインユーザーのロールやIntuneライセンスも適用されます。";
         row.append(hidden, options);
         label.append(row, hint);
         container.appendChild(label);

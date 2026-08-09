@@ -33,7 +33,16 @@ pub fn delegated_scopes(capabilities: &[String]) -> Result<String> {
         ));
     }
     let mut scopes = vec![format!("{GRAPH_SCOPE_PREFIX}User.Read")];
-    for capability in ["sharepoint", "calendar_self", "onedrive_self"] {
+    for capability in [
+        "sharepoint",
+        "calendar_self",
+        "onedrive_self",
+        "directory_users",
+        "directory_groups",
+        "directory_devices",
+        "intune_devices",
+        "licenses",
+    ] {
         if !capabilities.iter().any(|selected| selected == capability) {
             continue;
         }
@@ -46,13 +55,27 @@ pub fn delegated_scopes(capabilities: &[String]) -> Result<String> {
                 scopes.push(format!("{GRAPH_SCOPE_PREFIX}Calendars.ReadBasic"));
             }
             "onedrive_self" => scopes.push(format!("{GRAPH_SCOPE_PREFIX}Files.Read")),
+            "directory_users" => scopes.push(format!("{GRAPH_SCOPE_PREFIX}User.Read.All")),
+            "directory_groups" => scopes.push(format!("{GRAPH_SCOPE_PREFIX}Group.Read.All")),
+            "directory_devices" => scopes.push(format!("{GRAPH_SCOPE_PREFIX}Device.Read.All")),
+            "intune_devices" => scopes.push(format!(
+                "{GRAPH_SCOPE_PREFIX}DeviceManagementManagedDevices.Read.All"
+            )),
+            "licenses" => scopes.push(format!("{GRAPH_SCOPE_PREFIX}LicenseAssignment.Read.All")),
             _ => unreachable!(),
         }
     }
     for capability in capabilities {
         if !matches!(
             capability.as_str(),
-            "sharepoint" | "calendar_self" | "onedrive_self"
+            "sharepoint"
+                | "calendar_self"
+                | "onedrive_self"
+                | "directory_users"
+                | "directory_groups"
+                | "directory_devices"
+                | "intune_devices"
+                | "licenses"
         ) {
             return Err(anyhow!("未対応の Microsoft capability です: {capability}"));
         }
@@ -442,6 +465,23 @@ mod tests {
         assert!(onedrive.contains("Files.Read"));
         assert!(!onedrive.contains("Sites.Read.All"));
         assert!(!onedrive.contains("Calendars.ReadBasic"));
+
+        let tenant_capabilities = [
+            ("directory_users", "User.Read.All"),
+            ("directory_groups", "Group.Read.All"),
+            ("directory_devices", "Device.Read.All"),
+            ("intune_devices", "DeviceManagementManagedDevices.Read.All"),
+            ("licenses", "LicenseAssignment.Read.All"),
+        ];
+        for (capability, expected_scope) in tenant_capabilities {
+            let scopes = delegated_scopes(&[capability.to_string()]).unwrap();
+            assert!(scopes.contains(expected_scope));
+            for (_, unrelated_scope) in tenant_capabilities {
+                if unrelated_scope != expected_scope {
+                    assert!(!scopes.contains(unrelated_scope));
+                }
+            }
+        }
     }
 
     #[test]

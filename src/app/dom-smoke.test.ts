@@ -109,6 +109,8 @@ describe("application DOM interaction smoke", () => {
     (document.getElementById("connection-chooser-filter-clear") as HTMLButtonElement).click();
     expect(filter.value).toBe("");
     expect(document.querySelectorAll(".connection-kind-item").length).toBe(CONNECTION_KIND_OPTIONS.length);
+    expect([...document.querySelectorAll<HTMLElement>(".connection-kind-group")].slice(0, 2)
+      .map((item) => item.textContent)).toEqual(["Entra ID", "Microsoft 365"]);
   });
 
   it("offers CSV and both OneDrive types as direct choices", () => {

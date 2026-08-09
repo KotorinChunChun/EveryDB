@@ -47,6 +47,19 @@ describe("source type metadata", () => {
       authMethods: ["app_only", "delegated"],
       capabilities: ["onedrive_self"],
     });
+    expect([
+      ["graph_entra_users", "directory_users"],
+      ["graph_entra_groups", "directory_groups"],
+      ["graph_entra_devices", "directory_devices"],
+      ["graph_intune_devices", "intune_devices"],
+      ["graph_licenses", "licenses"],
+    ].map(([type]) => graphCredentialRequirementsFor(type))).toEqual([
+      { authMethods: ["app_only", "delegated"], capabilities: ["directory_users"] },
+      { authMethods: ["app_only", "delegated"], capabilities: ["directory_groups"] },
+      { authMethods: ["app_only", "delegated"], capabilities: ["directory_devices"] },
+      { authMethods: ["app_only", "delegated"], capabilities: ["intune_devices"] },
+      { authMethods: ["app_only", "delegated"], capabilities: ["licenses"] },
+    ]);
   });
 
   it("keeps the legacy Excel cell type out of new source selection", () => {
