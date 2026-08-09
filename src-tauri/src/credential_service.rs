@@ -76,8 +76,30 @@ pub fn credential_permissions(
     id: i64,
 ) -> ServiceResult<CredentialPermissionInspection> {
     let conn = lock_db(state)?;
-    credentials::inspect_credential_permissions(&conn, id)
-        .map_err(|e| ServiceError::external("承認済み権限の確認に失敗しました", e))
+    credentials::inspect_credential_permissions(&conn, id).map_err(|error| {
+        ServiceError::validation(credential_permission_failure_message(&error.to_string()))
+    })
+}
+
+fn credential_permission_failure_message(cause: &str) -> String {
+    let reason = if cause.contains("接続に失敗")
+        || cause.contains("timed out")
+        || cause.contains("Transport")
+    {
+        "Microsoft への通信に失敗しました"
+    } else if cause.contains("トークン取得失敗")
+        || cause.contains("再認可")
+        || cause.contains("認可が未設定")
+    {
+        "Microsoft がトークン発行を拒否しました。資格情報を確認し、委任認証の場合は再認可してください"
+    } else if cause.contains("JWT") || cause.contains("scp") || cause.contains("roles") {
+        "取得したトークンから権限情報を読み取れませんでした"
+    } else if cause.contains("未設定") || cause.contains("見つかりません") {
+        "保存済み資格情報の設定が不足しているか、削除されています"
+    } else {
+        "Microsoft の応答を確認できませんでした"
+    };
+    format!("承認済み権限の確認に失敗しました（{reason}）")
 }
 
 pub fn credential_secret_value(state: &AppState, id: i64) -> ServiceResult<String> {
@@ -127,7 +149,7 @@ pub fn cancel_graph_oauth_on_shutdown(state: &AppState) {
 
 #[cfg(test)]
 mod tests {
-    use super::{add_credential, list_credentials};
+    use super::{add_credential, credential_permission_failure_message, list_credentials};
     use crate::app_state::AppState;
     use crate::db;
 
@@ -140,5 +162,22 @@ mod tests {
         let list = list_credentials(&state, "notion").unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].label, "個人");
+    }
+
+    #[test]
+    fn permission_failures_explain_safe_actionable_categories() {
+        assert!(credential_permission_failure_message(
+            "Microsoft 認証エンドポイントへの接続に失敗: offline"
+        )
+        .contains("通信に失敗"));
+        assert!(credential_permission_failure_message(
+            "Microsoft トークン取得失敗 400: invalid_grant"
+        )
+        .contains("再認可"));
+        assert!(credential_permission_failure_message(
+            "アクセストークンに scp クレームがありません"
+        )
+        .contains("権限情報を読み取れません"));
+        assert!(!credential_permission_failure_message("secret-value").contains("secret-value"));
     }
 }
