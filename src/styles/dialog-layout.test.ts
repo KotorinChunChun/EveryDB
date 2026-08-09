@@ -15,4 +15,16 @@ describe("dialog layout CSS", () => {
     expect(dialogsCss).toMatch(/\.dialog\.stable-picker-dialog\s*\{[^}]*resize:\s*both;/s);
     expect(dialogsCss).toMatch(/\.dialog\.stable-picker-dialog:not\(\[open\]\)\s*\{\s*display:\s*none;/s);
   });
+
+  it("keeps picker search controls at their natural height and gives the remaining height to lists", () => {
+    expect(dialogsCss).toMatch(/\.stable-picker-dialog \.search,\s*\.stable-picker-dialog \.source-filter-wrap\s*\{\s*flex:\s*none;/s);
+    expect(dialogsCss).toMatch(/\.stable-picker-dialog > \.picker-list,[^{]+\{[^}]*flex:\s*1;/s);
+    expect(dialogsCss).toMatch(/\.stable-picker-dialog \.sp-step > \.picker-list,[^{]+\{[^}]*flex:\s*1;/s);
+  });
+
+  it("contains source editor controls inside a scrollable fieldset at narrow sizes", () => {
+    expect(dialogsCss).toMatch(/#add-dialog \.roles-fieldset\s*\{[^}]*min-width:\s*0;[^}]*min-height:\s*0;[^}]*max-width:\s*100%;/s);
+    expect(dialogsCss).toMatch(/#add-dialog \.roles-fieldset:not\(\.config-fieldset\)\s*\{[^}]*min-height:\s*96px;[^}]*overflow:\s*auto;/s);
+    expect(dialogsCss).toMatch(/\.roles-toolbar\s*\{[^}]*flex:\s*none;[^}]*flex-wrap:\s*wrap;/s);
+  });
 });
