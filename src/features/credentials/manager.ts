@@ -62,7 +62,7 @@ interface CredentialFieldDef {
   authorize?: {
     buttonLabel: string;
     usesFields: string[];
-    provider: "box" | "graph";
+    provider: "box" | "graph" | "microsoft_account";
   };
   selectOptions?: { value: string; label: string }[];
   capabilityOptions?: typeof GRAPH_CAPABILITY_OPTIONS;
@@ -124,6 +124,18 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
           { key: "client_secret", label: "クライアントシークレット(値)", secret: true, helpUrl: ENTRA_APPS_URL },
         ];
       }
+      case "microsoft_account":
+        return [
+          { key: "client_id", label: "クライアントID", secret: false, helpUrl: ENTRA_APPS_URL },
+          {
+            key: "refresh_token", label: "Microsoft アカウントの認可", secret: true,
+            authorize: {
+              buttonLabel: "🔗 個人 Microsoft アカウントで認可…",
+              usesFields: ["client_id"],
+              provider: "microsoft_account",
+            },
+          },
+        ];
       case "box": {
         const BOX_DEV_CONSOLE = "https://app.box.com/developers/console";
         const common: CredentialFieldDef[] = [
@@ -284,7 +296,7 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
         cancelBtn.textContent = "取消";
         cancelBtn.hidden = true;
         cancelBtn.onclick = () => {
-          const cmd = f.authorize!.provider === "graph" ? "graph_oauth_cancel" : "box_oauth_cancel";
+          const cmd = f.authorize!.provider === "box" ? "box_oauth_cancel" : "graph_oauth_cancel";
           void invoke(cmd).catch(() => {});
         };
         const renderAuthStatus = () => {
@@ -317,7 +329,9 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
             alert(
               provider === "graph"
                 ? "先にテナントID・クライアントIDを入力してください"
-                : "先にクライアントID・クライアントシークレットを入力してください",
+                : provider === "microsoft_account"
+                  ? "先にクライアントIDを入力してください"
+                  : "先にクライアントID・クライアントシークレットを入力してください",
             );
             return;
           }
@@ -331,17 +345,21 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
                 clientId: usedFields["client_id"],
                 capabilities: [...cmGraphCapabilities],
               })
-              : await invoke("box_oauth_authorize", {
-                clientId: usedFields["client_id"],
-                clientSecret: usedFields["client_secret"],
-              });
+              : provider === "microsoft_account"
+                ? await invoke("microsoft_account_oauth_authorize", {
+                  clientId: usedFields["client_id"],
+                })
+                : await invoke("box_oauth_authorize", {
+                  clientId: usedFields["client_id"],
+                  clientSecret: usedFields["client_secret"],
+                });
             input.value = res.refresh_token;
             renderAuthStatus();
             updateCmSaveButtonState();
           } catch (e) {
             if (!String(e).includes("キャンセルしました")) {
               alert(
-                (provider === "graph" ? "Microsoft の認可に失敗しました: " : "Box の認可に失敗しました: ")
+                (provider === "box" ? "Box の認可に失敗しました: " : "Microsoft の認可に失敗しました: ")
                 + String(e),
               );
             }
@@ -660,6 +678,10 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
     const scope = $<HTMLSelectElement>("cm-scope").value as CredentialScope;
     if (scope === "graph") {
       openGuideDoc(graphGuideDocument(cmGraphAuthMethod));
+      return;
+    }
+    if (scope === "microsoft_account") {
+      openGuideDoc("microsoft365-personal");
       return;
     }
     openGuide(representativeTypeForScope(scope));

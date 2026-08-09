@@ -18,6 +18,8 @@ const AUTHORIZE_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// Entra アプリ登録・手順書と一致させる固定 Redirect URI。
 pub const REDIRECT_URI: &str = "http://localhost:58914/graph-callback";
+pub const PERSONAL_ACCOUNT_TENANT: &str = "consumers";
+pub const PERSONAL_ONEDRIVE_CAPABILITY: &str = "onedrive_self";
 
 const GRAPH_SCOPE_PREFIX: &str = "https://graph.microsoft.com/";
 
@@ -395,6 +397,28 @@ mod tests {
         );
         assert!(url.contains("Team.ReadBasic.All"));
         assert!(url.contains("offline_access") || url.contains("offline_access"));
+    }
+
+    #[test]
+    fn personal_account_authorize_url_uses_consumers_authority() {
+        let capabilities = vec![PERSONAL_ONEDRIVE_CAPABILITY.to_string()];
+        let scopes = delegated_scopes(&capabilities).unwrap();
+        let url = authorize_url(
+            PERSONAL_ACCOUNT_TENANT,
+            "personal-client",
+            REDIRECT_URI,
+            "state",
+            "challenge",
+            &scopes,
+        );
+
+        assert!(
+            url.starts_with("https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?")
+        );
+        assert!(scopes.contains("Files.Read"));
+        assert!(scopes.contains("User.Read"));
+        assert!(scopes.contains("offline_access"));
+        assert!(!scopes.contains("Sites.Read.All"));
     }
 
     #[test]

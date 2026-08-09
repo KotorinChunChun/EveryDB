@@ -62,4 +62,12 @@ describe("index.html structural smoke test", () => {
       expect(dialog?.getAttribute("aria-labelledby")).toBe(def.titleId);
     }
   });
+
+  it("separates organizational and personal Microsoft credential scopes", () => {
+    mountAppDom();
+    const options = [...document.querySelectorAll<HTMLOptionElement>("#cm-scope option")]
+      .map((option) => ({ value: option.value, label: option.textContent }));
+    expect(options).toContainEqual({ value: "graph", label: "Microsoft Entra ID（組織）" });
+    expect(options).toContainEqual({ value: "microsoft_account", label: "Microsoft アカウント（個人）" });
+  });
 });

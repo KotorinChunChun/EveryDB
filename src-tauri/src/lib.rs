@@ -204,6 +204,7 @@ pub fn run() {
             credential_commands::box_oauth_authorize,
             credential_commands::box_oauth_cancel,
             credential_commands::graph_oauth_authorize,
+            credential_commands::microsoft_account_oauth_authorize,
             credential_commands::graph_oauth_cancel,
             settings::autostart_status,
             settings::autostart_set,

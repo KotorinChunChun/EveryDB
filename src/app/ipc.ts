@@ -136,6 +136,10 @@ export interface IpcContract {
     args: { tenantId: string; clientId: string; capabilities: string[] };
     result: OAuthTokenResult;
   };
+  microsoft_account_oauth_authorize: {
+    args: { clientId: string };
+    result: OAuthTokenResult;
+  };
   graph_oauth_cancel: { args: undefined; result: void };
 
   browse_notion_databases: { args: { credentialId: number }; result: NotionDatabaseItem[] };

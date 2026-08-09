@@ -114,7 +114,8 @@ function credentialScopeLabel(scope: CredentialScope): string {
   switch (scope) {
     case "notion": return "Notion";
     case "airtable": return "Airtable";
-    case "graph": return "Microsoft 365 (Graph)";
+    case "graph": return "Microsoft Entra ID（組織）";
+    case "microsoft_account": return "Microsoft アカウント（個人）";
     case "box": return "Box";
     case "postgres": return "PostgreSQL";
     case "mysql": return "MySQL";
@@ -273,7 +274,7 @@ export function mountCredentialSelector(deps: CredentialSelectorDeps): Credentia
         chip.textContent = `🔑 ${lbl}`;
         chip.classList.remove("unset");
         pickBtn.textContent = "変更…";
-        copyBtn.hidden = false;
+        copyBtn.hidden = scope === "microsoft_account";
       } else {
         chip.textContent = "未選択";
         chip.classList.add("unset");

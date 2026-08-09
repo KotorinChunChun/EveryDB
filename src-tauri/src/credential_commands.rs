@@ -189,6 +189,52 @@ pub async fn graph_oauth_authorize(
 }
 
 #[tauri::command]
+pub async fn microsoft_account_oauth_authorize(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    client_id: String,
+) -> Result<serde_json::Value, String> {
+    let client_id = client_id.trim().to_string();
+    if client_id.is_empty() {
+        return Err("クライアントIDを先に入力してください".to_string());
+    }
+    let capabilities = vec![crate::graph_oauth::PERSONAL_ONEDRIVE_CAPABILITY.to_string()];
+    crate::graph_oauth::delegated_scopes(&capabilities).map_err(err_to_string)?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut slot = state
+            .graph_oauth_cancel
+            .lock()
+            .map_err(|_| "lock poisoned")?;
+        *slot = Some(cancel.clone());
+    }
+    let handle = app.clone();
+    let cancel_for_task = cancel.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        crate::graph_oauth::authorize_interactive(
+            &handle,
+            crate::graph_oauth::PERSONAL_ACCOUNT_TENANT,
+            &client_id,
+            &capabilities,
+            &cancel_for_task,
+        )
+    })
+    .await
+    .map_err(|e| format!("内部エラー: {e}"))?;
+    if let Ok(mut slot) = state.graph_oauth_cancel.lock() {
+        *slot = None;
+    }
+    let (_access_token, refresh_token) = result.map_err(err_to_string)?;
+    if refresh_token.is_empty() {
+        return Err(
+            "Microsoft からリフレッシュトークンが返りませんでした。委任アクセス許可に offline_access が含まれているか確認してください"
+                .to_string(),
+        );
+    }
+    Ok(serde_json::json!({ "refresh_token": refresh_token }))
+}
+
+#[tauri::command]
 pub fn graph_oauth_cancel(state: State<'_, AppState>) -> Result<(), String> {
     credential_service::request_graph_oauth_cancel(&state).map_err(Into::into)
 }

@@ -20,6 +20,8 @@ const GRAPH_CAPABILITIES: &[&str] = &[
     GRAPH_CAPABILITY_CALENDAR_SELF,
     GRAPH_CAPABILITY_ONEDRIVE_SELF,
 ];
+pub const MICROSOFT_ACCOUNT_SCOPE: &str = "microsoft_account";
+pub const MICROSOFT_ACCOUNT_ONEDRIVE_TYPE: &str = "microsoft_account_onedrive";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GraphAuthMethod {
@@ -78,6 +80,24 @@ fn graph_profile(fields: &Value) -> Result<GraphCredentialProfile> {
         auth_method,
         capabilities,
     })
+}
+
+fn validate_microsoft_account_fields(fields: &Value) -> Result<()> {
+    for (key, label) in [
+        ("client_id", "クライアントID"),
+        ("refresh_token", "Microsoft アカウントの認可"),
+    ] {
+        if fields
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_none()
+        {
+            return Err(anyhow!("{label}が未設定です"));
+        }
+    }
+    Ok(())
 }
 
 fn delegated_capability_for_source(type_: &str) -> Option<&'static str> {
@@ -180,7 +200,15 @@ pub fn resolve_credentials_for_source_type(
 }
 
 /// 対応スコープ（`sharedKeysFor` と同じ発想でフィールドをひとまとめにする単位）。
-pub const SCOPES: &[&str] = &["notion", "airtable", "graph", "box", "postgres", "mysql"];
+pub const SCOPES: &[&str] = &[
+    "notion",
+    "airtable",
+    "graph",
+    MICROSOFT_ACCOUNT_SCOPE,
+    "box",
+    "postgres",
+    "mysql",
+];
 
 /// ソースの config_json 内で `cred:<id>` の生きた参照になる唯一のフィールド。
 /// それ以外のフィールド（tenant_id 等）は選択時に平文コピーされるだけで、置換には追随しない。
@@ -193,6 +221,7 @@ fn source_ref_key_of_scope(scope: &str) -> Option<&'static str> {
     match scope {
         "notion" | "airtable" => Some("token"),
         "graph" => Some("client_secret"),
+        MICROSOFT_ACCOUNT_SCOPE => Some("access_token"),
         "box" => Some("access_token"),
         "postgres" | "mysql" => Some("password"),
         _ => None,
@@ -206,6 +235,7 @@ fn protected_keys_of_scope(scope: &str) -> &'static [&'static str] {
     match scope {
         "notion" | "airtable" => &["token"],
         "graph" => &["client_secret", "refresh_token"],
+        MICROSOFT_ACCOUNT_SCOPE => &["refresh_token"],
         "box" => &["client_secret", "refresh_token"],
         "postgres" | "mysql" => &["password"],
         _ => &[],
@@ -220,6 +250,7 @@ fn scope_of_type(type_: &str) -> Option<&'static str> {
         "postgres" => Some("postgres"),
         "mysql" => Some("mysql"),
         "box_files" => Some("box"),
+        MICROSOFT_ACCOUNT_ONEDRIVE_TYPE => Some(MICROSOFT_ACCOUNT_SCOPE),
         t if t.starts_with("graph") => Some("graph"),
         _ => None,
     }
@@ -295,6 +326,9 @@ pub fn add_credential(
     if scope == "graph" {
         let fields: Value = serde_json::from_str(fields_json)?;
         graph_profile(&fields)?;
+    } else if scope == MICROSOFT_ACCOUNT_SCOPE {
+        let fields: Value = serde_json::from_str(fields_json)?;
+        validate_microsoft_account_fields(&fields)?;
     }
     let protected = secret::protect_json_keys(protected_keys_of_scope(scope), fields_json)?;
     conn.execute(
@@ -335,6 +369,10 @@ pub fn update_credential(conn: &Connection, id: i64, label: &str, fields_json: &
                 validate_graph_profile_for_source(&type_, Some(&source_name), &profile)?;
             }
         }
+    } else if scope == MICROSOFT_ACCOUNT_SCOPE {
+        let decrypted = secret::unprotect_config(&merged)?;
+        let fields: Value = serde_json::from_str(&decrypted)?;
+        validate_microsoft_account_fields(&fields)?;
     }
     let protected = secret::protect_json_keys(keys, &merged)?;
     conn.execute(
@@ -596,6 +634,12 @@ pub fn resolve_credentials(conn: &Connection, config_json: &str) -> Result<Strin
             }
             continue;
         }
+        if scope == MICROSOFT_ACCOUNT_SCOPE {
+            let access_token =
+                microsoft_account_access_token_for_credential(conn, id, &fields_json)?;
+            obj.insert(key, Value::String(access_token));
+            continue;
+        }
         let decrypted = secret::unprotect_config(&fields_json)?;
         let cred_v: Value = serde_json::from_str(&decrypted)?;
         if let Some(cred_obj) = cred_v.as_object() {
@@ -648,6 +692,50 @@ fn graph_access_token_for_credential(
         let updated_json = serde_json::to_string(&updated)?;
         let reprotected =
             secret::protect_json_keys(protected_keys_of_scope("graph"), &updated_json)?;
+        conn.execute(
+            "UPDATE credentials SET fields_json = ?2 WHERE id = ?1",
+            params![credential_id, reprotected],
+        )?;
+    }
+    Ok(access_token)
+}
+
+fn microsoft_account_access_token_for_credential(
+    conn: &Connection,
+    credential_id: i64,
+    protected_fields_json: &str,
+) -> Result<String> {
+    let decrypted = secret::unprotect_config(protected_fields_json)?;
+    let fields: Value = serde_json::from_str(&decrypted)?;
+    validate_microsoft_account_fields(&fields)?;
+    let client_id = fields
+        .get("client_id")
+        .and_then(Value::as_str)
+        .expect("validated client_id");
+    let refresh_token = fields
+        .get("refresh_token")
+        .and_then(Value::as_str)
+        .expect("validated refresh_token");
+    let capabilities = vec![crate::graph_oauth::PERSONAL_ONEDRIVE_CAPABILITY.to_string()];
+    let (access_token, new_refresh_token) = crate::graph_oauth::refresh(
+        crate::graph_oauth::PERSONAL_ACCOUNT_TENANT,
+        client_id,
+        refresh_token,
+        &capabilities,
+    )?;
+    if !new_refresh_token.is_empty() && new_refresh_token != refresh_token {
+        let mut updated = fields.clone();
+        if let Some(obj) = updated.as_object_mut() {
+            obj.insert(
+                "refresh_token".to_string(),
+                Value::String(new_refresh_token),
+            );
+        }
+        let updated_json = serde_json::to_string(&updated)?;
+        let reprotected = secret::protect_json_keys(
+            protected_keys_of_scope(MICROSOFT_ACCOUNT_SCOPE),
+            &updated_json,
+        )?;
         conn.execute(
             "UPDATE credentials SET fields_json = ?2 WHERE id = ?1",
             params![credential_id, reprotected],
@@ -801,6 +889,10 @@ mod tests {
         assert_eq!(scope_of_type("box_files"), Some("box"));
         assert_eq!(scope_of_type("graph_entra_users"), Some("graph"));
         assert_eq!(scope_of_type("graph_sharepoint_list"), Some("graph"));
+        assert_eq!(
+            scope_of_type(MICROSOFT_ACCOUNT_ONEDRIVE_TYPE),
+            Some(MICROSOFT_ACCOUNT_SCOPE)
+        );
         assert_eq!(scope_of_type("csv"), None);
     }
 
@@ -1010,6 +1102,54 @@ mod tests {
         );
         assert!(fields.get("refresh_token").is_none());
         assert!(fields.get("client_secret").is_none());
+    }
+
+    #[test]
+    fn microsoft_account_credential_protects_refresh_token_and_exposes_client_id_only() {
+        let conn = open_test_db();
+        let id = add_credential(
+            &conn,
+            MICROSOFT_ACCOUNT_SCOPE,
+            "個人OneDrive",
+            r#"{"client_id":"personal-client","refresh_token":"personal-refresh"}"#,
+        )
+        .unwrap();
+
+        let stored: String = conn
+            .query_row(
+                "SELECT fields_json FROM credentials WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let stored: Value = serde_json::from_str(&stored).unwrap();
+        assert_eq!(stored["client_id"], "personal-client");
+        assert!(stored["refresh_token"]
+            .as_str()
+            .unwrap()
+            .starts_with("dpapi:"));
+
+        let (label, fields) = public_fields(&conn, id).unwrap();
+        assert_eq!(label, "個人OneDrive");
+        assert_eq!(
+            fields.get("client_id").and_then(Value::as_str),
+            Some("personal-client")
+        );
+        assert!(fields.get("refresh_token").is_none());
+    }
+
+    #[test]
+    fn microsoft_account_credential_requires_completed_authorization() {
+        let conn = open_test_db();
+        let error = add_credential(
+            &conn,
+            MICROSOFT_ACCOUNT_SCOPE,
+            "未認可",
+            r#"{"client_id":"personal-client"}"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("Microsoft アカウントの認可が未設定です"));
     }
 
     #[test]
