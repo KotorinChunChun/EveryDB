@@ -84,13 +84,17 @@ app-only / delegated 分岐、UPN と `/me/drive` の実行ロジックを変更
 
 | 領域 | 個人向けの実装 |
 | :--- | :--- |
-| 資格情報 scope | `microsoft_account`。利用者入力はクライアント ID、秘密値はDPAPI保護したリフレッシュトークン |
+| 資格情報 scope | `microsoft_account`。利用者入力のクライアント ID は持たず、秘密値はDPAPI保護したリフレッシュトークン |
 | OAuth | Authorization Code + PKCE、authority `consumers`、`Files.Read User.Read offline_access` 固定 |
 | データソース | `microsoft_account_onedrive`（OneDrive（個人））。対象UPNを持たず常に `/me/drive` |
 | 互換性境界 | manifestのcredential scope、保存検証、実行時解決で組織用と相互利用を拒否 |
 | 後方互換 | 新規テーブルやDB schema migrationは追加せず、既存組織用レコードをそのまま利用 |
 
 この分離により、Personal OneDrive対応が既存の組織向け認証・コネクタの回帰要因にならない構造とした。
+個人用OAuthのクライアントIDはEveryDBの本番用パブリッククライアントをバックエンドへ固定し、
+利用者画面・資格情報レコード・IPC引数には露出させない。固定IDはauthorizeとrefreshで共通利用し、
+旧資格情報に別の `client_id` が保存されている場合はネットワーク要求前に再認可を案内する。
+固定IDで再認可して同じレコードを更新できるため、接続の付け替えやDB migrationは不要である。
 
 ## モジュール構成
 

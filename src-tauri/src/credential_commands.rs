@@ -192,12 +192,7 @@ pub async fn graph_oauth_authorize(
 pub async fn microsoft_account_oauth_authorize(
     app: AppHandle,
     state: State<'_, AppState>,
-    client_id: String,
 ) -> Result<serde_json::Value, String> {
-    let client_id = client_id.trim().to_string();
-    if client_id.is_empty() {
-        return Err("クライアントIDを先に入力してください".to_string());
-    }
     let capabilities = vec![crate::graph_oauth::PERSONAL_ONEDRIVE_CAPABILITY.to_string()];
     crate::graph_oauth::delegated_scopes(&capabilities).map_err(err_to_string)?;
     let cancel = Arc::new(AtomicBool::new(false));
@@ -214,7 +209,7 @@ pub async fn microsoft_account_oauth_authorize(
         crate::graph_oauth::authorize_interactive(
             &handle,
             crate::graph_oauth::PERSONAL_ACCOUNT_TENANT,
-            &client_id,
+            crate::graph_oauth::PERSONAL_ACCOUNT_CLIENT_ID,
             &capabilities,
             &cancel_for_task,
         )

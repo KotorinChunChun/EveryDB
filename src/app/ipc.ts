@@ -137,7 +137,7 @@ export interface IpcContract {
     result: OAuthTokenResult;
   };
   microsoft_account_oauth_authorize: {
-    args: { clientId: string };
+    args: undefined;
     result: OAuthTokenResult;
   };
   graph_oauth_cancel: { args: undefined; result: void };

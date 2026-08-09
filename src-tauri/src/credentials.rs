@@ -83,21 +83,25 @@ fn graph_profile(fields: &Value) -> Result<GraphCredentialProfile> {
 }
 
 fn validate_microsoft_account_fields(fields: &Value) -> Result<()> {
-    for (key, label) in [
-        ("client_id", "クライアントID"),
-        ("refresh_token", "Microsoft アカウントの認可"),
-    ] {
-        if fields
-            .get(key)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_none()
-        {
-            return Err(anyhow!("{label}が未設定です"));
-        }
+    if fields
+        .get("refresh_token")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        return Err(anyhow!("Microsoft アカウントの認可が未設定です"));
     }
     Ok(())
+}
+
+fn microsoft_account_requires_reauthorization(fields: &Value) -> bool {
+    fields
+        .get("client_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|client_id| !client_id.is_empty())
+        .is_some_and(|client_id| client_id != crate::graph_oauth::PERSONAL_ACCOUNT_CLIENT_ID)
 }
 
 fn delegated_capability_for_source(type_: &str) -> Option<&'static str> {
@@ -446,8 +450,14 @@ pub fn public_fields(conn: &Connection, id: i64) -> Result<(String, Map<String, 
             if protected_keys.contains(&k.as_str()) {
                 continue; // 秘密フィールドは除外
             }
+            if scope == MICROSOFT_ACCOUNT_SCOPE && k == "client_id" {
+                continue; // 固定ID移行前の利用者入力値は表示しない
+            }
             out.insert(k.clone(), val.clone());
         }
+    }
+    if scope == MICROSOFT_ACCOUNT_SCOPE && microsoft_account_requires_reauthorization(&v) {
+        out.insert("_requires_reauthorization".to_string(), Value::Bool(true));
     }
     Ok((label, out))
 }
@@ -708,10 +718,11 @@ fn microsoft_account_access_token_for_credential(
     let decrypted = secret::unprotect_config(protected_fields_json)?;
     let fields: Value = serde_json::from_str(&decrypted)?;
     validate_microsoft_account_fields(&fields)?;
-    let client_id = fields
-        .get("client_id")
-        .and_then(Value::as_str)
-        .expect("validated client_id");
+    if microsoft_account_requires_reauthorization(&fields) {
+        return Err(anyhow!(
+            "個人Microsoftアカウントの認証設定が更新されました。保存済みトークンの管理から、Microsoft アカウント（個人）を再認可してください"
+        ));
+    }
     let refresh_token = fields
         .get("refresh_token")
         .and_then(Value::as_str)
@@ -719,7 +730,7 @@ fn microsoft_account_access_token_for_credential(
     let capabilities = vec![crate::graph_oauth::PERSONAL_ONEDRIVE_CAPABILITY.to_string()];
     let (access_token, new_refresh_token) = crate::graph_oauth::refresh(
         crate::graph_oauth::PERSONAL_ACCOUNT_TENANT,
-        client_id,
+        crate::graph_oauth::PERSONAL_ACCOUNT_CLIENT_ID,
         refresh_token,
         &capabilities,
     )?;
@@ -1105,13 +1116,13 @@ mod tests {
     }
 
     #[test]
-    fn microsoft_account_credential_protects_refresh_token_and_exposes_client_id_only() {
+    fn microsoft_account_credential_only_requires_and_protects_authorization() {
         let conn = open_test_db();
         let id = add_credential(
             &conn,
             MICROSOFT_ACCOUNT_SCOPE,
             "個人OneDrive",
-            r#"{"client_id":"personal-client","refresh_token":"personal-refresh"}"#,
+            r#"{"refresh_token":"personal-refresh"}"#,
         )
         .unwrap();
 
@@ -1123,7 +1134,7 @@ mod tests {
             )
             .unwrap();
         let stored: Value = serde_json::from_str(&stored).unwrap();
-        assert_eq!(stored["client_id"], "personal-client");
+        assert!(stored.get("client_id").is_none());
         assert!(stored["refresh_token"]
             .as_str()
             .unwrap()
@@ -1131,24 +1142,42 @@ mod tests {
 
         let (label, fields) = public_fields(&conn, id).unwrap();
         assert_eq!(label, "個人OneDrive");
-        assert_eq!(
-            fields.get("client_id").and_then(Value::as_str),
-            Some("personal-client")
-        );
+        assert!(fields.get("client_id").is_none());
         assert!(fields.get("refresh_token").is_none());
+    }
+
+    #[test]
+    fn microsoft_account_legacy_client_id_is_accepted_but_not_exposed() {
+        let conn = open_test_db();
+        let id = add_credential(
+            &conn,
+            MICROSOFT_ACCOUNT_SCOPE,
+            "旧個人OneDrive",
+            r#"{"client_id":"legacy-client","refresh_token":"personal-refresh"}"#,
+        )
+        .unwrap();
+
+        let (_label, fields) = public_fields(&conn, id).unwrap();
+        assert!(fields.get("client_id").is_none());
+        assert!(fields.get("refresh_token").is_none());
+        assert_eq!(
+            fields
+                .get("_requires_reauthorization")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+
+        let config = serde_json::json!({ "access_token": format!("cred:{id}") }).to_string();
+        let error = resolve_credentials(&conn, &config).unwrap_err().to_string();
+        assert!(error.contains("再認可してください"));
     }
 
     #[test]
     fn microsoft_account_credential_requires_completed_authorization() {
         let conn = open_test_db();
-        let error = add_credential(
-            &conn,
-            MICROSOFT_ACCOUNT_SCOPE,
-            "未認可",
-            r#"{"client_id":"personal-client"}"#,
-        )
-        .unwrap_err()
-        .to_string();
+        let error = add_credential(&conn, MICROSOFT_ACCOUNT_SCOPE, "未認可", r#"{}"#)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("Microsoft アカウントの認可が未設定です"));
     }
 
@@ -1166,7 +1195,7 @@ mod tests {
             &conn,
             MICROSOFT_ACCOUNT_SCOPE,
             "個人",
-            r#"{"client_id":"personal-client","refresh_token":"refresh"}"#,
+            r#"{"refresh_token":"refresh"}"#,
         )
         .unwrap();
 

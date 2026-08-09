@@ -126,12 +126,11 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
       }
       case "microsoft_account":
         return [
-          { key: "client_id", label: "クライアントID", secret: false, helpUrl: ENTRA_APPS_URL },
           {
             key: "refresh_token", label: "Microsoft アカウントの認可", secret: true,
             authorize: {
               buttonLabel: "🔗 個人 Microsoft アカウントで認可…",
-              usesFields: ["client_id"],
+              usesFields: [],
               provider: "microsoft_account",
             },
           },
@@ -329,9 +328,7 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
             alert(
               provider === "graph"
                 ? "先にテナントID・クライアントIDを入力してください"
-                : provider === "microsoft_account"
-                  ? "先にクライアントIDを入力してください"
-                  : "先にクライアントID・クライアントシークレットを入力してください",
+                : "先にクライアントID・クライアントシークレットを入力してください",
             );
             return;
           }
@@ -346,9 +343,7 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
                 capabilities: [...cmGraphCapabilities],
               })
               : provider === "microsoft_account"
-                ? await invoke("microsoft_account_oauth_authorize", {
-                  clientId: usedFields["client_id"],
-                })
+                ? await invoke("microsoft_account_oauth_authorize")
                 : await invoke("box_oauth_authorize", {
                   clientId: usedFields["client_id"],
                   clientSecret: usedFields["client_secret"],
@@ -457,6 +452,12 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
       const res = await invoke("credential_public_fields", { id: c.id });
       fields = res.fields;
     } catch { /* noop */ }
+    const personalReauthorizationRequired = scope === "microsoft_account"
+      && fields["_requires_reauthorization"] === true;
+    delete fields["_requires_reauthorization"];
+    $<HTMLDivElement>("cm-error").textContent = personalReauthorizationRequired
+      ? "認証設定の更新により再認可が必要です。個人 Microsoft アカウントで認可し直して保存してください。"
+      : "";
     if (scope === "box") cmBoxAuthMethod = fields["auth_method"] === "ccg" ? "ccg" : "oauth";
     if (scope === "graph") {
       cmGraphAuthMethod = fields["auth_method"] === "delegated" ? "delegated" : "app_only";
@@ -473,7 +474,9 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
       if (f.secret) {
         const el = document.getElementById(`cmf-${f.key}`) as HTMLInputElement | null;
         if (el) {
-          el.value = SECRET_PLACEHOLDER;
+          el.value = personalReauthorizationRequired && f.key === "refresh_token"
+            ? ""
+            : SECRET_PLACEHOLDER;
           el.dispatchEvent(new Event("input"));
         }
       }
