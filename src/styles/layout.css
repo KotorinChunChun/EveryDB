@@ -360,6 +360,11 @@ tr.drop-target-after td::after { bottom: -1px; }
   color: var(--text);
 }
 .dialog input[type="checkbox"] { width: auto; margin: 0; }
+.dialog input[readonly] {
+  color: var(--muted);
+  background: var(--panel);
+  cursor: default;
+}
 .dialog textarea { resize: vertical; box-sizing: border-box; }
 /* WEBサイト種別の CSS セレクタ/JSONパス列定義。等幅で見やすくする。 */
 .dialog textarea.web-page-columns { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }

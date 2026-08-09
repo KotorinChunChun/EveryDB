@@ -10,6 +10,8 @@ export interface FieldDef {
   browse?: "file" | "folder"; // 参照ボタンを付ける（ファイル/フォルダ選択ダイアログ）
   options?: { value: string; label: string }[]; // kind: "select" 用
   min?: number; // kind: "number" 用
+  /** API 等から取得した値を表示するだけで、利用者には変更させない。 */
+  readOnly?: boolean;
   dialogFilters?: { name: string; extensions: string[] }[]; // browse: "file" 用の拡張子フィルタ
   /** API キー・トークンの取得ページ。指定すると入力欄の横に「🔑 取得…」ボタンを出す。 */
   helpUrl?: string;
@@ -147,7 +149,7 @@ export const TYPE_DEFS: TypeDef[] = [
     { key: "token", label: "インテグレーショントークン", kind: "password", placeholder: "ntn_...", helpUrl: NOTION_INTEGRATIONS_URL, credentialScope: "notion" },
     { key: "url_helper", label: "URL から自動設定", kind: "text", optional: true },
     { key: "database_id", label: "データベースID", kind: "text", placeholder: "URL 内の 32 桁 ID" },
-    { key: "database_name", label: "データベース名 (自動・最終取得値)", kind: "text", placeholder: "IDから自動取得します", optional: true },
+    { key: "database_name", label: "データベース名 (Notionから自動同期)", kind: "text", placeholder: "IDから自動取得します", readOnly: true },
   ], browse: "notion" },
   { value: "graph_entra_users", label: "EntraID ユーザー一覧", fields: [...GRAPH_AUTH_FIELDS] },
   { value: "graph_entra_groups", label: "EntraID グループ一覧", fields: [...GRAPH_AUTH_FIELDS] },

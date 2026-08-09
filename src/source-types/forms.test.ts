@@ -56,4 +56,11 @@ describe("source type forms", () => {
       expect(pathField?.browserProfile).toBeDefined();
     }
   });
+
+  it("keeps the Notion database name API-owned and required", () => {
+    const definition = TYPE_DEFS.find((item) => item.value === "notion")!;
+    const nameField = definition.fields.find((field) => field.key === "database_name")!;
+    expect(nameField.readOnly).toBe(true);
+    expect(nameField.optional).not.toBe(true);
+  });
 });

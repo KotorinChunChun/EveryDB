@@ -1,5 +1,11 @@
-/* 幅広ダイアログ・フィールド役割編集・ブラウズ領域 */
-.dialog.wide { min-width: 560px; max-width: 720px; }
+/* 幅広ダイアログ・フィールド役割編集・ブラウズ領域。
+   通常時の560pxは維持し、狭いウィンドウでは左右16pxを残して縮める。 */
+.dialog.wide {
+  width: min(560px, calc(100vw - 32px));
+  min-width: min(560px, calc(100vw - 32px));
+  max-width: min(720px, calc(100vw - 32px));
+  box-sizing: border-box;
+}
 
 /* 種別セレクト（または種別ラベル）と「📖 手順書」ボタンの並び */
 .type-row { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 10px; }
@@ -160,6 +166,15 @@
   border-radius: 4px; padding: 6px 8px; margin: -4px 0 10px;
 }
 .form-error { color: var(--form-error); font-size: 12px; min-height: 1em; margin-bottom: 6px; }
+.notion-name-status { color: var(--muted); font-size: 11px; margin: -6px 0 10px; white-space: normal; }
+.notion-name-status[data-state="success"] { color: var(--success); }
+.notion-name-status[data-state="error"] {
+  color: var(--error-state-text);
+  background: var(--error-state-bg);
+  border: 1px solid var(--error-state-border);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
 
 .browse-area { margin-bottom: 10px; }
 .browse-area .btn { margin-bottom: 6px; }

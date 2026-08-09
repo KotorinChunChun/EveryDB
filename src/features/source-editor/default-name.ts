@@ -10,14 +10,6 @@ export function basenameOf(path: string): string {
   return parts[parts.length - 1] || normalized;
 }
 
-/** Notionの最新名で置換してよいのは、空・以前の自動名・旧ID短縮名・種別既定名だけ。 */
-export function shouldUpdateNotionDisplayName(current: string, previousDatabaseName: string, databaseId: string): boolean {
-  const value = current.trim();
-  return !value
-    || value === previousDatabaseName.trim()
-    || value === `Notion DB (${databaseId.slice(0, 8)}...)`
-    || value === "Notion データベース";
-}
 /** データソース種別と接続設定値から、推奨される表示名を導出する。 */
 export function deriveDefaultName(type_: string, config: Record<string, unknown>): string {
   const str = (key: string): string => String(config[key] ?? "").trim();

@@ -23,6 +23,7 @@ describe("dialog layout CSS", () => {
   });
 
   it("contains source editor controls inside a scrollable fieldset at narrow sizes", () => {
+    expect(dialogsCss).toMatch(/\.dialog\.wide\s*\{[^}]*width:\s*min\(560px,\s*calc\(100vw - 32px\)\);[^}]*min-width:\s*min\(560px,\s*calc\(100vw - 32px\)\);/s);
     expect(dialogsCss).toMatch(/#add-dialog \.roles-fieldset\s*\{[^}]*min-width:\s*0;[^}]*min-height:\s*0;[^}]*max-width:\s*100%;/s);
     expect(dialogsCss).toMatch(/#add-dialog \.roles-fieldset:not\(\.config-fieldset\)\s*\{[^}]*min-height:\s*96px;[^}]*overflow:\s*auto;/s);
     expect(dialogsCss).toMatch(/\.roles-toolbar\s*\{[^}]*flex:\s*none;[^}]*flex-wrap:\s*wrap;/s);
