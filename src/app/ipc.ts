@@ -30,6 +30,8 @@ export interface CredentialPermissionInspection {
 
 export interface OAuthTokenResult {
   refresh_token: string;
+  authorized_account_id?: string;
+  authorized_account_name?: string;
 }
 
 

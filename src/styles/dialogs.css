@@ -254,6 +254,7 @@
   padding: 6px 10px; font-size: 13px;
 }
 .credential-profile-chip.unset { color: var(--muted); }
+.credential-authorization-status { white-space: normal; word-break: break-word; }
 
 .sp-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
 .sp-tab { padding: 5px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px 4px 0 0; color: var(--muted); cursor: pointer; }

@@ -60,6 +60,7 @@ interface CredentialFieldDef {
   key: string;
   label: string;
   secret: boolean;
+  hidden?: boolean;
   helpUrl?: string;
   linkUrl?: string;
   linkLabel?: string;
@@ -121,6 +122,8 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
                 provider: "graph",
               },
             },
+            { key: "authorized_account_name", label: "", secret: false, hidden: true },
+            { key: "authorized_account_id", label: "", secret: false, hidden: true },
           ];
         }
         return [
@@ -138,6 +141,8 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
               provider: "microsoft_account",
             },
           },
+          { key: "authorized_account_name", label: "", secret: false, hidden: true },
+          { key: "authorized_account_id", label: "", secret: false, hidden: true },
         ];
       case "box": {
         const BOX_DEV_CONSOLE = "https://app.box.com/developers/console";
@@ -189,6 +194,13 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
     const container = $<HTMLDivElement>("cm-form-fields");
     container.innerHTML = "";
     for (const f of credentialScopeFieldDefs(scope)) {
+      if (f.hidden) {
+        const hidden = document.createElement("input");
+        hidden.type = "hidden";
+        hidden.id = `cmf-${f.key}`;
+        container.appendChild(hidden);
+        continue;
+      }
       const label = document.createElement("label");
       label.textContent = f.label;
       const row = document.createElement("div");
@@ -262,6 +274,10 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
               refreshToken.value = "";
               refreshToken.dispatchEvent(new Event("input"));
             }
+            for (const key of ["authorized_account_name", "authorized_account_id"]) {
+              const accountField = document.getElementById(`cmf-${key}`) as HTMLInputElement | null;
+              if (accountField) accountField.value = "";
+            }
             updateCmSaveButtonState();
           };
           const text = document.createElement("span");
@@ -288,7 +304,7 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
         input.hidden = true;
         row.appendChild(input);
         const status = document.createElement("span");
-        status.className = "credential-profile-chip";
+        status.className = "credential-profile-chip credential-authorization-status";
         const authBtn = document.createElement("button");
         authBtn.type = "button";
         authBtn.className = "btn browse-btn";
@@ -304,7 +320,17 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
         };
         const renderAuthStatus = () => {
           if (input.value) {
-            status.textContent = "✅ 認可済み";
+            if (f.authorize!.provider === "graph" || f.authorize!.provider === "microsoft_account") {
+              const accountName = (document.getElementById("cmf-authorized_account_name") as HTMLInputElement | null)
+                ?.value.trim() ?? "";
+              const accountId = (document.getElementById("cmf-authorized_account_id") as HTMLInputElement | null)
+                ?.value.trim() ?? "";
+              status.textContent = accountName || accountId
+                ? `✅ 認可済み: ${accountName || "表示IDなし"}（アカウントID: ${accountId || "未取得"}）`
+                : "✅ 認可済み（認可アカウント未記録）";
+            } else {
+              status.textContent = "✅ 認可済み";
+            }
             status.classList.remove("unset");
           } else {
             status.textContent = "未認可";
@@ -353,6 +379,12 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
                   clientSecret: usedFields["client_secret"],
                 });
             input.value = res.refresh_token;
+            if (provider === "graph" || provider === "microsoft_account") {
+              const accountName = document.getElementById("cmf-authorized_account_name") as HTMLInputElement | null;
+              const accountId = document.getElementById("cmf-authorized_account_id") as HTMLInputElement | null;
+              if (accountName) accountName.value = res.authorized_account_name ?? "";
+              if (accountId) accountId.value = res.authorized_account_id ?? "";
+            }
             renderAuthStatus();
             updateCmSaveButtonState();
           } catch (e) {

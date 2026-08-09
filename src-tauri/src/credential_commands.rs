@@ -180,27 +180,33 @@ pub async fn graph_oauth_authorize(
     let handle = app.clone();
     let cancel_for_task = cancel.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        crate::graph_oauth::authorize_interactive(
+        let (access_token, refresh_token) = crate::graph_oauth::authorize_interactive(
             &handle,
             &tenant_id,
             &client_id,
             &capabilities,
             &cancel_for_task,
-        )
+        )?;
+        let account = crate::graph::signed_in_account(&access_token)?;
+        Ok::<_, anyhow::Error>((refresh_token, account))
     })
     .await
     .map_err(|e| format!("内部エラー: {e}"))?;
     if let Ok(mut slot) = state.graph_oauth_cancel.lock() {
         *slot = None;
     }
-    let (_access_token, refresh_token) = result.map_err(err_to_string)?;
+    let (refresh_token, account) = result.map_err(err_to_string)?;
     if refresh_token.is_empty() {
         return Err(
             "Microsoft からリフレッシュトークンが返りませんでした。委任アクセス許可に offline_access が含まれているか確認してください"
                 .to_string(),
         );
     }
-    Ok(serde_json::json!({ "refresh_token": refresh_token }))
+    Ok(serde_json::json!({
+        "refresh_token": refresh_token,
+        "authorized_account_id": account.id,
+        "authorized_account_name": account.display_id,
+    }))
 }
 
 #[tauri::command]
@@ -221,27 +227,33 @@ pub async fn microsoft_account_oauth_authorize(
     let handle = app.clone();
     let cancel_for_task = cancel.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        crate::graph_oauth::authorize_interactive(
+        let (access_token, refresh_token) = crate::graph_oauth::authorize_interactive(
             &handle,
             crate::graph_oauth::PERSONAL_ACCOUNT_TENANT,
             crate::graph_oauth::PERSONAL_ACCOUNT_CLIENT_ID,
             &capabilities,
             &cancel_for_task,
-        )
+        )?;
+        let account = crate::graph::signed_in_account(&access_token)?;
+        Ok::<_, anyhow::Error>((refresh_token, account))
     })
     .await
     .map_err(|e| format!("内部エラー: {e}"))?;
     if let Ok(mut slot) = state.graph_oauth_cancel.lock() {
         *slot = None;
     }
-    let (_access_token, refresh_token) = result.map_err(err_to_string)?;
+    let (refresh_token, account) = result.map_err(err_to_string)?;
     if refresh_token.is_empty() {
         return Err(
             "Microsoft からリフレッシュトークンが返りませんでした。委任アクセス許可に offline_access が含まれているか確認してください"
                 .to_string(),
         );
     }
-    Ok(serde_json::json!({ "refresh_token": refresh_token }))
+    Ok(serde_json::json!({
+        "refresh_token": refresh_token,
+        "authorized_account_id": account.id,
+        "authorized_account_name": account.display_id,
+    }))
 }
 
 #[tauri::command]

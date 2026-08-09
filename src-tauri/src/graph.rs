@@ -10,6 +10,12 @@ pub struct GraphClient {
     token: String,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct GraphAccountIdentity {
+    pub id: String,
+    pub display_id: String,
+}
+
 impl GraphClient {
     /// 既に取得済みのアクセストークンでクライアントを構築する（委任 OAuth 用）。
     pub fn new_with_token(access_token: impl Into<String>) -> Self {
@@ -89,6 +95,34 @@ impl GraphClient {
     }
 }
 
+fn account_identity_from_value(value: &Value) -> Result<GraphAccountIdentity> {
+    let id = value
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("Microsoft アカウントIDが返りませんでした"))?
+        .to_string();
+    let display_id = ["mail", "userPrincipalName", "displayName"]
+        .iter()
+        .find_map(|key| {
+            value
+                .get(*key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or(&id)
+        .to_string();
+    Ok(GraphAccountIdentity { id, display_id })
+}
+
+/// 委任アクセストークンでサインインした本人の非秘密識別情報だけを取得する。
+pub fn signed_in_account(access_token: &str) -> Result<GraphAccountIdentity> {
+    let value = GraphClient::new_with_token(access_token)
+        .get("https://graph.microsoft.com/v1.0/me?$select=id,displayName,mail,userPrincipalName")?;
+    account_identity_from_value(&value)
+}
+
 /// "https://host/sites/xxx" を (host, "/sites/xxx") に分解する。
 pub fn parse_site_url(u: &str) -> Result<(String, String)> {
     let s = u.trim().trim_end_matches('/');
@@ -112,4 +146,38 @@ pub fn site_id(client: &GraphClient, site_url: &str) -> Result<String> {
         .and_then(|x| x.as_str())
         .map(String::from)
         .ok_or_else(|| anyhow!("サイト ID を解決できません: {site_url}"))
+}
+
+#[cfg(test)]
+mod account_identity_tests {
+    use super::*;
+
+    #[test]
+    fn prefers_mail_and_keeps_the_stable_microsoft_id() {
+        let identity = account_identity_from_value(&serde_json::json!({
+            "id": "account-guid",
+            "displayName": "Every DB",
+            "mail": "everydb@example.com",
+            "userPrincipalName": "everydb@example.onmicrosoft.com"
+        }))
+        .unwrap();
+        assert_eq!(identity.id, "account-guid");
+        assert_eq!(identity.display_id, "everydb@example.com");
+    }
+
+    #[test]
+    fn falls_back_to_upn_then_account_id() {
+        let with_upn = account_identity_from_value(&serde_json::json!({
+            "id": "account-guid",
+            "userPrincipalName": "user@example.com"
+        }))
+        .unwrap();
+        assert_eq!(with_upn.display_id, "user@example.com");
+
+        let id_only = account_identity_from_value(&serde_json::json!({
+            "id": "account-guid"
+        }))
+        .unwrap();
+        assert_eq!(id_only.display_id, "account-guid");
+    }
 }

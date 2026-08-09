@@ -1242,7 +1242,7 @@ mod tests {
             &conn,
             MICROSOFT_ACCOUNT_SCOPE,
             "個人OneDrive",
-            r#"{"refresh_token":"personal-refresh"}"#,
+            r#"{"refresh_token":"personal-refresh","authorized_account_name":"user@example.com","authorized_account_id":"account-guid"}"#,
         )
         .unwrap();
 
@@ -1264,6 +1264,16 @@ mod tests {
         assert_eq!(label, "個人OneDrive");
         assert!(fields.get("client_id").is_none());
         assert!(fields.get("refresh_token").is_none());
+        assert_eq!(
+            fields
+                .get("authorized_account_name")
+                .and_then(Value::as_str),
+            Some("user@example.com")
+        );
+        assert_eq!(
+            fields.get("authorized_account_id").and_then(Value::as_str),
+            Some("account-guid")
+        );
     }
 
     #[test]
