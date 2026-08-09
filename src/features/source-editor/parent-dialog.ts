@@ -306,7 +306,7 @@ export function mountParentSettingsDialog(
         setLinkedCredentials(detail.linked_credentials ?? {});
       } catch { /* noop */ }
     }
-    renderFieldsInto(elements.dynamicEl, "pf-", fieldDefs, actions.fieldRenderer, prefill);
+    renderFieldsInto(elements.dynamicEl, "pf-", fieldDefs, actions.fieldRenderer, repType, prefill);
 
     parentDialogState = { parentKey, keys, fieldDefs, children, repType };
     if (!elements.dialog.open) elements.dialog.showModal();

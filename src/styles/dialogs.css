@@ -171,6 +171,16 @@
 .picker-list.checklist .picker-item:hover { background: var(--panel-2); }
 .picker-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .picker-item .badge { margin-left: auto; font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; }
+.credential-picker-item {
+  display: flex; width: 100%; flex-direction: column; align-items: stretch; gap: 3px;
+  border: 0; border-bottom: 1px solid var(--border); background: transparent;
+  color: var(--text); text-align: left; font: inherit;
+}
+.credential-picker-item:disabled { cursor: not-allowed; opacity: 0.72; }
+.credential-picker-item:disabled:hover { background: transparent; }
+.credential-compatibility-summary,
+.credential-compatibility-reason { display: block; font-size: 11px; color: var(--muted); }
+.credential-compatibility-reason { color: var(--danger); white-space: normal; }
 
 .connection-kind-item {
   display: block; width: 100%; text-align: left;

@@ -5,6 +5,8 @@ export type ParentKind = "path" | "sharepoint" | "notion" | "airtable" | "graph3
 export type SourceCategory = "local" | "microsoft" | "cloud" | "database" | "public-data" | "web";
 export type BrowseCapability = "notion" | "sqlite" | "accdb" | "excel_table" | "sharepoint" | "airtable";
 export type OpenCapability = "none" | "table" | "parent" | "table-and-parent";
+export type GraphAuthMethod = "app_only" | "delegated";
+export type GraphCapability = "sharepoint" | "calendar_self" | "onedrive_self";
 
 export interface SourceTypeMetadata {
   id: string;
@@ -13,6 +15,8 @@ export interface SourceTypeMetadata {
   parentKind: ParentKind;
   guide: string;
   credentialScope?: CredentialScope;
+  credentialAuthMethods?: GraphAuthMethod[];
+  requiredCredentialCapabilities?: GraphCapability[];
   browse: BrowseCapability | null;
   open: OpenCapability;
 }
@@ -44,6 +48,18 @@ export function browseCapabilityForType(type: string): BrowseCapability | null {
 
 export function openCapabilityForType(type: string): OpenCapability {
   return sourceMetadataFor(type)?.open ?? "none";
+}
+
+export function graphCredentialRequirementsFor(type: string): {
+  authMethods: readonly GraphAuthMethod[];
+  capabilities: readonly GraphCapability[];
+} | null {
+  const metadata = sourceMetadataFor(type);
+  if (metadata?.credentialScope !== "graph" || !metadata.credentialAuthMethods) return null;
+  return {
+    authMethods: metadata.credentialAuthMethods,
+    capabilities: metadata.requiredCredentialCapabilities ?? [],
+  };
 }
 
 export function representativeTypeForCredentialScope(scope: CredentialScope): string {

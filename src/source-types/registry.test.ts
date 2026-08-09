@@ -3,6 +3,7 @@ import {
   SOURCE_TYPE_MANIFEST,
   SOURCE_TYPE_METADATA,
   browseCapabilityForType,
+  graphCredentialRequirementsFor,
   guideNameForType,
   openCapabilityForType,
   parentKindForType,
@@ -22,6 +23,30 @@ describe("source type metadata", () => {
     expect(SOURCE_TYPE_METADATA.every((item) => parentKinds.has(item.parentKind) && categories.has(item.category))).toBe(true);
     expect(SOURCE_TYPE_METADATA.every((item) => browseCapabilities.has(item.browse))).toBe(true);
     expect(SOURCE_TYPE_METADATA.every((item) => openCapabilities.has(item.open))).toBe(true);
+  });
+
+  it("declares Graph auth methods and delegated capabilities for every Graph source", () => {
+    const graphEntries = SOURCE_TYPE_METADATA.filter((item) => item.credentialScope === "graph");
+    expect(graphEntries.length).toBeGreaterThan(0);
+    expect(graphEntries.every((item) => item.credentialAuthMethods?.includes("app_only"))).toBe(true);
+    expect(graphEntries.every((item) => Array.isArray(item.requiredCredentialCapabilities))).toBe(true);
+
+    expect(graphCredentialRequirementsFor("graph_teams")).toEqual({
+      authMethods: ["app_only"],
+      capabilities: [],
+    });
+    expect(graphCredentialRequirementsFor("graph_sharepoint_list")).toEqual({
+      authMethods: ["app_only", "delegated"],
+      capabilities: ["sharepoint"],
+    });
+    expect(graphCredentialRequirementsFor("graph_calendar")).toEqual({
+      authMethods: ["app_only", "delegated"],
+      capabilities: ["calendar_self"],
+    });
+    expect(graphCredentialRequirementsFor("graph_onedrive")).toEqual({
+      authMethods: ["app_only", "delegated"],
+      capabilities: ["onedrive_self"],
+    });
   });
 
   it("keeps the legacy Excel cell type out of new source selection", () => {

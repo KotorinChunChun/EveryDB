@@ -65,6 +65,7 @@ export interface SourceEditorDialogActions {
       idPrefix: string,
       row: HTMLElement,
       label: HTMLElement,
+      sourceType: string,
     ) => void;
     openBrowserProfilePicker: (target: "history" | "bookmarks", input: HTMLInputElement) => void;
     openSheetPicker: (input: HTMLInputElement) => void;
@@ -560,7 +561,7 @@ export function mountSourceEditorDialog(
           const row = document.createElement("div");
           row.className = "path-row";
           row.appendChild(input);
-          if (isCredOwner) pickers.wireCredentialSelector(input, f, "fd-", row, label);
+          if (isCredOwner) pickers.wireCredentialSelector(input, f, "fd-", row, label, def.value);
           if (f.browse) {
             const browseBtn = document.createElement("button");
             browseBtn.type = "button";
