@@ -2,7 +2,7 @@
 
 ## 背景
 
-EveryDB の Microsoft Graph 連携は現状、`src-tauri/src/graph.rs` の `GraphClient::new` が
+本計画の開始時点では、EveryDB の Microsoft Graph 連携は `src-tauri/src/graph.rs` の `GraphClient::new` が
 **クライアントクレデンシャルフロー**（`grant_type=client_credentials`、スコープ
 `https://graph.microsoft.com/.default`）のみをサポートしている。認証情報は
 `credentials.rs` の `graph` スコープに **テナント ID・クライアント ID・クライアントシークレット**
@@ -59,7 +59,22 @@ http://localhost:58914/graph-callback
 | `src-tauri/src/graph.rs` | 現行 `GraphClient`、ページネーション、`parse_site_url` |
 | `src-tauri/src/credentials.rs` | `box` の `auth_method` / `refresh_token`（DPAPI）/ `resolve_config` でのトークン解決パターン |
 
-## モジュール構成案
+## 実装結果（v0.0.6）
+
+本計画の Phase 1 と、Phase 2 のうち本人用 Outlook 予定表・OneDrive を実装した。
+委任資格情報は capability ごとに権限を選択し、データソースとの互換性を UI、保存、実行の各境界で検証する。
+
+| capability | 委任されたアクセス許可 | 実行時の取得先 |
+| :--- | :--- | :--- |
+| `sharepoint` | `Sites.Read.All`, `Team.ReadBasic.All` | SharePoint API、Teams 選択は `/me/joinedTeams` |
+| `calendar_self` | `Calendars.ReadBasic` | `/me/events` |
+| `onedrive_self` | `Files.Read` | `/me/drive` |
+
+全 capability の共通権限は `User.Read` と `offline_access`。app-only は従来の endpoint と UPN 指定を維持する。
+`auth_method` が無い既存資格情報は app-only、capability が無い既存 delegated 資格情報は
+`sharepoint` として扱い、DB schema migration は行わない。
+
+## モジュール構成
 
 ### 新規: `src-tauri/src/graph_oauth.rs`
 
@@ -68,7 +83,7 @@ Box の `box_oauth.rs` をベースに、Microsoft 固有の差分を実装す�
 - **PKCE**: `code_verifier` / `code_challenge`（S256）を生成し、authorize URL と token 交換に付与
 - **Authorize URL**: `https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize`
   - `response_type=code`
-  - `scope`: `https://graph.microsoft.com/Sites.Read.All Team.ReadBasic.All offline_access User.Read`（スペース区切り）
+  - `scope`: 選択した capability から組み立てる最小権限 + `offline_access User.Read`（スペース区切り）
   - `redirect_uri`, `client_id`, `state`, `code_challenge`, `code_challenge_method=S256`
 - **Token URL**: `https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token`
   - Authorization Code 交換: `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, `code_verifier`（**client_secret なし**）
@@ -86,6 +101,7 @@ Box の `box_oauth.rs` をベースに、Microsoft 固有の差分を実装す�
 | `client_id` | 公開 | 既存と同様 |
 | `client_secret` | 秘密（DPAPI） | `auth_method=app_only`（名称は実装時に確定）のときのみ |
 | `auth_method` | 公開 | `"delegated"` / `"app_only"`（既定は後方互換のため `"app_only"`） |
+| `capabilities` | 公開 | delegated で認可する機能。欠損時は後方互換のため `sharepoint` |
 | `refresh_token` | 秘密（DPAPI） | `auth_method=delegated` のとき必須 |
 
 - `protected_keys_of_scope("graph")` を `client_secret` に加え **`refresh_token`** を追加
@@ -148,9 +164,10 @@ sequenceDiagram
 
 ### Phase 2: その他 Graph 種別への委任 OAuth 拡張
 
-- Entra ID ユーザー / グループ、OneDrive、Outlook 予定表、Planner 等
-- 種別ごとに必要な **委任** Graph スコープを手順書・authorize scope に追加
-- 既存 app-only 手順書（`microsoft365.md`）との住み分けを維持
+- Outlook 予定表は `calendar_self` + `/me/events`、OneDrive は `onedrive_self` + `/me/drive` を実装済み
+- manifest に認証方式・必要 capability を宣言し、非対応資格情報は理由付きで選択不可にする
+- Rust 側でもソース保存、資格情報更新、preview、reload、browse の各境界で同じ互換性を強制する
+- Entra ID、Intune、ライセンス、Teams 一覧、Planner 等は app-only 専用を維持する
 
 ### Phase 3（任意）: マルチテナント公共アプリ
 
@@ -160,7 +177,7 @@ sequenceDiagram
 
 ## IPC / UI 変更（実装タスク一覧）
 
-本ドキュメント PR ではコード変更しない。実装時に着手する項目:
+v0.0.6 で反映した項目:
 
 | 領域 | タスク |
 | :--- | :--- |
@@ -168,6 +185,7 @@ sequenceDiagram
 | トークン管理 | 「Microsoft にログインして認可…」ボタン、取消ボタン、認可状態（✅ 認可済み） |
 | トークン管理 | Redirect URI ヘルプ文言（`http://localhost:58914/graph-callback`） |
 | 接続設定ピッカー | 委任プロファイル選択時も `cred:<id>` 参照で動作することを確認 |
+| 接続設定ピッカー | 非対応プロファイルを理由付き disabled 表示し、選択を拒否 |
 | 手順書リンク | `microsoft365.md`を方式比較メニューとし、`microsoft365-app-only.md`と`microsoft365-delegated.md`へ分離。credential managerは選択中の方式別ページを直接開く |
 | Tauri IPC | `graph_oauth_authorize` コマンド、キャンセルフラグ、アプリ終了時の OAuth 待機打ち切り |
 
@@ -191,7 +209,8 @@ Box の `box_oauth.rs` テスト構成を踏襲する。
 ### ライブ（`#[ignore]`）
 
 - 実テナント + テスト用 Entra アプリでの end-to-end 認可（CI では実行しない）
-- SharePoint サイトからのリスト取得 smoke test
+- SharePoint サイト、Teams 選択、本人の Outlook 予定表、本人の OneDrive の smoke test
+- v0.0.6 実装時のライブ検証はユーザーが後日実施するため、自動品質ゲートとは分けて記録する
 
 ### ライフサイクル（Box と同様）
 
@@ -218,7 +237,9 @@ Box の `box_oauth.rs` テスト構成を踏襲する。
 - Device Code Flow
 - EveryDB 組み込みマルチテナント `client_id` の配布（Phase 3）
 - クライアントシークレットを使う委任フロー（コンフィデンシャルクライアント）
-- SharePoint 以外の Graph 種別の委任 OAuth（Phase 2）
+- Planner / Teams タスク、Entra ID、Intune、ライセンス、Teams チーム一覧の委任 OAuth
+- Outlook / OneDrive で本人以外のユーザーを委任 OAuth から指定すること
+- `/me/joinedTeams` に共有チャネルのホスト Team を補完すること
 - `Sites.Selected` による最小権限構成（将来検討）
 - バックグラウンドでのサイレント SSO（ブラウザセッション再利用の最適化）
 
