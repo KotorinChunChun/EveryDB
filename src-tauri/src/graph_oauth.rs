@@ -19,9 +19,44 @@ const AUTHORIZE_TIMEOUT: Duration = Duration::from_secs(180);
 /// Entra アプリ登録・手順書と一致させる固定 Redirect URI。
 pub const REDIRECT_URI: &str = "http://localhost:58914/graph-callback";
 
-/// Graph 委任認可で要求するスコープ（SharePoint / Teams ピッカー）。
-pub const DELEGATED_SCOPES: &str =
-    "https://graph.microsoft.com/Sites.Read.All Team.ReadBasic.All offline_access User.Read";
+const GRAPH_SCOPE_PREFIX: &str = "https://graph.microsoft.com/";
+
+/// 選択された capability から最小の委任スコープ集合を構成する。
+/// authorize / refresh の両方が必ずこの関数を使い、保存済み capability と要求権限を一致させる。
+pub fn delegated_scopes(capabilities: &[String]) -> Result<String> {
+    if capabilities.is_empty() {
+        return Err(anyhow!(
+            "Microsoft 委任 OAuth の capability を1つ以上選択してください"
+        ));
+    }
+    let mut scopes = vec![format!("{GRAPH_SCOPE_PREFIX}User.Read")];
+    for capability in ["sharepoint", "calendar_self", "onedrive_self"] {
+        if !capabilities.iter().any(|selected| selected == capability) {
+            continue;
+        }
+        match capability {
+            "sharepoint" => {
+                scopes.push(format!("{GRAPH_SCOPE_PREFIX}Sites.Read.All"));
+                scopes.push(format!("{GRAPH_SCOPE_PREFIX}Team.ReadBasic.All"));
+            }
+            "calendar_self" => {
+                scopes.push(format!("{GRAPH_SCOPE_PREFIX}Calendars.ReadBasic"));
+            }
+            "onedrive_self" => scopes.push(format!("{GRAPH_SCOPE_PREFIX}Files.Read")),
+            _ => unreachable!(),
+        }
+    }
+    for capability in capabilities {
+        if !matches!(
+            capability.as_str(),
+            "sharepoint" | "calendar_self" | "onedrive_self"
+        ) {
+            return Err(anyhow!("未対応の Microsoft capability です: {capability}"));
+        }
+    }
+    scopes.push("offline_access".to_string());
+    Ok(scopes.join(" "))
+}
 
 /// フロントが「ユーザー取消」と失敗を区別するための固定メッセージ。
 pub const CANCELLED_MESSAGE: &str = "Microsoft の認可をキャンセルしました";
@@ -117,13 +152,14 @@ fn authorize_url(
     redirect_uri: &str,
     state: &str,
     code_challenge: &str,
+    scopes: &str,
 ) -> String {
     format!(
         "https://login.microsoftonline.com/{}/oauth2/v2.0/authorize?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&code_challenge={}&code_challenge_method=S256",
         urlencode(tenant_id),
         urlencode(client_id),
         urlencode(redirect_uri),
-        urlencode(DELEGATED_SCOPES),
+        urlencode(scopes),
         urlencode(state),
         urlencode(code_challenge),
     )
@@ -255,6 +291,7 @@ pub fn authorize_interactive(
     app: &tauri::AppHandle,
     tenant_id: &str,
     client_id: &str,
+    capabilities: &[String],
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<(String, String)> {
     use tauri_plugin_opener::OpenerExt;
@@ -262,7 +299,15 @@ pub fn authorize_interactive(
     let state = random_state()?;
     let verifier = pkce_verifier()?;
     let challenge = pkce_challenge_s256(&verifier);
-    let url = authorize_url(tenant_id, client_id, REDIRECT_URI, &state, &challenge);
+    let scopes = delegated_scopes(capabilities)?;
+    let url = authorize_url(
+        tenant_id,
+        client_id,
+        REDIRECT_URI,
+        &state,
+        &challenge,
+        &scopes,
+    );
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|e| anyhow!("ブラウザを開けませんでした: {e}"))?;
@@ -275,20 +320,26 @@ pub fn authorize_interactive(
             ("client_id", client_id),
             ("redirect_uri", REDIRECT_URI),
             ("code_verifier", &verifier),
-            ("scope", DELEGATED_SCOPES),
+            ("scope", &scopes),
         ],
     )
 }
 
 /// refresh_token から access_token を再取得する。新しい refresh_token が返った場合は呼び出し側で保存すること。
-pub fn refresh(tenant_id: &str, client_id: &str, refresh_token: &str) -> Result<(String, String)> {
+pub fn refresh(
+    tenant_id: &str,
+    client_id: &str,
+    refresh_token: &str,
+    capabilities: &[String],
+) -> Result<(String, String)> {
+    let scopes = delegated_scopes(capabilities)?;
     token_request(
         tenant_id,
         &[
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token),
             ("client_id", client_id),
-            ("scope", DELEGATED_SCOPES),
+            ("scope", &scopes),
         ],
     )
 }
@@ -319,12 +370,14 @@ mod tests {
 
     #[test]
     fn authorize_url_includes_pkce_and_scopes() {
+        let scopes = delegated_scopes(&["sharepoint".to_string()]).unwrap();
         let url = authorize_url(
             "tenant-1",
             "cid 1",
             "http://localhost:58914/graph-callback",
             "st ate",
             "challenge+",
+            &scopes,
         );
         assert!(
             url.starts_with("https://login.microsoftonline.com/tenant-1/oauth2/v2.0/authorize?")
@@ -342,6 +395,52 @@ mod tests {
         );
         assert!(url.contains("Team.ReadBasic.All"));
         assert!(url.contains("offline_access") || url.contains("offline_access"));
+    }
+
+    #[test]
+    fn delegated_scopes_are_minimal_and_capability_specific() {
+        let sharepoint = delegated_scopes(&["sharepoint".to_string()]).unwrap();
+        assert!(sharepoint.contains("User.Read"));
+        assert!(sharepoint.contains("offline_access"));
+        assert!(sharepoint.contains("Sites.Read.All"));
+        assert!(sharepoint.contains("Team.ReadBasic.All"));
+        assert!(!sharepoint.contains("Calendars.ReadBasic"));
+        assert!(!sharepoint.contains("Files.Read"));
+
+        let calendar = delegated_scopes(&["calendar_self".to_string()]).unwrap();
+        assert!(calendar.contains("Calendars.ReadBasic"));
+        assert!(!calendar.contains("Sites.Read.All"));
+        assert!(!calendar.contains("Files.Read"));
+
+        let onedrive = delegated_scopes(&["onedrive_self".to_string()]).unwrap();
+        assert!(onedrive.contains("Files.Read"));
+        assert!(!onedrive.contains("Sites.Read.All"));
+        assert!(!onedrive.contains("Calendars.ReadBasic"));
+    }
+
+    #[test]
+    fn delegated_scopes_support_combinations_without_duplicates() {
+        let scopes = delegated_scopes(&[
+            "onedrive_self".to_string(),
+            "sharepoint".to_string(),
+            "sharepoint".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(scopes.matches("Sites.Read.All").count(), 1);
+        assert!(scopes.contains("Files.Read"));
+        assert!(!scopes.contains("Calendars.ReadBasic"));
+    }
+
+    #[test]
+    fn delegated_scopes_reject_empty_and_unknown_capabilities() {
+        assert!(delegated_scopes(&[])
+            .unwrap_err()
+            .to_string()
+            .contains("1つ以上"));
+        assert!(delegated_scopes(&["unknown".to_string()])
+            .unwrap_err()
+            .to_string()
+            .contains("未対応"));
     }
 
     #[test]

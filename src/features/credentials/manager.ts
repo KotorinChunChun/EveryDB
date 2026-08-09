@@ -3,7 +3,10 @@ import { invoke } from "../../app/ipc";
 import { showToast } from "../../app/notifications";
 import { writeClipboardText } from "../../shared/clipboard";
 import type { CredentialScope, CredentialSummary } from "../../shared/types";
-import { representativeTypeForCredentialScope as representativeTypeForScope } from "../../source-types/registry";
+import {
+  representativeTypeForCredentialScope as representativeTypeForScope,
+  type GraphCapability,
+} from "../../source-types/registry";
 import { ENTRA_APPS_URL, NOTION_INTEGRATIONS_URL } from "../../source-types/forms";
 import { SECRET_PLACEHOLDER } from "../source-editor/constants";
 import { makeApiKeyButton, makeLinkButton } from "../source-editor/ui-buttons";
@@ -17,6 +20,25 @@ export interface CredentialManagerDeps {
 
 export function graphGuideDocument(authMethod: "app_only" | "delegated"): string {
   return authMethod === "delegated" ? "microsoft365-delegated" : "microsoft365-app-only";
+}
+
+export const GRAPH_CAPABILITY_OPTIONS: readonly {
+  value: GraphCapability;
+  label: string;
+  scopes: string;
+}[] = [
+  { value: "sharepoint", label: "SharePoint サイト・リスト / Teams選択", scopes: "Sites.Read.All, Team.ReadBasic.All" },
+  { value: "calendar_self", label: "本人の Outlook 予定表", scopes: "Calendars.ReadBasic" },
+  { value: "onedrive_self", label: "本人の OneDrive", scopes: "Files.Read" },
+];
+
+export function graphCapabilitiesFromFields(fields: Record<string, unknown>): GraphCapability[] {
+  const values = Array.isArray(fields.capabilities) ? fields.capabilities : null;
+  if (!values && fields.auth_method === "delegated") return ["sharepoint"];
+  const supported = (values ?? []).filter((value): value is GraphCapability => (
+    value === "sharepoint" || value === "calendar_self" || value === "onedrive_self"
+  ));
+  return supported.length > 0 ? supported : ["sharepoint"];
 }
 
 export interface CredentialManagerController {
@@ -43,6 +65,7 @@ interface CredentialFieldDef {
     provider: "box" | "graph";
   };
   selectOptions?: { value: string; label: string }[];
+  capabilityOptions?: typeof GRAPH_CAPABILITY_OPTIONS;
 }
 
 export function mountCredentialManager(deps: CredentialManagerDeps): CredentialManagerController {
@@ -53,6 +76,7 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
   let cmFormBaseline: Record<string, string> = {};
   let cmBoxAuthMethod: "oauth" | "ccg" = "oauth";
   let cmGraphAuthMethod: "app_only" | "delegated" = "app_only";
+  let cmGraphCapabilities: GraphCapability[] = ["sharepoint"];
   let cmHiddenFieldStash: Record<string, string> = {};
 
   function credentialScopeFieldDefs(scope: CredentialScope): CredentialFieldDef[] {
@@ -79,6 +103,12 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
         if (cmGraphAuthMethod === "delegated") {
           return [
             ...common,
+            {
+              key: "capabilities",
+              label: "利用する機能（必要な権限だけ選択）",
+              secret: false,
+              capabilityOptions: GRAPH_CAPABILITY_OPTIONS,
+            },
             {
               key: "refresh_token", label: "Microsoft アカウントの認可", secret: true,
               authorize: {
@@ -166,6 +196,9 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
           }
           if (scope === "graph") {
             cmGraphAuthMethod = select.value === "delegated" ? "delegated" : "app_only";
+            if (cmGraphAuthMethod === "delegated" && cmGraphCapabilities.length === 0) {
+              cmGraphCapabilities = ["sharepoint"];
+            }
           } else {
             cmBoxAuthMethod = select.value === "ccg" ? "ccg" : "oauth";
           }
@@ -181,6 +214,52 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
         };
         row.appendChild(select);
         label.appendChild(row);
+        container.appendChild(label);
+        continue;
+      }
+
+      if (f.capabilityOptions) {
+        const hidden = document.createElement("input");
+        hidden.type = "hidden";
+        hidden.id = `cmf-${f.key}`;
+        const options = document.createElement("div");
+        options.className = "credential-capability-options";
+        const syncValue = () => {
+          hidden.value = JSON.stringify(cmGraphCapabilities);
+        };
+        for (const option of f.capabilityOptions) {
+          const optionLabel = document.createElement("label");
+          optionLabel.className = "check credential-capability-option";
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.value = option.value;
+          checkbox.checked = cmGraphCapabilities.includes(option.value);
+          checkbox.onchange = () => {
+            cmGraphCapabilities = f.capabilityOptions!
+              .filter((candidate) => (
+                options.querySelector<HTMLInputElement>(`input[value="${candidate.value}"]`)?.checked
+              ))
+              .map((candidate) => candidate.value);
+            syncValue();
+            cmHiddenFieldStash.refresh_token = "";
+            const refreshToken = document.getElementById("cmf-refresh_token") as HTMLInputElement | null;
+            if (refreshToken) {
+              refreshToken.value = "";
+              refreshToken.dispatchEvent(new Event("input"));
+            }
+            updateCmSaveButtonState();
+          };
+          const text = document.createElement("span");
+          text.textContent = `${option.label}（${option.scopes}）`;
+          optionLabel.append(checkbox, text);
+          options.appendChild(optionLabel);
+        }
+        syncValue();
+        const hint = document.createElement("small");
+        hint.className = "roles-hint";
+        hint.textContent = "選択を変更すると再認可が必要です。共通で User.Read / offline_access を要求します。";
+        row.append(hidden, options);
+        label.append(row, hint);
         container.appendChild(label);
         continue;
       }
@@ -250,6 +329,7 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
               ? await invoke("graph_oauth_authorize", {
                 tenantId: usedFields["tenant_id"],
                 clientId: usedFields["client_id"],
+                capabilities: [...cmGraphCapabilities],
               })
               : await invoke("box_oauth_authorize", {
                 clientId: usedFields["client_id"],
@@ -340,7 +420,10 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
     $<HTMLInputElement>("cm-label").value = "";
     const scope = $<HTMLSelectElement>("cm-scope").value as CredentialScope;
     if (scope === "box") cmBoxAuthMethod = "oauth";
-    if (scope === "graph") cmGraphAuthMethod = "app_only";
+    if (scope === "graph") {
+      cmGraphAuthMethod = "app_only";
+      cmGraphCapabilities = ["sharepoint"];
+    }
     renderCredentialFormFields(scope);
     updateCredentialListSelection();
     captureCmFormBaseline();
@@ -357,10 +440,14 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
       fields = res.fields;
     } catch { /* noop */ }
     if (scope === "box") cmBoxAuthMethod = fields["auth_method"] === "ccg" ? "ccg" : "oauth";
-    if (scope === "graph") cmGraphAuthMethod = fields["auth_method"] === "delegated" ? "delegated" : "app_only";
+    if (scope === "graph") {
+      cmGraphAuthMethod = fields["auth_method"] === "delegated" ? "delegated" : "app_only";
+      cmGraphCapabilities = graphCapabilitiesFromFields(fields);
+    }
     renderCredentialFormFields(scope);
     updateCredentialListSelection();
     for (const [k, v] of Object.entries(fields)) {
+      if (scope === "graph" && k === "capabilities") continue;
       const el = document.getElementById(`cmf-${k}`) as HTMLInputElement | null;
       if (el) el.value = String(v);
     }
@@ -521,7 +608,11 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
       const el = document.getElementById(`cmf-${f.key}`) as HTMLInputElement | null;
       if (el) fields[f.key] = el.value.trim();
     }
-    if (scope === "graph") fields["auth_method"] = cmGraphAuthMethod;
+    if (scope === "graph") {
+      fields["auth_method"] = cmGraphAuthMethod;
+      if (cmGraphAuthMethod === "delegated") fields["capabilities"] = [...cmGraphCapabilities];
+      else delete fields["capabilities"];
+    }
     if (scope === "box") fields["auth_method"] = cmBoxAuthMethod;
     if (cmEditingId === null) {
       const missing = defs.some((f) => {
@@ -533,6 +624,16 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
         errEl.textContent = defs.some((f) => f.authorize && !String(fields[f.key] ?? "").trim())
           ? "先にログインして認可を完了してください"
           : "すべての項目を入力してください";
+        return;
+      }
+    }
+    if (scope === "graph" && cmGraphAuthMethod === "delegated") {
+      if (cmGraphCapabilities.length === 0) {
+        errEl.textContent = "利用する機能を1つ以上選択してください";
+        return;
+      }
+      if (!String(fields["refresh_token"] ?? "").trim()) {
+        errEl.textContent = "capability に合わせて Microsoft の認可を実行してください";
         return;
       }
     }

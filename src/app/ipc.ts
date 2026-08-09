@@ -133,7 +133,7 @@ export interface IpcContract {
   };
   box_oauth_cancel: { args: undefined; result: void };
   graph_oauth_authorize: {
-    args: { tenantId: string; clientId: string };
+    args: { tenantId: string; clientId: string; capabilities: string[] };
     result: OAuthTokenResult;
   };
   graph_oauth_cancel: { args: undefined; result: void };

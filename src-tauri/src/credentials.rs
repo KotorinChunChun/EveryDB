@@ -634,8 +634,9 @@ fn graph_access_token_for_credential(
                 "Microsoft の認可が完了していません。トークン管理画面で「Microsoft にログインして認可」を行ってください"
             )
         })?;
+    let profile = graph_profile(&v)?;
     let (access_token, new_refresh_token) =
-        crate::graph_oauth::refresh(tenant_id, client_id, refresh_token)?;
+        crate::graph_oauth::refresh(tenant_id, client_id, refresh_token, &profile.capabilities)?;
     if !new_refresh_token.is_empty() && new_refresh_token != refresh_token {
         let mut updated = v.clone();
         if let Some(obj) = updated.as_object_mut() {
