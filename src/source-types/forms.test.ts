@@ -47,4 +47,13 @@ describe("source type forms", () => {
     expect(definition.fields[0].credentialScope).toBe("microsoft_account");
     expect(definition.fields.some((field) => field.key === "tenant_id" || field.key === "user")).toBe(false);
   });
+
+  it("labels browser profile paths consistently", () => {
+    for (const type of ["browser_history", "browser_bookmarks", "browser_downloads"]) {
+      const pathField = TYPE_DEFS.find((item) => item.value === type)!.fields
+        .find((field) => field.key === "path");
+      expect(pathField?.label).toBe("プロファイル");
+      expect(pathField?.browserProfile).toBeDefined();
+    }
+  });
 });

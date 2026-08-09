@@ -165,15 +165,15 @@ export const TYPE_DEFS: TypeDef[] = [
   { value: "graph_planner", label: "Teams タスク & Planner", fields: [...GRAPH_AUTH_FIELDS, { key: "group_id", label: "対象チーム(グループ)のID", kind: "text", placeholder: "Entra管理センター等で確認したグループID" }] },
   { value: "browser_history", label: "ブラウザ: 閲覧履歴", fields: [
     { key: "browser", label: "ブラウザ", kind: "select", options: BROWSER_OPTIONS },
-    { key: "path", label: "History / places.sqlite のパス", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "history" },
+    { key: "path", label: "プロファイル", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "history" },
   ] },
   { value: "browser_bookmarks", label: "ブラウザ: ブックマーク", fields: [
     { key: "browser", label: "ブラウザ", kind: "select", options: BROWSER_OPTIONS },
-    { key: "path", label: "Bookmarks / places.sqlite のパス", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "bookmarks" },
+    { key: "path", label: "プロファイル", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "bookmarks" },
   ] },
   { value: "browser_downloads", label: "ブラウザ: ダウンロード履歴", fields: [
     { key: "browser", label: "ブラウザ", kind: "select", options: BROWSER_OPTIONS },
-    { key: "path", label: "History / places.sqlite のパス（Chromium系は履歴と同じファイル）", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "history" },
+    { key: "path", label: "プロファイル", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "history" },
   ] },
   { value: "google_sheets", label: "Google スプレッドシート", fields: [
     { key: "key_path", label: "サービスアカウント鍵(JSON)のパス", kind: "text", placeholder: "C:\\path\\to\\service-account.json", browse: "file", dialogFilters: JSON_FILTERS, helpUrl: "https://console.cloud.google.com/apis/credentials" },

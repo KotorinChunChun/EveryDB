@@ -56,6 +56,8 @@
   overflow-x: hidden;
   overflow-y: auto;
 }
+/* author style の display:flex が UA 既定の dialog:not([open]) を上書きしないよう、閉状態を明示する。 */
+#add-dialog:not([open]) { display: none; }
 #add-dialog #add-form { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 #add-dialog .roles-fieldset { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 #add-dialog .roles-table-wrap { max-height: none; flex: 1; min-height: 80px; }
