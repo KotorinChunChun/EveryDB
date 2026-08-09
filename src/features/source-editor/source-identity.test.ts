@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { TYPE_DEFS } from "../../source-types/forms";
 import { duplicateConfirmMessage } from "./source-identity";
 import { CONNECTION_KIND_OPTIONS, parentBrowseKind } from "./connection-kinds";
 
@@ -10,9 +11,21 @@ describe("connection-kinds", () => {
     expect(parentBrowseKind("csv")).toBeNull();
   });
 
-  it("includes standalone table option", () => {
-    const standalone = CONNECTION_KIND_OPTIONS.find((k) => k.standalone);
-    expect(standalone?.label).toContain("単体テーブル");
+  it("lists every addable table type directly", () => {
+    expect(CONNECTION_KIND_OPTIONS.map((option) => option.repType).sort())
+      .toEqual(TYPE_DEFS.map((definition) => definition.value).sort());
+    expect(CONNECTION_KIND_OPTIONS.find((option) => option.repType === "csv")).toMatchObject({
+      label: "CSV ファイル",
+      connectionAdd: false,
+    });
+    expect(CONNECTION_KIND_OPTIONS.find((option) => option.repType === "graph_onedrive")).toMatchObject({
+      label: "OneDrive（組織）",
+      openExistingGraphParent: false,
+    });
+    expect(CONNECTION_KIND_OPTIONS.find((option) => option.repType === "microsoft_account_onedrive")).toMatchObject({
+      label: "OneDrive（個人）",
+      connectionAdd: false,
+    });
   });
 });
 

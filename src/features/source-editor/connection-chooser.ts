@@ -1,6 +1,7 @@
 import { $ } from "../../app/dom";
 import { appState } from "../../app/state";
-import { CONNECTION_KIND_OPTIONS } from "./connection-kinds";
+import { CONNECTION_KIND_GROUPS } from "./connection-kinds";
+import type { ConnectionKindOption } from "./connection-kinds";
 import type { SourceEditorDialogController } from "./dialog";
 
 export interface ConnectionChooserActions {
@@ -15,16 +16,23 @@ export function mountConnectionChooser(actions: ConnectionChooserActions): void 
   const addBtn = $<HTMLButtonElement>("add");
 
   listEl.innerHTML = "";
-  for (const kind of CONNECTION_KIND_OPTIONS) {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "picker-item connection-kind-item";
-    row.textContent = kind.label;
-    row.onclick = () => {
-      dialog.close();
-      void handleKindSelect(kind, actions);
-    };
-    listEl.appendChild(row);
+  for (const group of CONNECTION_KIND_GROUPS) {
+    const heading = document.createElement("div");
+    heading.className = "connection-kind-group";
+    heading.textContent = group.label;
+    listEl.appendChild(heading);
+
+    for (const kind of group.options) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "picker-item connection-kind-item";
+      row.textContent = kind.label;
+      row.onclick = () => {
+        dialog.close();
+        void handleKindSelect(kind, actions);
+      };
+      listEl.appendChild(row);
+    }
   }
 
   cancelBtn.onclick = () => dialog.close();
@@ -34,10 +42,10 @@ export function mountConnectionChooser(actions: ConnectionChooserActions): void 
 }
 
 async function handleKindSelect(
-  kind: typeof CONNECTION_KIND_OPTIONS[number],
+  kind: ConnectionKindOption,
   actions: ConnectionChooserActions,
 ): Promise<void> {
-  if (kind.id === "graph365") {
+  if (kind.openExistingGraphParent) {
     const existing = appState.sources.some((s) => s.parent === "Microsoft 365");
     if (existing) {
       await actions.openParentSettingsDialog("Microsoft 365");
@@ -45,14 +53,9 @@ async function handleKindSelect(
     }
   }
 
-  if (kind.standalone) {
-    actions.openAddDialog({ title: "テーブル追加", connectionAdd: false });
-    return;
-  }
-
   actions.openAddDialog({
     type: kind.repType,
-    title: "接続先を追加",
-    connectionAdd: true,
+    title: kind.connectionAdd ? "接続先を追加" : "テーブル追加",
+    connectionAdd: kind.connectionAdd,
   });
 }

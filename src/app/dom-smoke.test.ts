@@ -81,13 +81,68 @@ describe("application DOM interaction smoke", () => {
     const chooser = document.getElementById("connection-chooser") as HTMLDialogElement;
     expect(chooser.open).toBe(true);
     const notion = [...chooser.querySelectorAll<HTMLButtonElement>(".connection-kind-item")]
-      .find((button) => button.textContent === "Notion");
+      .find((button) => button.textContent === "Notion データベース");
     expect(notion).toBeDefined();
     notion!.click();
 
     expect(chooser.open).toBe(false);
     expect(openAddDialog).toHaveBeenCalledWith({
       type: "notion",
+      title: "接続先を追加",
+      connectionAdd: true,
+    });
+  });
+
+  it("offers CSV and both OneDrive types as direct choices", () => {
+    const openAddDialog = vi.fn();
+    const openParentSettingsDialog = vi.fn(async () => {});
+
+    mountConnectionChooser({ openAddDialog, openParentSettingsDialog });
+    const chooser = document.getElementById("connection-chooser") as HTMLDialogElement;
+    const choices = [...chooser.querySelectorAll<HTMLButtonElement>(".connection-kind-item")];
+
+    expect(choices.some((button) => button.textContent === "CSV ファイル")).toBe(true);
+    expect(choices.some((button) => button.textContent === "OneDrive（組織）")).toBe(true);
+    expect(choices.some((button) => button.textContent === "OneDrive（個人）")).toBe(true);
+
+    choices.find((button) => button.textContent === "CSV ファイル")!.click();
+    expect(openAddDialog).toHaveBeenLastCalledWith({
+      type: "csv",
+      title: "テーブル追加",
+      connectionAdd: false,
+    });
+
+    choices.find((button) => button.textContent === "OneDrive（個人）")!.click();
+    expect(openAddDialog).toHaveBeenLastCalledWith({
+      type: "microsoft_account_onedrive",
+      title: "テーブル追加",
+      connectionAdd: false,
+    });
+  });
+
+  it("opens the OneDrive form even when a Microsoft 365 connection already exists", () => {
+    appState.sources = [{
+      id: 1,
+      type_: "graph_entra_users",
+      name: "ユーザー",
+      parent: "Microsoft 365",
+      refresh_interval: 60,
+      status: null,
+      last_success_at: null,
+      last_error: null,
+      record_count: 0,
+    }];
+    const openAddDialog = vi.fn();
+    const openParentSettingsDialog = vi.fn(async () => {});
+
+    mountConnectionChooser({ openAddDialog, openParentSettingsDialog });
+    const oneDrive = [...document.querySelectorAll<HTMLButtonElement>(".connection-kind-item")]
+      .find((button) => button.textContent === "OneDrive（組織）");
+    oneDrive!.click();
+
+    expect(openParentSettingsDialog).not.toHaveBeenCalled();
+    expect(openAddDialog).toHaveBeenCalledWith({
+      type: "graph_onedrive",
       title: "接続先を追加",
       connectionAdd: true,
     });

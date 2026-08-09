@@ -190,6 +190,12 @@
   display: block; width: 100%; text-align: left;
   background: none; border: none; color: inherit; font: inherit;
 }
+.connection-kind-group {
+  position: sticky; top: 0; z-index: 1;
+  padding: 6px 10px; border-bottom: 1px solid var(--border);
+  background: var(--panel-2); color: var(--muted);
+  font-size: 11px; font-weight: 600;
+}
 
 /* 保存済みトークン（要件: トークン管理画面）。「プロファイル」欄は新規作成ボタンも既存の
  * プロファイルも同じ幅・同じ見た目の「行」として並べ、クリックで選択（着色）する1つのリストにする。 */
