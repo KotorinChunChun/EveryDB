@@ -95,6 +95,11 @@ pub fn browse_notion_databases(token: &str) -> ServiceResult<Vec<NotionDbEntry>>
     browse::notion_list_databases(token)
         .map_err(|e| ServiceError::external("Notion データベース一覧の取得に失敗しました", e))
 }
+
+pub fn preview_csv(config_json: &str) -> ServiceResult<connectors::CsvPreview> {
+    connectors::preview_csv(config_json)
+        .map_err(|e| ServiceError::external("CSVプレビューの作成に失敗しました", e))
+}
 pub fn browse_notion_databases_for_credential(
     state: &AppState,
     credential_id: i64,

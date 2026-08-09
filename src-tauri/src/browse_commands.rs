@@ -5,6 +5,11 @@ use crate::browse;
 use crate::browse_service;
 
 #[tauri::command]
+pub fn preview_csv(config_json: String) -> Result<crate::connectors::CsvPreview, String> {
+    browse_service::preview_csv(&config_json).map_err(Into::into)
+}
+
+#[tauri::command]
 pub fn browse_notion_databases(
     state: State<'_, AppState>,
     credential_id: i64,

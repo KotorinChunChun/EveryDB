@@ -18,7 +18,7 @@ pub use factory::{build_connector, is_supported_source_type, Connector, SUPPORTE
 pub use limits::{DB_FETCH_LIMIT, MAX_FETCH_RECORDS};
 
 pub(crate) use graph_data::{json_scalar_to_string, urlencoding_light};
-pub(crate) use local::{cell_to_string, col_to_letters};
+pub(crate) use local::{cell_to_string, col_to_letters, preview_csv, CsvPreview};
 
 #[cfg(test)]
 use cloud::{

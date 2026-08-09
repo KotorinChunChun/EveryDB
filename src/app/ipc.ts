@@ -85,6 +85,21 @@ export interface ExcelGridPreview {
   rows: string[][];
 }
 
+export interface CsvPreviewRow {
+  row_number: number;
+  values: string[];
+}
+
+export interface CsvPreview {
+  columns: string[];
+  top_rows: CsvPreviewRow[];
+  bottom_rows: CsvPreviewRow[];
+  total_rows: number;
+  encoding: string;
+  line_ending: string;
+  delimiter: string;
+}
+
 export interface BrowserProfileItem {
   label: string;
   path: string;
@@ -156,6 +171,7 @@ export interface IpcContract {
     args: { id: number; overridesJson: string };
     result: NotionDatabaseItem[];
   };
+  preview_csv: { args: { configJson: string }; result: CsvPreview };
   browse_airtable_bases: { args: { credentialId: number }; result: AirtableBaseItem[] };
   browse_airtable_bases_for_source: {
     args: { id: number; overridesJson: string };
