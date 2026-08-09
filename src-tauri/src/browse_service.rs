@@ -131,6 +131,41 @@ pub fn browse_notion_databases_for_source(
     browse_notion_databases(&token)
 }
 
+pub fn browse_notion_database_for_credential(
+    state: &AppState,
+    credential_id: i64,
+    database_id: &str,
+) -> ServiceResult<NotionDbEntry> {
+    let cfg = credential_fields(state, credential_id, "notion")?;
+    let token = cfg_str(&cfg, "token");
+    if token.is_empty() {
+        return Err(ServiceError::validation(
+            "インテグレーショントークンが設定されていません",
+        ));
+    }
+    browse::notion_get_database(&token, database_id)
+        .map_err(|e| ServiceError::external("Notion データベース名の取得に失敗しました", e))
+}
+
+pub fn browse_notion_database_for_source(
+    state: &AppState,
+    id: i64,
+    overrides_json: &str,
+    database_id: &str,
+) -> ServiceResult<NotionDbEntry> {
+    let conn = lock_db(state)?;
+    let cfg = effective_config(&conn, id, overrides_json)?;
+    drop(conn);
+    let token = cfg_str(&cfg, "token");
+    if token.is_empty() {
+        return Err(ServiceError::validation(
+            "インテグレーショントークンが設定されていません",
+        ));
+    }
+    browse::notion_get_database(&token, database_id)
+        .map_err(|e| ServiceError::external("Notion データベース名の取得に失敗しました", e))
+}
+
 pub fn browse_airtable_bases(token: &str) -> ServiceResult<Vec<AirtableBaseEntry>> {
     browse::airtable_list_bases(token)
         .map_err(|e| ServiceError::external("Airtable Base 一覧の取得に失敗しました", e))

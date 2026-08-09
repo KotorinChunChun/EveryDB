@@ -14,7 +14,7 @@ import type { FieldDef, TypeDef } from "../../source-types/forms";
 import type { ParentKind } from "../../source-types/registry";
 import { SECRET_PLACEHOLDER } from "./constants";
 import { isConfigIncomplete } from "./config-rules";
-import { deriveDefaultName } from "./default-name";
+import { deriveDefaultName, shouldUpdateNotionDisplayName } from "./default-name";
 import { parentBrowseKind } from "./connection-kinds";
 import { duplicateConfirmMessage, findDuplicateSource } from "./source-identity";
 import { clearLinkedCredentials, setLinkedCredentials } from "./linked-credentials";
@@ -104,6 +104,8 @@ export interface SourceEditorDialogController {
   autoFillDefaultName: (force?: boolean) => void;
   applySharePointSiteSelection: (siteUrl: string, displayName: string) => Promise<void>;
   resolveAirtableCaptions: (baseId?: string, tableId?: string, viewId?: string) => Promise<void>;
+  applyNotionSelection: (databaseId: string, databaseName: string) => void;
+  resolveNotionCaption: (databaseId: string) => Promise<void>;
 }
 
 export function mountSourceEditorDialog(
@@ -249,6 +251,48 @@ export function mountSourceEditorDialog(
     }
   }
 
+  function applyNotionSelection(databaseId: string, databaseName: string) {
+    const idEl = document.getElementById("fd-database_id") as HTMLInputElement | null;
+    const nameEl = document.getElementById("fd-database_name") as HTMLInputElement | null;
+    if (idEl) idEl.value = databaseId;
+    if (nameEl) nameEl.value = databaseName;
+    autoFillDefaultName();
+    maybeFetchAndRenderFields();
+  }
+
+  async function resolveNotionCaption(databaseId: string) {
+    databaseId = databaseId.trim();
+    if (!databaseId) return;
+    const nameEl = document.getElementById("fd-database_name") as HTMLInputElement | null;
+    const previousName = nameEl?.value.trim() ?? "";
+    const credentialId = Number((document.getElementById("fd-token") as HTMLInputElement | null)?.dataset.credRef);
+    if (dialogMode === "add" && (!Number.isSafeInteger(credentialId) || credentialId <= 0)) return;
+    try {
+      const result = dialogMode === "edit" && editingId !== null
+        ? await invoke("browse_notion_database_for_source", {
+            id: editingId,
+            overridesJson: JSON.stringify(buildConfigFromFields().config),
+            databaseId,
+          })
+        : await invoke("browse_notion_database", {
+            credentialId,
+            databaseId,
+          });
+      if (!result.title) return;
+      if (nameEl) nameEl.value = result.title;
+      if (dialogMode === "add") {
+        autoFillDefaultName();
+      } else {
+        const currentDisplayName = elements.nameInput.value.trim();
+        if (shouldUpdateNotionDisplayName(currentDisplayName, previousName, databaseId)) {
+          elements.nameInput.value = result.title;
+        }
+      }
+    } catch {
+      // API・通信失敗時は database_name の最後の成功値と利用者の表示名を維持する。
+    }
+  }
+
   /** 各種データソース URL が入力・ペーストされた際、設定 ID フィールドを自動入力・展開する。 */
   function tryApplyUrlOrFileDropHelper(inputValue: string) {
     const type = elements.typeSel.value;
@@ -290,6 +334,7 @@ export function mountSourceEditorDialog(
         if (el) el.value = info.databaseId;
         autoFillDefaultName();
         maybeFetchAndRenderFields();
+        void resolveNotionCaption(info.databaseId);
         return;
       }
     }
@@ -559,6 +604,10 @@ export function mountSourceEditorDialog(
             const tableId = (document.getElementById("fd-table") as HTMLInputElement | null)?.value.trim();
             const viewId = (document.getElementById("fd-view") as HTMLInputElement | null)?.value.trim();
             if (baseId || tableId) void resolveAirtableCaptions(baseId || undefined, tableId || undefined, viewId || undefined);
+          }
+          if (def.value === "notion" && (f.key === "database_id" || f.key === "token")) {
+            const databaseId = (document.getElementById("fd-database_id") as HTMLInputElement | null)?.value.trim();
+            if (databaseId) void resolveNotionCaption(databaseId);
           }
         });
         if (isCredOwner || f.browse || f.helpUrl || f.linkUrl || f.browserProfile || f.browseSheet || f.browseTable || f.browseCell || f.browseColumn || f.browseAirtableBase || f.browseAirtableTable || f.browseAirtableView) {
@@ -837,6 +886,11 @@ export function mountSourceEditorDialog(
     renderTypeFields(prefill, hiddenSharedKeys);
     elements.dialog.showModal();
 
+    if (detail.type_ === "notion") {
+      const databaseId = String(prefill.database_id ?? "").trim();
+      if (databaseId) void resolveNotionCaption(databaseId);
+    }
+
     // 編集ダイアログでは開いた直後にフィールド一覧を自動取得して表示する。
     // 既存の「再読込」ボタンは、接続情報を変更した後などに手動で取り直す用途になる。
     await fetchAndRenderFields();
@@ -968,6 +1022,8 @@ export function mountSourceEditorDialog(
     autoFillDefaultName,
     applySharePointSiteSelection,
     resolveAirtableCaptions,
+    applyNotionSelection,
+    resolveNotionCaption,
   };
 }
 

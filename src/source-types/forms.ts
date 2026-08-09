@@ -147,6 +147,7 @@ export const TYPE_DEFS: TypeDef[] = [
     { key: "token", label: "インテグレーショントークン", kind: "password", placeholder: "ntn_...", helpUrl: NOTION_INTEGRATIONS_URL, credentialScope: "notion" },
     { key: "url_helper", label: "URL から自動設定", kind: "text", optional: true },
     { key: "database_id", label: "データベースID", kind: "text", placeholder: "URL 内の 32 桁 ID" },
+    { key: "database_name", label: "データベース名 (自動・最終取得値)", kind: "text", placeholder: "IDから自動取得します", optional: true },
   ], browse: "notion" },
   { value: "graph_entra_users", label: "EntraID ユーザー一覧", fields: [...GRAPH_AUTH_FIELDS] },
   { value: "graph_entra_groups", label: "EntraID グループ一覧", fields: [...GRAPH_AUTH_FIELDS] },

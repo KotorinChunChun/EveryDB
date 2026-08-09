@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { basenameOf, deriveDefaultName } from "./default-name";
+import { basenameOf, deriveDefaultName, shouldUpdateNotionDisplayName } from "./default-name";
 
 describe("source editor default name", () => {
   it("normalizes quoted Windows paths and derives file-based names", () => {
@@ -14,5 +14,12 @@ describe("source editor default name", () => {
     expect(deriveDefaultName("graph_sharepoint_library", {})).toBe("ドキュメントライブラリ");
     expect(deriveDefaultName("graph_sharepoint_list", { site_display_name: "営業サイト" })).toBe("営業サイト");
     expect(deriveDefaultName("graph_sharepoint_list", { site_display_name: "営業サイト", list_name: "案件" })).toBe("案件");
+    expect(deriveDefaultName("notion", { database_id: "0123456789abcdef", database_name: "案件管理" })).toBe("案件管理");
+  });
+
+  it("updates only automatic Notion names and preserves a user label", () => {
+    expect(shouldUpdateNotionDisplayName("旧DB名", "旧DB名", "0123456789abcdef")).toBe(true);
+    expect(shouldUpdateNotionDisplayName("Notion DB (01234567...)", "", "0123456789abcdef")).toBe(true);
+    expect(shouldUpdateNotionDisplayName("経理用の独自名", "旧DB名", "0123456789abcdef")).toBe(false);
   });
 });

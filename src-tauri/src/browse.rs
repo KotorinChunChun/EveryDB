@@ -46,6 +46,57 @@ pub struct NotionDbEntry {
     pub title: String,
 }
 
+fn notion_database_entry(value: &Value) -> NotionDbEntry {
+    let id = value
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let title = value
+        .get("title")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.get("plain_text").and_then(|v| v.as_str()))
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "(無題)".to_string());
+    NotionDbEntry { id, title }
+}
+
+pub fn notion_get_database(token: &str, database_id: &str) -> Result<NotionDbEntry> {
+    let database_id = database_id.trim();
+    let compact = database_id.replace('-', "");
+    if compact.len() != 32 || !compact.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(anyhow!(
+            "Notion データベースIDは32桁の16進数で指定してください"
+        ));
+    }
+    let resp = ureq::get(&format!(
+        "https://api.notion.com/v1/databases/{database_id}"
+    ))
+    .set("Authorization", &format!("Bearer {token}"))
+    .set("Notion-Version", "2022-06-28")
+    .call();
+    let value: Value = match resp {
+        Ok(response) => response.into_json()?,
+        Err(ureq::Error::Status(code, response)) => {
+            return Err(anyhow!(
+                "Notion API エラー {code}: {}",
+                response.into_string().unwrap_or_default()
+            ))
+        }
+        Err(error) => return Err(anyhow!("Notion への接続に失敗: {error}")),
+    };
+    let mut entry = notion_database_entry(&value);
+    if entry.id.is_empty() {
+        entry.id = database_id.to_string();
+    }
+    Ok(entry)
+}
+
 pub fn notion_list_databases(token: &str) -> Result<Vec<NotionDbEntry>> {
     let mut out = Vec::new();
     let mut start_cursor: Option<String> = None;
@@ -74,23 +125,7 @@ pub fn notion_list_databases(token: &str) -> Result<Vec<NotionDbEntry>> {
         };
         if let Some(results) = value.get("results").and_then(|v| v.as_array()) {
             for db in results {
-                let id = db
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let title = db
-                    .get("title")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|x| x.get("plain_text").and_then(|v| v.as_str()))
-                            .collect::<Vec<_>>()
-                            .join("")
-                    })
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "(無題)".to_string());
-                out.push(NotionDbEntry { id, title });
+                out.push(notion_database_entry(db));
             }
         }
         let has_more = value
@@ -757,6 +792,26 @@ mod tests {
             .join(name)
             .to_string_lossy()
             .into_owned()
+    }
+
+    #[test]
+    fn notion_database_entry_combines_plain_text_title_parts() {
+        let value = serde_json::json!({
+            "id": "01234567-89ab-cdef-0123-456789abcdef",
+            "title": [{"plain_text": "案件"}, {"plain_text": "管理"}]
+        });
+        let entry = notion_database_entry(&value);
+        assert_eq!(entry.id, "01234567-89ab-cdef-0123-456789abcdef");
+        assert_eq!(entry.title, "案件管理");
+        assert_eq!(
+            notion_database_entry(&serde_json::json!({"id":"x"})).title,
+            "(無題)"
+        );
+        assert!(notion_get_database("not-used", "invalid-id")
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("32桁"));
     }
 
     #[test]

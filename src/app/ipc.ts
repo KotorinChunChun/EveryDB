@@ -171,6 +171,14 @@ export interface IpcContract {
     args: { id: number; overridesJson: string };
     result: NotionDatabaseItem[];
   };
+  browse_notion_database: {
+    args: { credentialId: number; databaseId: string };
+    result: NotionDatabaseItem;
+  };
+  browse_notion_database_for_source: {
+    args: { id: number; overridesJson: string; databaseId: string };
+    result: NotionDatabaseItem;
+  };
   preview_csv: { args: { configJson: string }; result: CsvPreview };
   browse_airtable_bases: { args: { credentialId: number }; result: AirtableBaseItem[] };
   browse_airtable_bases_for_source: {

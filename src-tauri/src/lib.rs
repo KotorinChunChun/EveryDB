@@ -179,6 +179,8 @@ pub fn run() {
             source_commands::add_source_from_sibling,
             browse_commands::browse_notion_databases,
             browse_commands::browse_notion_databases_for_source,
+            browse_commands::browse_notion_database,
+            browse_commands::browse_notion_database_for_source,
             browse_commands::preview_csv,
             browse_commands::browse_airtable_bases,
             browse_commands::browse_airtable_bases_for_source,

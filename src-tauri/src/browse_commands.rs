@@ -29,6 +29,27 @@ pub fn browse_notion_databases_for_source(
 }
 
 #[tauri::command]
+pub fn browse_notion_database(
+    state: State<'_, AppState>,
+    credential_id: i64,
+    database_id: String,
+) -> Result<browse::NotionDbEntry, String> {
+    browse_service::browse_notion_database_for_credential(&state, credential_id, &database_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn browse_notion_database_for_source(
+    state: State<'_, AppState>,
+    id: i64,
+    overrides_json: String,
+    database_id: String,
+) -> Result<browse::NotionDbEntry, String> {
+    browse_service::browse_notion_database_for_source(&state, id, &overrides_json, &database_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
 pub fn browse_airtable_bases(
     state: State<'_, AppState>,
     credential_id: i64,

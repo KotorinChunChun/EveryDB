@@ -57,10 +57,8 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
         item.className = "picker-item";
         item.textContent = db.title || "(無題)";
         item.onclick = () => {
-          (document.getElementById("fd-database_id") as HTMLInputElement).value = db.id;
           const sourceEditor = getSourceEditor();
-          sourceEditor.autoFillDefaultName();
-          sourceEditor.maybeFetchAndRenderFields();
+          sourceEditor.applyNotionSelection(db.id, db.title || "(無題)");
           dlg.close();
         };
         listEl.appendChild(item);

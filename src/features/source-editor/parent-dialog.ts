@@ -186,7 +186,7 @@ export function mountParentSettingsDialog(
           "browse_notion_databases_for_source",
           { id: siblingId, overridesJson: JSON.stringify(shared) },
         );
-        parentTableItems = dbs.map((d) => ({ key: d.id, label: d.title || "(無題)", type_: "notion", extraConfig: { database_id: d.id } }));
+        parentTableItems = dbs.map((d) => ({ key: d.id, label: d.title || "(無題)", type_: "notion", extraConfig: { database_id: d.id, database_name: d.title || "(無題)" } }));
       } else if (kind === "airtable") {
         const tbls = await invoke(
           "browse_airtable_tables_for_source",
