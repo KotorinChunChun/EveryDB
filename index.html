@@ -102,8 +102,12 @@
     </div>
 
     <!-- 接続先種別の選択（＋接続先 ボタン） -->
-    <dialog id="connection-chooser" class="dialog" aria-labelledby="connection-chooser-title">
+    <dialog id="connection-chooser" class="dialog wide connection-chooser-dialog" aria-labelledby="connection-chooser-title">
       <h3 id="connection-chooser-title">接続先・テーブルを追加</h3>
+      <div class="source-filter-wrap connection-chooser-filter-wrap">
+        <input id="connection-chooser-filter" class="source-filter" type="search" placeholder="接続先・テーブルを検索…" autocomplete="off" spellcheck="false" />
+        <button id="connection-chooser-filter-clear" class="source-filter-clear" type="button" title="検索を消す" aria-label="検索を消す" hidden>×</button>
+      </div>
       <div id="connection-chooser-list" class="picker-list"></div>
       <div class="dialog-actions">
         <button id="connection-chooser-cancel" class="btn" type="button">キャンセル</button>

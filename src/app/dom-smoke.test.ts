@@ -6,6 +6,7 @@ import { confirmDelete, promptUrlInput } from "./dom";
 import { appState } from "./state";
 import { mountSimplePickerDialogs } from "./simple-picker-dialogs";
 import { mountConnectionChooser } from "../features/source-editor/connection-chooser";
+import { CONNECTION_KIND_OPTIONS } from "../features/source-editor/connection-kinds";
 import { mountSearchControllerFromDom } from "../features/search/controller";
 import { mountGridView } from "../features/grid/view";
 
@@ -91,6 +92,23 @@ describe("application DOM interaction smoke", () => {
       title: "接続先を追加",
       connectionAdd: true,
     });
+  });
+
+  it("filters the connection chooser incrementally and clears the query", () => {
+    mountConnectionChooser({ openAddDialog: vi.fn(), openParentSettingsDialog: vi.fn(async () => {}) });
+    (document.getElementById("add") as HTMLButtonElement).click();
+
+    const filter = document.getElementById("connection-chooser-filter") as HTMLInputElement;
+    filter.value = "ブックマーク";
+    filter.dispatchEvent(new Event("input"));
+    expect([...document.querySelectorAll<HTMLElement>(".connection-kind-item")].map((item) => item.textContent))
+      .toEqual(["ブラウザ: ブックマーク"]);
+    expect([...document.querySelectorAll<HTMLElement>(".connection-kind-group")].map((item) => item.textContent))
+      .toEqual(["ローカルファイル・PC"]);
+
+    (document.getElementById("connection-chooser-filter-clear") as HTMLButtonElement).click();
+    expect(filter.value).toBe("");
+    expect(document.querySelectorAll(".connection-kind-item").length).toBe(CONNECTION_KIND_OPTIONS.length);
   });
 
   it("offers CSV and both OneDrive types as direct choices", () => {

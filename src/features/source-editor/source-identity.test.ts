@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { TYPE_DEFS } from "../../source-types/forms";
 import { duplicateConfirmMessage } from "./source-identity";
-import { CONNECTION_KIND_OPTIONS, parentBrowseKind } from "./connection-kinds";
+import { CONNECTION_KIND_GROUPS, CONNECTION_KIND_OPTIONS, parentBrowseKind } from "./connection-kinds";
 
 describe("connection-kinds", () => {
   it("maps representative types to parent browse kinds", () => {
@@ -26,6 +26,15 @@ describe("connection-kinds", () => {
       label: "OneDrive（個人）",
       connectionAdd: false,
     });
+  });
+
+  it("groups Entra ID sources at the start of the Microsoft section", () => {
+    const microsoft = CONNECTION_KIND_GROUPS.find((group) => group.category === "microsoft")!;
+    expect(microsoft.options.slice(0, 3).map((option) => option.id)).toEqual([
+      "graph_entra_users",
+      "graph_entra_groups",
+      "graph_entra_devices",
+    ]);
   });
 });
 

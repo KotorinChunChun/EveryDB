@@ -202,6 +202,13 @@
   background: var(--panel-2); color: var(--muted);
   font-size: 11px; font-weight: 600;
 }
+.connection-chooser-dialog {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+.connection-chooser-filter-wrap { margin-bottom: 8px; }
+#connection-chooser-list { max-height: min(520px, calc(100vh - 180px)); }
 
 /* 保存済みトークン（要件: トークン管理画面）。「プロファイル」欄は新規作成ボタンも既存の
  * プロファイルも同じ幅・同じ見た目の「行」として並べ、クリックで選択（着色）する1つのリストにする。 */

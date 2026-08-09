@@ -46,6 +46,25 @@ const CONNECTION_CATEGORY_LABELS: ReadonlyArray<{ category: SourceCategory; labe
   { category: "web", label: "Web" },
 ];
 
+const MICROSOFT_FIRST_TYPES = [
+  "graph_entra_users",
+  "graph_entra_groups",
+  "graph_entra_devices",
+] as const;
+
+function orderWithinCategory(options: ConnectionKindOption[]): ConnectionKindOption[] {
+  return options
+    .map((option, originalIndex) => ({ option, originalIndex }))
+    .sort((left, right) => {
+      const leftPriority = MICROSOFT_FIRST_TYPES.indexOf(left.option.id as typeof MICROSOFT_FIRST_TYPES[number]);
+      const rightPriority = MICROSOFT_FIRST_TYPES.indexOf(right.option.id as typeof MICROSOFT_FIRST_TYPES[number]);
+      const leftOrder = leftPriority < 0 ? MICROSOFT_FIRST_TYPES.length : leftPriority;
+      const rightOrder = rightPriority < 0 ? MICROSOFT_FIRST_TYPES.length : rightPriority;
+      return leftOrder - rightOrder || left.originalIndex - right.originalIndex;
+    })
+    .map(({ option }) => option);
+}
+
 /**
  * 「接続先を追加」に表示する選択肢。
  * 抽象的な接続先分類ではなく、追加後に作成される全テーブル種別を直接列挙する。
@@ -64,5 +83,5 @@ export const CONNECTION_KIND_OPTIONS: ConnectionKindOption[] = SOURCE_TYPE_METAD
 export const CONNECTION_KIND_GROUPS: ConnectionKindGroup[] = CONNECTION_CATEGORY_LABELS.map(({ category, label }) => ({
   category,
   label,
-  options: CONNECTION_KIND_OPTIONS.filter((option) => option.category === category),
+  options: orderWithinCategory(CONNECTION_KIND_OPTIONS.filter((option) => option.category === category)),
 })).filter((group) => group.options.length > 0);
