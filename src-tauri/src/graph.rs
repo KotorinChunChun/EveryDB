@@ -42,6 +42,12 @@ impl GraphClient {
         Ok(Self { token })
     }
 
+    /// 取得済みトークンを同一プロセス内の認証処理で参照する。
+    /// IPC へは返さず、JWT の実効権限クレーム確認などにだけ使用する。
+    pub(crate) fn access_token(&self) -> &str {
+        &self.token
+    }
+
     /// 単一 GET（JSON を返す）。
     pub fn get(&self, url: &str) -> Result<Value> {
         let resp = limits::http_get_bearer(url, &self.token);

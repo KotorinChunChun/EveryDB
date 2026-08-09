@@ -3,7 +3,9 @@
 use serde_json::Value;
 
 use crate::app_state::AppState;
-use crate::credentials::{self, CredentialSummary, CredentialUsage};
+use crate::credentials::{
+    self, CredentialPermissionInspection, CredentialSummary, CredentialUsage,
+};
 use crate::service_error::{lock_db, ServiceError, ServiceResult};
 
 pub fn list_credentials(state: &AppState, scope: &str) -> ServiceResult<Vec<CredentialSummary>> {
@@ -67,6 +69,15 @@ pub fn credential_public_fields(state: &AppState, id: i64) -> ServiceResult<Valu
     let (label, fields) = credentials::public_fields(&conn, id)
         .map_err(|e| ServiceError::external("トークン情報の取得に失敗しました", e))?;
     Ok(serde_json::json!({ "label": label, "fields": fields }))
+}
+
+pub fn credential_permissions(
+    state: &AppState,
+    id: i64,
+) -> ServiceResult<CredentialPermissionInspection> {
+    let conn = lock_db(state)?;
+    credentials::inspect_credential_permissions(&conn, id)
+        .map_err(|e| ServiceError::external("承認済み権限の確認に失敗しました", e))
 }
 
 pub fn credential_secret_value(state: &AppState, id: i64) -> ServiceResult<String> {

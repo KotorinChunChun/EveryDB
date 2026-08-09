@@ -200,6 +200,7 @@ pub fn run() {
             credential_commands::delete_credential,
             credential_commands::credential_usage,
             credential_commands::credential_public_fields,
+            credential_commands::credential_permissions,
             credential_commands::credential_secret_value,
             credential_commands::box_oauth_authorize,
             credential_commands::box_oauth_cancel,

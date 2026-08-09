@@ -6,6 +6,7 @@
 //! 使用中のトークンは `delete_credential` でブロックされる。
 
 use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -281,6 +282,15 @@ pub struct CredentialSummary {
     pub label: String,
     pub created_at: String,
     pub used_by: Vec<CredentialUsage>,
+}
+
+/// Microsoft のアクセストークンに実際に含まれる実効権限。
+/// 生のアクセストークンは Rust 側だけで扱い、IPC にはこの要約だけを返す。
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct CredentialPermissionInspection {
+    pub auth_method: String,
+    pub claim: String,
+    pub permissions: Vec<String>,
 }
 
 /// 指定スコープの保存済みトークン一覧（使用中ソースの情報つき）。
@@ -753,6 +763,116 @@ fn microsoft_account_access_token_for_credential(
         )?;
     }
     Ok(access_token)
+}
+
+fn permissions_from_access_token(
+    access_token: &str,
+    auth_method: GraphAuthMethod,
+) -> Result<CredentialPermissionInspection> {
+    let payload = access_token
+        .split('.')
+        .nth(1)
+        .ok_or_else(|| anyhow!("アクセストークンが JWT 形式ではありません"))?;
+    let decoded = URL_SAFE_NO_PAD
+        .decode(payload)
+        .map_err(|_| anyhow!("アクセストークンの JWT payload を読み取れません"))?;
+    let claims: Value = serde_json::from_slice(&decoded)
+        .map_err(|_| anyhow!("アクセストークンの JWT claims を読み取れません"))?;
+
+    let (claim, mut permissions) = match auth_method {
+        GraphAuthMethod::Delegated => {
+            let scopes = claims
+                .get("scp")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("アクセストークンに scp クレームがありません"))?;
+            (
+                "scp",
+                scopes
+                    .split_whitespace()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>(),
+            )
+        }
+        GraphAuthMethod::AppOnly => {
+            let roles = claims
+                .get("roles")
+                .and_then(Value::as_array)
+                .ok_or_else(|| anyhow!("アクセストークンに roles クレームがありません"))?;
+            let values = roles
+                .iter()
+                .map(|role| {
+                    role.as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| anyhow!("roles クレームに文字列以外の値があります"))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            ("roles", values)
+        }
+    };
+    permissions.sort();
+    permissions.dedup();
+    Ok(CredentialPermissionInspection {
+        auth_method: match auth_method {
+            GraphAuthMethod::AppOnly => "app_only",
+            GraphAuthMethod::Delegated => "delegated",
+        }
+        .to_string(),
+        claim: claim.to_string(),
+        permissions,
+    })
+}
+
+/// 保存済み Microsoft 資格情報で実際にアクセストークンを取得し、実効権限を確認する。
+/// refresh token のローテーションも通常の接続時と同じように保存へ反映する。
+pub fn inspect_credential_permissions(
+    conn: &Connection,
+    credential_id: i64,
+) -> Result<CredentialPermissionInspection> {
+    let (scope, protected_fields_json) = credential_record(conn, credential_id)?;
+    match scope.as_str() {
+        "graph" => {
+            let decrypted = secret::unprotect_config(&protected_fields_json)?;
+            let fields: Value = serde_json::from_str(&decrypted)?;
+            let profile = graph_profile(&fields)?;
+            let access_token = match profile.auth_method {
+                GraphAuthMethod::Delegated => {
+                    graph_access_token_for_credential(conn, credential_id, &protected_fields_json)?
+                }
+                GraphAuthMethod::AppOnly => {
+                    let tenant_id = fields
+                        .get("tenant_id")
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.is_empty())
+                        .ok_or_else(|| anyhow!("テナントIDが未設定です"))?;
+                    let client_id = fields
+                        .get("client_id")
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.is_empty())
+                        .ok_or_else(|| anyhow!("クライアントIDが未設定です"))?;
+                    let client_secret = fields
+                        .get("client_secret")
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.is_empty())
+                        .ok_or_else(|| anyhow!("クライアントシークレットが未設定です"))?;
+                    crate::graph::GraphClient::new(tenant_id, client_id, client_secret)?
+                        .access_token()
+                        .to_string()
+                }
+            };
+            permissions_from_access_token(&access_token, profile.auth_method)
+        }
+        MICROSOFT_ACCOUNT_SCOPE => {
+            let access_token = microsoft_account_access_token_for_credential(
+                conn,
+                credential_id,
+                &protected_fields_json,
+            )?;
+            permissions_from_access_token(&access_token, GraphAuthMethod::Delegated)
+        }
+        _ => Err(anyhow!(
+            "この種類の保存済みトークンは権限確認に対応していません: {scope}"
+        )),
+    }
 }
 
 /// 保存済み Graph 認証情報からピッカー用の認証引数を解決する。
@@ -1347,6 +1467,50 @@ mod tests {
     fn protected_keys_of_graph_include_refresh_token() {
         assert!(protected_keys_of_scope("graph").contains(&"refresh_token"));
         assert!(protected_keys_of_scope("graph").contains(&"client_secret"));
+    }
+
+    fn test_jwt(claims: Value) -> String {
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+        format!("e30.{payload}.signature")
+    }
+
+    #[test]
+    fn reads_and_sorts_delegated_permissions_from_scp_claim() {
+        let token = test_jwt(serde_json::json!({
+            "scp": "User.Read Files.Read User.Read"
+        }));
+        let result = permissions_from_access_token(&token, GraphAuthMethod::Delegated).unwrap();
+        assert_eq!(result.auth_method, "delegated");
+        assert_eq!(result.claim, "scp");
+        assert_eq!(result.permissions, vec!["Files.Read", "User.Read"]);
+    }
+
+    #[test]
+    fn reads_and_sorts_application_permissions_from_roles_claim() {
+        let token = test_jwt(serde_json::json!({
+            "roles": ["User.Read.All", "Group.Read.All", "User.Read.All"]
+        }));
+        let result = permissions_from_access_token(&token, GraphAuthMethod::AppOnly).unwrap();
+        assert_eq!(result.auth_method, "app_only");
+        assert_eq!(result.claim, "roles");
+        assert_eq!(result.permissions, vec!["Group.Read.All", "User.Read.All"]);
+    }
+
+    #[test]
+    fn rejects_tokens_without_the_effective_permission_claim() {
+        let token = test_jwt(serde_json::json!({ "aud": "Microsoft Graph" }));
+        assert!(
+            permissions_from_access_token(&token, GraphAuthMethod::Delegated)
+                .unwrap_err()
+                .to_string()
+                .contains("scp")
+        );
+        assert!(
+            permissions_from_access_token(&token, GraphAuthMethod::AppOnly)
+                .unwrap_err()
+                .to_string()
+                .contains("roles")
+        );
     }
 
     #[test]

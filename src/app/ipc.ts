@@ -22,6 +22,12 @@ export interface CredentialPublicFields {
   fields: Record<string, unknown>;
 }
 
+export interface CredentialPermissionInspection {
+  auth_method: "app_only" | "delegated";
+  claim: "roles" | "scp";
+  permissions: string[];
+}
+
 export interface OAuthTokenResult {
   refresh_token: string;
 }
@@ -126,6 +132,7 @@ export interface IpcContract {
   delete_credential: { args: { id: number }; result: void };
   credential_usage: { args: { id: number }; result: CredentialUsage[] };
   credential_public_fields: { args: { id: number }; result: CredentialPublicFields };
+  credential_permissions: { args: { id: number }; result: CredentialPermissionInspection };
   credential_secret_value: { args: { id: number }; result: string };
   box_oauth_authorize: {
     args: { clientId: string; clientSecret: string };

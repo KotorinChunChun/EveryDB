@@ -92,6 +92,21 @@ pub fn credential_public_fields(
 }
 
 #[tauri::command]
+pub async fn credential_permissions(
+    app: AppHandle,
+    id: i64,
+) -> Result<crate::credentials::CredentialPermissionInspection, String> {
+    let handle = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = handle.state::<AppState>();
+        credential_service::credential_permissions(&state, id)
+    })
+    .await
+    .map_err(|e| format!("内部エラー: {e}"))?;
+    result.map_err(Into::into)
+}
+
+#[tauri::command]
 pub fn credential_secret_value(state: State<'_, AppState>, id: i64) -> Result<String, String> {
     credential_service::credential_secret_value(&state, id).map_err(Into::into)
 }
