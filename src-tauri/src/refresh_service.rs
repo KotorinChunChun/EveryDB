@@ -129,11 +129,23 @@ fn notion_metadata_request(
 fn resolve_notion_metadata(
     request: Option<NotionMetadataRequest>,
 ) -> anyhow::Result<Option<NotionMetadataUpdate>> {
+    resolve_notion_metadata_with(request, |token, database_id| {
+        Ok(browse::notion_get_database(token, database_id)?.title)
+    })
+}
+
+fn resolve_notion_metadata_with<F>(
+    request: Option<NotionMetadataRequest>,
+    fetch_name: F,
+) -> anyhow::Result<Option<NotionMetadataUpdate>>
+where
+    F: FnOnce(&str, &str) -> anyhow::Result<String>,
+{
     let Some(request) = request else {
         return Ok(None);
     };
-    let entry = browse::notion_get_database(&request.token, &request.database_id)?;
-    Ok(Some(notion_metadata_update(request, entry.title)))
+    let database_name = fetch_name(&request.token, &request.database_id)?;
+    Ok(Some(notion_metadata_update(request, database_name)))
 }
 
 fn notion_metadata_update(
@@ -408,6 +420,27 @@ mod tests {
         assert_eq!(config["database_name"], "Notion側の最新名");
         assert_eq!(config["token"], "cred:42");
         assert_eq!(config["display_columns"][0], "件名");
+    }
+
+    #[test]
+    fn notion_metadata_failure_leaves_saved_names_unchanged() {
+        let conn = Connection::open_in_memory().unwrap();
+        db::init_schema(&conn).unwrap();
+        let stored = r#"{"token":"cred:42","database_id":"0123456789abcdef0123456789abcdef","database_name":"最後の成功名"}"#;
+        let id = db::insert_source(&conn, "notion", "最後の成功名", stored).unwrap();
+        let resolved = r#"{"token":"ntn_secret","database_id":"0123456789abcdef0123456789abcdef"}"#;
+        let request = notion_metadata_request("notion", resolved)
+            .unwrap()
+            .unwrap();
+
+        let result =
+            resolve_notion_metadata_with(Some(request), |_, _| Err(anyhow::anyhow!("offline")));
+
+        assert!(result.is_err());
+        let (_, name, _, config_json) = db::get_source_full(&conn, id).unwrap();
+        assert_eq!(name, "最後の成功名");
+        let config: serde_json::Value = serde_json::from_str(&config_json).unwrap();
+        assert_eq!(config["database_name"], "最後の成功名");
     }
 
     #[test]
