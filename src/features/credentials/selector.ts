@@ -11,6 +11,10 @@ import { SECRET_PLACEHOLDER } from "../source-editor/constants";
 import { getLinkedCredentials } from "../source-editor/linked-credentials";
 import type { SourceEditorDialogController } from "../source-editor/dialog";
 import type { CredentialManagerController } from "./manager";
+import {
+  populateCredentialPermissionStatus,
+  supportsCredentialPermissionInspection,
+} from "./permissions";
 
 export interface CredentialSelectorDeps {
   getSourceEditor: () => SourceEditorDialogController;
@@ -172,6 +176,12 @@ export function mountCredentialSelector(deps: CredentialSelectorDeps): Credentia
           ? `委任 OAuth / ${compatibility.capabilities.join(", ")}`
           : "アプリケーション認証";
         item.appendChild(hint);
+      }
+      if (supportsCredentialPermissionInspection(c.scope)) {
+        const permissionStatus = document.createElement("small");
+        permissionStatus.className = "credential-permission-status";
+        item.appendChild(permissionStatus);
+        void populateCredentialPermissionStatus(c.id, permissionStatus);
       }
       item.onclick = () => {
         if (!details || item.disabled) return;

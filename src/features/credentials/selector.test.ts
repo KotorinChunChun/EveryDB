@@ -43,6 +43,12 @@ describe("Graph credential compatibility in the picker", () => {
           ? { label: "アプリ認証", fields: { auth_method: "app_only" } }
           : { label: "SharePoint委任", fields: { auth_method: "delegated", capabilities: ["sharepoint"] } };
       }
+      if (command === "credential_permissions") {
+        const id = (args as { id: number }).id;
+        return id === 1
+          ? { auth_method: "app_only", claim: "roles", permissions: ["User.Read.All"] }
+          : Promise.reject(new Error("network offline"));
+      }
       throw new Error(`unexpected command: ${command}`);
     });
     const controller = mountCredentialSelector({
@@ -70,6 +76,10 @@ describe("Graph credential compatibility in the picker", () => {
     expect(items[0].disabled).toBe(false);
     expect(items[1].disabled).toBe(true);
     expect(items[1].textContent).toContain("委任 OAuth に対応していません");
+    await vi.waitFor(() => {
+      expect(items[0].textContent).toContain("承認済み権限（アプリケーション / roles）: User.Read.All");
+      expect(items[1].textContent).toContain("権限確認失敗");
+    });
   });
 
   it("treats legacy delegated profiles as SharePoint capability", () => {

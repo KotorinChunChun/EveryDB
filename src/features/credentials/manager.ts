@@ -11,6 +11,10 @@ import { ENTRA_APPS_URL, NOTION_INTEGRATIONS_URL } from "../../source-types/form
 import { SECRET_PLACEHOLDER } from "../source-editor/constants";
 import { makeApiKeyButton, makeLinkButton } from "../source-editor/ui-buttons";
 import type { WinAuthController } from "./winauth";
+import {
+  populateCredentialPermissionStatus,
+  supportsCredentialPermissionInspection,
+} from "./permissions";
 
 export interface CredentialManagerDeps {
   winAuth: WinAuthController;
@@ -527,10 +531,19 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
         item.onclick = () => void startEditCredential(c);
         item.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); void startEditCredential(c); } };
 
+        const main = document.createElement("span");
+        main.className = "cm-profile-main";
         const name = document.createElement("span");
         name.className = "cm-profile-name";
         name.textContent = `${c.label}（作成: ${c.created_at}${c.used_by.length ? ` / 使用中: ${c.used_by.length}件` : ""}）`;
-        item.appendChild(name);
+        main.appendChild(name);
+        if (supportsCredentialPermissionInspection(c.scope)) {
+          const permissionStatus = document.createElement("small");
+          permissionStatus.className = "credential-permission-status";
+          main.appendChild(permissionStatus);
+          void populateCredentialPermissionStatus(c.id, permissionStatus);
+        }
+        item.appendChild(main);
 
         const delBtn = document.createElement("button");
         delBtn.type = "button";

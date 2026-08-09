@@ -89,4 +89,41 @@ describe("personal Microsoft credential manager", () => {
       expect(document.getElementById("cm-form-fields")?.textContent).toContain("未認可");
     });
   });
+
+  it("shows approved Microsoft permissions in the saved token list", async () => {
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "list_credentials") {
+        return [{
+          id: 11,
+          scope: "graph",
+          label: "Entra 読み取り",
+          created_at: "2026-08-09",
+          used_by: [],
+        }];
+      }
+      if (command === "credential_permissions") {
+        return {
+          auth_method: "app_only",
+          claim: "roles",
+          permissions: ["Group.Read.All", "User.Read.All"],
+        };
+      }
+      return undefined;
+    });
+    const manager = mountCredentialManager({
+      winAuth: {
+        refreshWinAuthStatus: vi.fn(async () => {}),
+        ensureUnlocked: vi.fn(async () => true),
+      },
+      openGuide: vi.fn(),
+      openGuideDoc: vi.fn(),
+    });
+
+    await manager.openCredentialManager("graph");
+
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-credential-id="11"]')?.textContent)
+        .toContain("承認済み権限（アプリケーション / roles）: Group.Read.All, User.Read.All");
+    });
+  });
 });
