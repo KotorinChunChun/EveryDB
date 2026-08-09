@@ -690,15 +690,9 @@ pub(crate) struct GraphOneDriveConnector {
 impl Connector for GraphOneDriveConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
         let client = self.auth.client()?;
-        let user = urlencoding_light(&self.user);
+        let drive_base = one_drive_base(&self.auth, &self.user)?;
         let mut out = Vec::new();
-        walk_drive(
-            &client,
-            &format!("users/{user}/drive"),
-            "root",
-            &self.common,
-            &mut out,
-        )?;
+        walk_drive(&client, &drive_base, "root", &self.common, &mut out)?;
         Ok(out)
     }
 
@@ -906,6 +900,20 @@ mod graph_live_tests {
     }
 }
 
+fn one_drive_base(auth: &GraphAuth, user: &str) -> Result<String> {
+    if auth.uses_delegated_oauth() {
+        Ok("me/drive".to_string())
+    } else {
+        let user = user.trim();
+        if user.is_empty() {
+            return Err(anyhow!(
+                "アプリケーション認証では対象ユーザー(UPN/メール)が必要です"
+            ));
+        }
+        Ok(format!("users/{}/drive", urlencoding_light(user)))
+    }
+}
+
 #[cfg(test)]
 mod graph_delegated_endpoint_tests {
     use super::*;
@@ -938,6 +946,30 @@ mod graph_delegated_endpoint_tests {
     #[test]
     fn app_only_calendar_requires_upn_before_network_access() {
         let error = calendar_events_url(&auth("app_only"), " ")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("UPN"));
+    }
+
+    #[test]
+    fn delegated_onedrive_uses_signed_in_users_drive() {
+        assert_eq!(
+            one_drive_base(&auth("delegated"), "ignored@example.com").unwrap(),
+            "me/drive"
+        );
+    }
+
+    #[test]
+    fn app_only_onedrive_keeps_upn_drive_and_encoding() {
+        assert_eq!(
+            one_drive_base(&auth("app_only"), "user+drive@example.com").unwrap(),
+            "users/user%2Bdrive@example.com/drive"
+        );
+    }
+
+    #[test]
+    fn app_only_onedrive_requires_upn_before_network_access() {
+        let error = one_drive_base(&auth("app_only"), " ")
             .unwrap_err()
             .to_string();
         assert!(error.contains("UPN"));

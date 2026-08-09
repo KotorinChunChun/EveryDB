@@ -118,4 +118,12 @@ describe("Graph credential compatibility in the picker", () => {
     updateGraphSelfSubjectUi("graph_calendar", "fd-", { auth_method: "app_only" });
     expect(input.disabled).toBe(false);
   });
+
+  it("uses the same signed-in-user UI for delegated OneDrive", () => {
+    document.body.innerHTML = `<label>対象ユーザー<input id="fd-user"></label>`;
+    updateGraphSelfSubjectUi("graph_onedrive", "fd-", { auth_method: "delegated" });
+    const input = document.getElementById("fd-user") as HTMLInputElement;
+    expect(input.disabled).toBe(true);
+    expect(input.closest("label")?.textContent).toContain("サインインした本人");
+  });
 });
