@@ -25,7 +25,7 @@ describe("credential permission status", () => {
       auth_method: "app_only",
       claim: "roles",
       permissions: ["Group.Read.All", "User.Read.All"],
-    })).toBe("承認済み権限（アプリケーション / roles）: Group.Read.All, User.Read.All");
+    })).toBe("承認済み権限（アプリケーションの許可）: Group.Read.All, User.Read.All");
   });
 
   it("shows a communication failure in place without disabling its parent button", async () => {

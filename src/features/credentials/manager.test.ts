@@ -98,7 +98,7 @@ describe("personal Microsoft credential manager", () => {
           scope: "graph",
           label: "Entra 読み取り",
           created_at: "2026-08-09",
-          used_by: [],
+          used_by: [{ source_id: 3, source_name: "EntraID ユーザー" }],
         }];
       }
       if (command === "credential_permissions") {
@@ -123,7 +123,10 @@ describe("personal Microsoft credential manager", () => {
 
     await vi.waitFor(() => {
       expect(document.querySelector('[data-credential-id="11"]')?.textContent)
-        .toContain("承認済み権限（アプリケーション / roles）: Group.Read.All, User.Read.All");
+        .toContain("承認済み権限（アプリケーションの許可）: Group.Read.All, User.Read.All");
     });
+    const row = document.querySelector('[data-credential-id="11"]') as HTMLElement;
+    expect(row.querySelector(".cm-profile-usage")?.textContent).toContain("EntraID ユーザー");
+    expect(row.nextElementSibling?.classList.contains("cm-profile-usage")).not.toBe(true);
   });
 });

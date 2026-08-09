@@ -543,6 +543,12 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
           main.appendChild(permissionStatus);
           void populateCredentialPermissionStatus(c.id, permissionStatus);
         }
+        if (c.used_by.length > 0) {
+          const usageEl = document.createElement("small");
+          usageEl.className = "cm-profile-usage";
+          usageEl.textContent = `使用中の接続先: ${c.used_by.map((u) => u.source_name).join("、")}`;
+          main.appendChild(usageEl);
+        }
         item.appendChild(main);
 
         const delBtn = document.createElement("button");
@@ -569,12 +575,6 @@ export function mountCredentialManager(deps: CredentialManagerDeps): CredentialM
         };
         item.appendChild(delBtn);
         listEl.appendChild(item);
-        if (c.used_by.length > 0) {
-          const usageEl = document.createElement("div");
-          usageEl.className = "cm-profile-usage";
-          usageEl.textContent = `使用中の接続先: ${c.used_by.map((u) => u.source_name).join("、")}`;
-          listEl.appendChild(usageEl);
-        }
       }
       updateCredentialListSelection();
     } catch (e) {

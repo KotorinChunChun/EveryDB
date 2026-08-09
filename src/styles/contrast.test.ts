@@ -27,6 +27,10 @@ describe("theme token contrast (RF-30-61)", () => {
       it("keeps form error text readable on background", () => {
         expect(contrastRatio(tokens.formError, tokens.bg)).toBeGreaterThanOrEqual(AA_NORMAL);
       });
+
+      it("keeps credential error badges readable", () => {
+        expect(contrastRatio(tokens.errorStateText, tokens.errorStateBg)).toBeGreaterThanOrEqual(AA_NORMAL);
+      });
     });
   }
 

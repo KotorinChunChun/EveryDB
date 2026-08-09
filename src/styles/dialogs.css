@@ -186,9 +186,16 @@
 .credential-picker-item:disabled:hover { background: transparent; }
 .credential-compatibility-summary,
 .credential-compatibility-reason { display: block; font-size: 11px; color: var(--muted); }
-.credential-compatibility-reason { color: var(--danger); white-space: normal; }
+.credential-compatibility-reason,
+.credential-permission-status[data-state="error"] {
+  color: var(--error-state-text);
+  background: var(--error-state-bg);
+  border: 1px solid var(--error-state-border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  white-space: normal;
+}
 .credential-permission-status { display: block; font-size: 11px; color: var(--muted); white-space: normal; }
-.credential-permission-status[data-state="error"] { color: var(--danger); }
 .credential-capability-options { display: flex; flex-direction: column; gap: 6px; width: 100%; }
 .credential-capability-option { display: flex; align-items: flex-start; gap: 7px; margin: 0; }
 .credential-capability-option input { flex: 0 0 auto; margin-top: 2px; }
@@ -228,8 +235,7 @@
 .cm-profile-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .cm-profile-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cm-profile-item .btn { flex: none; }
-.cm-profile-usage { padding: 0 10px 7px; font-size: 11px; color: var(--muted); white-space: normal; word-break: break-all; border-bottom: 1px solid #2a2a2a; }
-.cm-profile-usage:last-child { border-bottom: none; }
+.cm-profile-usage { font-size: 11px; color: var(--muted); white-space: normal; word-break: break-all; }
 
 /* トークンコピー時の通知トースト（非モーダル・画面中央・1秒でフェードアウト）。 */
 .toast {

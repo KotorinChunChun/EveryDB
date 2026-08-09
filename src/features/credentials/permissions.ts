@@ -5,9 +5,11 @@ export function supportsCredentialPermissionInspection(scope: string): boolean {
 }
 
 export function credentialPermissionLabel(result: CredentialPermissionInspection): string {
-  const auth = result.auth_method === "app_only" ? "アプリケーション" : "委任";
+  const auth = result.auth_method === "app_only"
+    ? "アプリケーションの許可"
+    : "委任されたアクセス許可";
   const permissions = result.permissions.length > 0 ? result.permissions.join(", ") : "なし";
-  return `承認済み権限（${auth} / ${result.claim}）: ${permissions}`;
+  return `承認済み権限（${auth}）: ${permissions}`;
 }
 
 /** 権限確認は選択可否から独立させる。通信失敗時も行を無効化しない。 */

@@ -77,7 +77,7 @@ describe("Graph credential compatibility in the picker", () => {
     expect(items[1].disabled).toBe(true);
     expect(items[1].textContent).toContain("委任 OAuth に対応していません");
     await vi.waitFor(() => {
-      expect(items[0].textContent).toContain("承認済み権限（アプリケーション / roles）: User.Read.All");
+      expect(items[0].textContent).toContain("承認済み権限（アプリケーションの許可）: User.Read.All");
       expect(items[1].textContent).toContain("権限確認失敗");
     });
   });
