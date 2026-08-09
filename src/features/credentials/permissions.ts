@@ -15,13 +15,13 @@ export function credentialPermissionLabel(result: CredentialPermissionInspection
 /** 権限確認は選択可否から独立させる。通信失敗時も行を無効化しない。 */
 export async function populateCredentialPermissionStatus(id: number, status: HTMLElement) {
   status.dataset.state = "loading";
-  status.textContent = "承認済み権限を確認中…";
+  status.textContent = "承認済み権限をオンライン確認中…";
   try {
     const result = await invoke("credential_permissions", { id });
     status.dataset.state = "success";
     status.textContent = credentialPermissionLabel(result);
   } catch (error) {
     status.dataset.state = "error";
-    status.textContent = `権限確認失敗: ${String(error)}`;
+    status.textContent = `権限確認失敗（オンライン確認）: ${String(error)} 保存済み認証情報は変更されていません。`;
   }
 }

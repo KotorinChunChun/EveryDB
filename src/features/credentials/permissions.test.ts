@@ -38,6 +38,8 @@ describe("credential permission status", () => {
 
     expect(status.dataset.state).toBe("error");
     expect(status.textContent).toContain("権限確認失敗");
+    expect(status.textContent).toContain("オンライン確認");
+    expect(status.textContent).toContain("保存済み認証情報は変更されていません");
     expect(button.disabled).toBe(false);
   });
 });
