@@ -6,7 +6,7 @@ describe("mountSimplePickerDialogs", () => {
   it("creates one dialog per definition from the template", () => {
     document.body.innerHTML = `
       <template id="simple-picker-dialog-template">
-        <dialog class="dialog simple-picker-dialog">
+        <dialog class="dialog stable-picker-dialog simple-picker-dialog">
           <h3></h3>
           <div class="picker-list"></div>
           <div class="dialog-actions">
@@ -22,6 +22,7 @@ describe("mountSimplePickerDialogs", () => {
     for (const def of SIMPLE_PICKER_DIALOGS) {
       const dialog = document.getElementById(def.dialogId);
       expect(dialog?.querySelector(`#${def.listId}`)).not.toBeNull();
+      expect(dialog?.classList.contains("stable-picker-dialog")).toBe(true);
       expect(document.getElementById(def.titleId)?.textContent).toBe(def.title);
     }
   });
@@ -29,7 +30,7 @@ describe("mountSimplePickerDialogs", () => {
   it("does not duplicate dialogs when called twice", () => {
     document.body.innerHTML = `
       <template id="simple-picker-dialog-template">
-        <dialog class="dialog simple-picker-dialog">
+        <dialog class="dialog stable-picker-dialog simple-picker-dialog">
           <h3></h3>
           <div class="picker-list"></div>
           <div class="dialog-actions"><button type="button" class="btn">閉じる</button></div>

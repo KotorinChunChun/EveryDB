@@ -71,4 +71,19 @@ describe("index.html structural smoke test", () => {
     expect(options).toContainEqual({ value: "graph", label: "Microsoft Entra ID（組織）" });
     expect(options).toContainEqual({ value: "microsoft_account", label: "Microsoft アカウント（個人）" });
   });
+
+  it("keeps every result-driven picker in a stable resizable frame", () => {
+    mountAppDom();
+    const ids = [
+      "connection-chooser",
+      "cell-picker",
+      "table-picker",
+      "sp-picker",
+      "credential-select-picker",
+      ...SIMPLE_PICKER_DIALOGS.map((definition) => definition.dialogId),
+    ];
+    for (const id of ids) {
+      expect(document.getElementById(id)?.classList.contains("stable-picker-dialog"), id).toBe(true);
+    }
+  });
 });

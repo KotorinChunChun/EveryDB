@@ -211,13 +211,29 @@
   background: var(--panel-2); color: var(--muted);
   font-size: 11px; font-weight: 600;
 }
-.connection-chooser-dialog {
+/* 選択結果の件数やstep切替で外寸を変えないpicker共通枠。
+   利用者のresizeは許可し、アプリウィンドウが縮んだ場合だけviewport内へ制約する。 */
+.dialog.stable-picker-dialog {
   width: min(720px, calc(100vw - 32px));
+  height: min(620px, calc(100vh - 32px));
+  min-width: min(360px, calc(100vw - 32px));
+  min-height: min(280px, calc(100vh - 32px));
+  max-width: calc(100vw - 32px);
   max-height: calc(100vh - 32px);
-  overflow-y: auto;
+  resize: both;
+  overflow: auto;
 }
+.dialog.stable-picker-dialog[open] { display: flex; flex-direction: column; }
+.dialog.stable-picker-dialog:not([open]) { display: none; }
+.stable-picker-dialog > .picker-list,
+.stable-picker-dialog > .picker-table-wrap,
+.stable-picker-dialog > .cell-picker-grid-wrap { flex: 1; min-height: 0; max-height: none; }
+.stable-picker-dialog .sp-step:not([hidden]) { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.stable-picker-dialog .sp-step > .picker-list,
+.stable-picker-dialog .sp-step > .picker-table-wrap { flex: 1; min-height: 0; max-height: none; }
+.stable-picker-dialog > .dialog-actions { flex: none; }
 .connection-chooser-filter-wrap { margin-bottom: 8px; }
-#connection-chooser-list { max-height: min(520px, calc(100vh - 180px)); }
+#connection-chooser-list { max-height: none; }
 
 /* 保存済みトークン（要件: トークン管理画面）。「プロファイル」欄は新規作成ボタンも既存の
  * プロファイルも同じ幅・同じ見た目の「行」として並べ、クリックで選択（着色）する1つのリストにする。 */

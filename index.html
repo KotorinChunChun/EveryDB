@@ -102,7 +102,7 @@
     </div>
 
     <!-- 接続先種別の選択（＋接続先 ボタン） -->
-    <dialog id="connection-chooser" class="dialog wide connection-chooser-dialog" aria-labelledby="connection-chooser-title">
+    <dialog id="connection-chooser" class="dialog wide stable-picker-dialog connection-chooser-dialog" aria-labelledby="connection-chooser-title">
       <h3 id="connection-chooser-title">接続先・テーブルを追加</h3>
       <div class="source-filter-wrap connection-chooser-filter-wrap">
         <input id="connection-chooser-filter" class="source-filter" type="search" placeholder="接続先・テーブルを検索…" autocomplete="off" spellcheck="false" />
@@ -167,7 +167,7 @@
 
     <!-- 単純 picker ダイアログ共通テンプレート（RF-30-62: mountSimplePickerDialogs で展開） -->
     <template id="simple-picker-dialog-template">
-      <dialog class="dialog simple-picker-dialog">
+      <dialog class="dialog stable-picker-dialog simple-picker-dialog">
         <h3></h3>
         <div class="picker-list"></div>
         <div class="dialog-actions">
@@ -177,7 +177,7 @@
     </template>
 
     <!-- Excel セル範囲ピッカー (10x10グリッド) -->
-    <dialog id="cell-picker" class="dialog wide" aria-labelledby="cell-picker-title">
+    <dialog id="cell-picker" class="dialog wide stable-picker-dialog" aria-labelledby="cell-picker-title">
       <h3 id="cell-picker-title">セルを選択</h3>
       <div id="cell-picker-hint" class="roles-hint" style="margin-bottom: 8px;">💡 Ctrlキーで複数選択、ドラッグで範囲選択ができます</div>
       <div id="cell-picker-grid-wrap" class="cell-picker-grid-wrap"></div>
@@ -191,7 +191,7 @@
     </dialog>
 
     <!-- Excel/SQLite/Access テーブル一括選択ダイアログ -->
-    <dialog id="table-picker" class="dialog wide" aria-labelledby="table-picker-title">
+    <dialog id="table-picker" class="dialog wide stable-picker-dialog" aria-labelledby="table-picker-title">
       <h3 id="table-picker-title">テーブル一覧</h3>
       <div class="picker-toolbar">
         <button type="button" id="table-picker-all" class="link-btn">全選択</button>
@@ -207,7 +207,7 @@
     </dialog>
 
     <!-- SharePoint サイト/チーム → リスト・ライブラリ ピッカー -->
-    <dialog id="sp-picker" class="dialog wide" aria-labelledby="sp-picker-title">
+    <dialog id="sp-picker" class="dialog wide stable-picker-dialog" aria-labelledby="sp-picker-title">
       <h3 id="sp-picker-title">SharePoint から選択</h3>
       <div id="sp-step-source" class="sp-step">
         <div class="sp-tabs">
@@ -378,7 +378,7 @@
     </dialog>
 
     <!-- 保存済みトークンの選択（各フィールドの「選択…／変更…」から開く） -->
-    <dialog id="credential-select-picker" class="dialog" aria-labelledby="credential-select-picker-title">
+    <dialog id="credential-select-picker" class="dialog stable-picker-dialog" aria-labelledby="credential-select-picker-title">
       <h3 id="credential-select-picker-title">保存済みトークンを選択</h3>
       <div id="credential-select-picker-list" class="picker-list"></div>
       <div class="dialog-actions">
