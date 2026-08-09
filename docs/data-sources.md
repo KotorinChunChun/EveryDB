@@ -15,12 +15,12 @@
 | ローカル | IME辞書: Microsoft IME（`ime_msime`） | [local-files](guides/local-files.md) |
 | ローカル | IME辞書: Google 日本語入力（`ime_google`） | [local-files](guides/local-files.md) |
 | クラウド | Notion データベース（`notion`） | [notion](guides/notion.md) |
-| Microsoft 365 | EntraID ユーザー一覧（`graph_entra_users`） | [microsoft365](guides/microsoft365.md) |
-| Microsoft 365 | EntraID グループ一覧（`graph_entra_groups`） | [microsoft365](guides/microsoft365.md) |
+| Microsoft 365 | Entra ID ユーザー一覧（`graph_entra_users`） | [microsoft365](guides/microsoft365.md) |
+| Microsoft 365 | Entra ID グループ一覧（`graph_entra_groups`） | [microsoft365](guides/microsoft365.md) |
 | Microsoft 365 | Teams チーム一覧（`graph_teams`） | [microsoft365](guides/microsoft365.md) |
 | Microsoft 365 | SharePoint リスト（`graph_sharepoint_list`） | [microsoft365](guides/microsoft365.md) |
 | Microsoft 365 | SharePoint ドキュメントライブラリ（`graph_sharepoint_library`） | [microsoft365](guides/microsoft365.md) |
-| Microsoft 365 | EntraID デバイス一覧（`graph_entra_devices`） | [microsoft365](guides/microsoft365.md) |
+| Microsoft 365 | Entra ID デバイス一覧（`graph_entra_devices`） | [microsoft365](guides/microsoft365.md) |
 | Microsoft 365 | Intune デバイス一覧（`graph_intune_devices`） | [microsoft365](guides/microsoft365.md) |
 | Microsoft 365 | Microsoft 365 ライセンス一覧（`graph_licenses`） | [microsoft365](guides/microsoft365.md) |
 | Microsoft 365 | Outlook 予定表（`graph_calendar`） | [microsoft365](guides/microsoft365.md) |
@@ -44,7 +44,7 @@
 
 Microsoft Graphには組織用と個人用のトークン種別があり、組織用には2つの認証方式があります。違いと選び方は
 [Microsoft Graph 接続方法の選択](guides/microsoft365.md)を参照してください。
-個別手順: [アプリケーション認証](guides/microsoft365-app-only.md) / [組織向け委任 OAuth](guides/microsoft365-delegated.md) /
+個別手順: [アプリケーション認証](guides/microsoft365-entra-app.md) / [組織向け委任 OAuth](guides/microsoft365-entra-user.md) /
 [個人向け OneDrive](guides/microsoft365-personal.md)。
 
 ## 検証レベル

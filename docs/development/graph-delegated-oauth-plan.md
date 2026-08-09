@@ -61,11 +61,16 @@ http://localhost:58914/graph-callback
 
 ## 実装結果（v0.0.6）
 
-本計画の Phase 1 と、Phase 2 のうち本人用 Outlook 予定表・OneDrive を実装した。
+本計画の Phase 1 と、Phase 2 の Entra ID系5種、本人用 Outlook 予定表・OneDrive を実装した。
 委任資格情報は capability ごとに権限を選択し、データソースとの互換性を UI、保存、実行の各境界で検証する。
 
 | capability | 委任されたアクセス許可 | 実行時の取得先 |
 | :--- | :--- | :--- |
+| `directory_users` | `User.Read.All` | `/users` |
+| `directory_groups` | `Group.Read.All` | `/groups` |
+| `directory_devices` | `Device.Read.All` | `/devices` |
+| `intune_devices` | `DeviceManagementManagedDevices.Read.All` | `/deviceManagement/managedDevices` |
+| `licenses` | `LicenseAssignment.Read.All` | `/subscribedSkus` |
 | `sharepoint` | `Sites.Read.All`, `Team.ReadBasic.All` | SharePoint API、Teams 選択は `/me/joinedTeams` |
 | `calendar_self` | `Calendars.ReadBasic` | `/me/events` |
 | `onedrive_self` | `Files.Read` | `/me/drive` |
@@ -181,15 +186,16 @@ sequenceDiagram
 2. `credentials.rs` の `graph` スコープ拡張（`auth_method`, `refresh_token`）
 3. SharePoint コネクタのトークン解決を `resolve_config` 経由に統一
 4. フロント: トークン管理 UI（認証方式ラジオ、認可ボタン、取消、認可状態表示）
-5. `docs/guides/microsoft365-delegated.md` を `GUIDE_FOR_TYPE` / `shared/source-types.json` に紐付け（SharePoint 種別）
+5. `docs/guides/microsoft365-entra-user.md` を `GUIDE_FOR_TYPE` / `shared/source-types.json` に紐付け（SharePoint 種別）
 6. 単体テスト + `#[ignore]` ライブテスト
 
 ### Phase 2: その他 Graph 種別への委任 OAuth 拡張
 
 - Outlook 予定表は `calendar_self` + `/me/events`、OneDrive は `onedrive_self` + `/me/drive` を実装済み
+- Entra ID、Intune、ライセンス一覧はデータソース別の最小capabilityで委任OAuthを実装済み
 - manifest に認証方式・必要 capability を宣言し、非対応資格情報は理由付きで選択不可にする
 - Rust 側でもソース保存、資格情報更新、preview、reload、browse の各境界で同じ互換性を強制する
-- Entra ID、Intune、ライセンス、Teams 一覧、Planner 等は app-only 専用を維持する
+- Teams チーム一覧データソースとPlannerは app-only 専用を維持する
 
 ### Phase 2 追加: 個人 Microsoft アカウントの OneDrive
 
@@ -216,7 +222,7 @@ v0.0.6 で反映した項目:
 | トークン管理 | Redirect URI ヘルプ文言（`http://localhost:58914/graph-callback`） |
 | 接続設定ピッカー | 委任プロファイル選択時も `cred:<id>` 参照で動作することを確認 |
 | 接続設定ピッカー | 非対応プロファイルを理由付き disabled 表示し、選択を拒否 |
-| 手順書リンク | `microsoft365.md`を方式比較メニューとし、`microsoft365-app-only.md`と`microsoft365-delegated.md`へ分離。credential managerは選択中の方式別ページを直接開く |
+| 手順書リンク | `microsoft365.md`を方式比較メニューとし、`microsoft365-entra-app.md`と`microsoft365-entra-user.md`へ分離。credential managerは選択中の方式別ページを直接開く |
 | Tauri IPC | `graph_oauth_authorize` コマンド、キャンセルフラグ、アプリ終了時の OAuth 待機打ち切り |
 
 ## テスト計画
@@ -268,7 +274,7 @@ Box の `box_oauth.rs` テスト構成を踏襲する。
 - Device Code Flow
 - EveryDB 組み込みマルチテナント `client_id` の配布（Phase 3）
 - クライアントシークレットを使う委任フロー（コンフィデンシャルクライアント）
-- Planner / Teams タスク、Entra ID、Intune、ライセンス、Teams チーム一覧の委任 OAuth
+- Planner / Teams タスク、Teams チーム一覧データソースの委任 OAuth
 - Outlook / OneDrive で本人以外のユーザーを委任 OAuth から指定すること
 - `/me/joinedTeams` に共有チャネルのホスト Team を補完すること
 - `Sites.Selected` による最小権限構成（将来検討）
@@ -276,8 +282,8 @@ Box の `box_oauth.rs` テスト構成を踏襲する。
 
 ## 関連ドキュメント
 
-- エンドユーザー手順: [Microsoft 365 委任 OAuth 手順書](../guides/microsoft365-delegated.md)
+- エンドユーザー手順: [Microsoft 365 委任 OAuth 手順書](../guides/microsoft365-entra-user.md)
 - 認証方式の比較: [Microsoft Graph 接続方法の選択](../guides/microsoft365.md)
-- app-only 手順: [Microsoft 365 アプリケーション認証手順書](../guides/microsoft365-app-only.md)
+- アプリケーション認証 手順: [Microsoft 365 アプリケーション認証手順書](../guides/microsoft365-entra-app.md)
 - 個人向け手順: [OneDrive（個人）の接続手順](../guides/microsoft365-personal.md)
 - Box OAuth 参考: [Box 手順書](../guides/box.md)
