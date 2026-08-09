@@ -19,7 +19,7 @@ Graph でも同様の二系統共存を目指す。
 
 ## 目標 UX
 
-トークン管理画面で Microsoft 365 (Graph) プロファイルを作成する際、認証方式として
+トークン管理画面で組織用の Microsoft Entra ID（組織）プロファイルを作成する際、認証方式として
 **「委任 OAuth（ユーザーにログインして認可）」** を選べるようにする。
 
 - Box の **「🔗 Box にログインして認可…」** と同様に、**「Microsoft にログインして認可…」**
@@ -73,6 +73,24 @@ http://localhost:58914/graph-callback
 全 capability の共通権限は `User.Read` と `offline_access`。app-only は従来の endpoint と UPN 指定を維持する。
 `auth_method` が無い既存資格情報は app-only、capability が無い既存 delegated 資格情報は
 `sharepoint` として扱い、DB schema migration は行わない。
+
+### 個人 Microsoft アカウントの追加設計
+
+組織向けの既存 `graph` 資格情報と `graph_onedrive` データソースは、内部 ID、保存形式、
+app-only / delegated 分岐、UPN と `/me/drive` の実行ロジックを変更せず維持する。表示名だけを
+**Microsoft Entra ID（組織）**、**OneDrive（組織）**へ明確化した。
+
+個人 Microsoft アカウントは既存分岐へ追加せず、次の専用境界として実装した。
+
+| 領域 | 個人向けの実装 |
+| :--- | :--- |
+| 資格情報 scope | `microsoft_account`。利用者入力はクライアント ID、秘密値はDPAPI保護したリフレッシュトークン |
+| OAuth | Authorization Code + PKCE、authority `consumers`、`Files.Read User.Read offline_access` 固定 |
+| データソース | `microsoft_account_onedrive`（OneDrive（個人））。対象UPNを持たず常に `/me/drive` |
+| 互換性境界 | manifestのcredential scope、保存検証、実行時解決で組織用と相互利用を拒否 |
+| 後方互換 | 新規テーブルやDB schema migrationは追加せず、既存組織用レコードをそのまま利用 |
+
+この分離により、Personal OneDrive対応が既存の組織向け認証・コネクタの回帰要因にならない構造とした。
 
 ## モジュール構成
 
@@ -169,6 +187,14 @@ sequenceDiagram
 - Rust 側でもソース保存、資格情報更新、preview、reload、browse の各境界で同じ互換性を強制する
 - Entra ID、Intune、ライセンス、Teams 一覧、Planner 等は app-only 専用を維持する
 
+### Phase 2 追加: 個人 Microsoft アカウントの OneDrive
+
+- `microsoft_account` 資格情報と `microsoft_account_onedrive` を組織向けIDから分離
+- `consumers` authority と `Files.Read User.Read offline_access` を authorize / refresh の両方で固定
+- 個人用コネクタは `/me/drive` の読み取り専用再帰取得だけを提供
+- 組織用 / 個人用の相互選択をUI、保存、実行の各境界で拒否
+- ライブ検証は利用者の個人 Microsoft アカウント環境で後日実施
+
 ### Phase 3（任意）: マルチテナント公共アプリ
 
 - EveryDB 公式のマルチテナント Entra アプリ + 固定 `client_id` を配布
@@ -210,6 +236,7 @@ Box の `box_oauth.rs` テスト構成を踏襲する。
 
 - 実テナント + テスト用 Entra アプリでの end-to-end 認可（CI では実行しない）
 - SharePoint サイト、Teams 選択、本人の Outlook 予定表、本人の OneDrive の smoke test
+- 個人 Microsoft アカウントでの認可とOneDrive（個人）の初回取得・再リロード
 - v0.0.6 実装時のライブ検証はユーザーが後日実施するため、自動品質ゲートとは分けて記録する
 
 ### ライフサイクル（Box と同様）
@@ -248,4 +275,5 @@ Box の `box_oauth.rs` テスト構成を踏襲する。
 - エンドユーザー手順: [Microsoft 365 委任 OAuth 手順書](../guides/microsoft365-delegated.md)
 - 認証方式の比較: [Microsoft Graph 接続方法の選択](../guides/microsoft365.md)
 - app-only 手順: [Microsoft 365 アプリケーション認証手順書](../guides/microsoft365-app-only.md)
+- 個人向け手順: [OneDrive（個人）の接続手順](../guides/microsoft365-personal.md)
 - Box OAuth 参考: [Box 手順書](../guides/box.md)

@@ -2,9 +2,10 @@
 
 対象の EveryDB 種別: **EntraID ユーザー / グループ / デバイス一覧、Intune デバイス一覧、
 Microsoft 365 ライセンス一覧、Teams チーム一覧、SharePoint リスト / ドキュメントライブラリ、
-Outlook 予定表、OneDrive、Teams タスク & Planner**
+Outlook 予定表、OneDrive（組織）、Teams タスク & Planner**
 
 > 本ファイルは **アプリケーション認証（クライアントシークレット / app-only）** の個別手順です。
+> 個人 Microsoft アカウントではなく、会社・学校の Microsoft 365 組織を対象にします。
 > 方式の比較と選び方は [Microsoft Graph 接続方法の選択](microsoft365.md)、
 > ユーザー委任は [委任 OAuth の接続手順](microsoft365-delegated.md) を参照してください。
 
@@ -41,7 +42,7 @@ Microsoft Entra ID（旧 Azure AD）にアプリを登録し、**クライアン
 
 テナントID・クライアントID・クライアントシークレットは、接続設定ごとに直接保存しません。
 
-1. **設定** → **🔑 保存済みトークンの管理…** を開き、種別 **Microsoft 365 (Graph)** のプロファイルを新規作成します。
+1. **設定** → **🔑 保存済みトークンの管理…** を開き、種別 **Microsoft Entra ID（組織）** のプロファイルを新規作成します。
 2. 任意のラベルと、手順 3・4 で取得したテナントID、クライアントID、クライアントシークレットを入力して保存します。
 3. Graph 接続の追加・編集画面で認証情報欄の **選択…** を押し、保存したプロファイルを選びます。
 ## 必要な Graph アクセス許可
@@ -55,7 +56,7 @@ Microsoft Entra ID（旧 Azure AD）にアプリを登録し、**クライアン
 | Microsoft 365 ライセンス一覧 | `Organization.Read.All` |
 | SharePoint リスト / ライブラリ | `Sites.Read.All` |
 | Outlook 予定表 | `Calendars.Read` |
-| OneDrive | `Files.Read.All` |
+| OneDrive（組織） | `Files.Read.All` |
 | Teams タスク & Planner | `Tasks.Read.All`, `Group.Read.All` |
 
 ## EveryDB 側の入力項目
@@ -64,10 +65,10 @@ Microsoft Entra ID（旧 Azure AD）にアプリを登録し、**クライアン
 | :--- | :--- | :--- |
 | 保存済みトークンプロファイル | 手順 3・4 の認証情報を含む Graph プロファイル | 接続側では **選択…** で参照します。シークレットの有効期限に注意 |
 | サイトURL（SharePoint のみ） | `https://<テナント>.sharepoint.com/sites/<サイト名>` | サイト/チームから選択も可能 |
-| 対象ユーザー（予定表 / OneDrive） | UPN またはメールアドレス | 接続設定のテーブル一覧からは追加できません |
+| 対象ユーザー（予定表 / OneDrive（組織）） | UPN またはメールアドレス | 接続設定のテーブル一覧からは追加できません |
 | 対象チーム(グループ)のID（Planner） | Entra のグループ ID | 同上 |
 
-「Outlook 予定表 / OneDrive / Teams タスク & Planner」は対象を指定する必要があるため、
+「Outlook 予定表 / OneDrive（組織） / Teams タスク & Planner」は対象を指定する必要があるため、
 接続設定画面のテーブル一覧には出ません。データソース一覧の **＋追加** から個別に追加してください。
 
 ## よくあるエラーと対処
@@ -85,3 +86,4 @@ Microsoft Entra ID（旧 Azure AD）にアプリを登録し、**クライアン
 - [Microsoft Graph のアクセス許可リファレンス](https://learn.microsoft.com/graph/permissions-reference)
 - [Microsoft Graph 接続方法の選択](microsoft365.md)
 - [委任 OAuth の接続手順](microsoft365-delegated.md)
+- [個人向け OneDrive の接続手順](microsoft365-personal.md)

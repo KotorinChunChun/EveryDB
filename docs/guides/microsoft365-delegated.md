@@ -1,9 +1,11 @@
-# Microsoft 365（Graph API・ユーザー委任）の接続手順
+# Microsoft 365（Graph API・組織向けユーザー委任）の接続手順
 
 対象の EveryDB 種別: **SharePoint リスト / ドキュメントライブラリ、
-Outlook 予定表（本人）、OneDrive（本人）**
+Outlook 予定表（本人）、OneDrive（組織・本人）**
 
 > 本ファイルは **ユーザー委任（Delegated）** の個別手順です。
+> 会社・学校の Microsoft 365 組織を対象にします。個人契約の OneDrive は
+> [OneDrive（個人）の接続手順](microsoft365-personal.md)を参照してください。
 > 方式の比較と選び方は [Microsoft Graph 接続方法の選択](microsoft365.md)、
 > app-only方式は [アプリケーション認証の接続手順](microsoft365-app-only.md) を参照してください。
 
@@ -96,12 +98,12 @@ EveryDB の委任 OAuth（Authorization Code + PKCE）には、
 ### 4. EveryDB で Graph プロファイルを作成・認可する
 
 1. EveryDB の **設定** → **🔑 保存済みトークンの管理…** を開きます。
-2. 種別 **Microsoft 365 (Graph)** のプロファイルを **新規作成** します。
+2. 種別 **Microsoft Entra ID（組織）** のプロファイルを **新規作成** します。
 3. 認証方式で **「委任 OAuth（Microsoft にログインして認可）」** を選びます。
 4. 手順 1 でコピーした **テナント ID** と **クライアント ID** を入力します。
 5. 利用する機能を選びます。選択内容から要求する権限が組み立てられます。
 6. **🔗 Microsoft にログインして認可…** を押します。
-   既定のブラウザが開くので、Microsoft アカウントでサインインし、表示された許可を承認します。
+   既定のブラウザが開くので、会社・学校の Microsoft アカウントでサインインし、表示された許可を承認します。
    成功すると EveryDB に自動的に戻ります（ブラウザのタブは閉じて構いません）。
 7. **「✅ 認可済み」** の表示を確認して **保存** します。
 
@@ -129,15 +131,15 @@ Microsoft の認可をもう一度実行してください。
    **サイト/チームから選択** ボタンから選ぶこともできます。
 4. **保存してリロード** を押し、テーブルにデータが表示されることを確認します。
 
-#### Outlook 予定表 / OneDrive
+#### Outlook 予定表 / OneDrive（組織）
 
-1. データソース一覧の **＋追加** から **Outlook 予定表** または **OneDrive** を追加します。
+1. データソース一覧の **＋追加** から **Outlook 予定表** または **OneDrive（組織）** を追加します。
 2. 認証情報欄の **選択…** から、対応する機能を認可した委任 OAuth プロファイルを選びます。
 3. 委任 OAuth では対象ユーザーの UPN は使いません。画面には
    **「委任 OAuth: サインインした本人を取得します」** と表示されます。
 4. 保存してリロードし、本人の予定またはファイルが表示されることを確認します。
 
-Outlook 予定表は `/me/events`、OneDrive は `/me/drive` を使います。
+Outlook 予定表は `/me/events`、OneDrive（組織）は `/me/drive` を使います。
 別ユーザーを UPN で指定する必要がある場合は app-only プロファイルを使用してください。
 
 ## 認可の取消・タイムアウト
@@ -157,7 +159,7 @@ Outlook 予定表は `/me/events`、OneDrive は `/me/drive` を使います。
 | テナント ID | Entra アプリ概要のディレクトリ ID | |
 | クライアント ID | Entra アプリ概要のアプリケーション ID | |
 | 利用する機能 | SharePoint サイト・リスト / Teams選択、本人の Outlook 予定表、本人の OneDrive | 選択した機能に対応する Entra 権限と再認可が必要 |
-| Microsoft アカウントの認可 | （手動入力しません） | 「Microsoft にログインして認可…」の結果が保存されます |
+| 組織アカウントの認可 | （手動入力しません） | 「Microsoft にログインして認可…」の結果が保存されます |
 | 保存済みトークンプロファイル | 上記を含む Graph プロファイル | 各接続では **選択…** で参照。非対応のプロファイルは理由付きで選択不可 |
 | サイトURL（SharePoint） | `https://<テナント>.sharepoint.com/sites/<サイト名>` | サイト/チームから選択も可能 |
 
@@ -170,7 +172,7 @@ Outlook 予定表は `/me/events`、OneDrive は `/me/drive` を使います。
 | Teams タブが `403` または取得失敗 | 委任 `Team.ReadBasic.All` が未追加、または追加後に再認可していない | Entra に委任 `Team.ReadBasic.All` を追加し、トークン管理画面で Microsoft の認可をやり直す |
 | Teams タブに一部のチームが出ない | `/me/joinedTeams` はユーザーが直接参加している Teams のみを返す | 対象 Teams にユーザー本人が直接参加しているか確認 |
 | Outlook 予定表を選択できない | プロファイルに本人の Outlook 予定表機能が無い | `Calendars.ReadBasic` を追加し、機能を選んで再認可 |
-| OneDrive を選択できない | プロファイルに本人の OneDrive 機能が無い | `Files.Read` を追加し、機能を選んで再認可 |
+| OneDrive（組織）を選択できない | プロファイルに本人の OneDrive 機能が無い | `Files.Read` を追加し、機能を選んで再認可 |
 | `AADSTS700016` | クライアント ID がテナントに存在しない | テナント ID とクライアント ID の対応を確認 |
 | 認証メニューが見つからない | 一覧画面を見ている、または UI が英語表記 | アプリ登録を開き直す。**Authentication (Preview)**（認証）を選択。API のアクセス許可の直上 |
 | パブリック クライアント設定が無い | 詳細設定までスクロールしていない | **認証** 画面の **詳細設定** → **Allow public client flows** を **Yes** |
@@ -187,3 +189,4 @@ Outlook 予定表は `/me/events`、OneDrive は `/me/drive` を使います。
 - [アプリケーションの種類（パブリック クライアント）](https://learn.microsoft.com/entra/identity-platform/msal-client-applications)
 - [Microsoft Graph 接続方法の選択](microsoft365.md)
 - [アプリケーション認証の接続手順](microsoft365-app-only.md)
+- [個人向け OneDrive の接続手順](microsoft365-personal.md)
