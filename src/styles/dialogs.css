@@ -44,13 +44,17 @@
 /* データソース追加/編集ダイアログ: ウィンドウの高さを活かして縦に伸ばし、右下ハンドルでサイズ可変にする。
    flex 縦積みにして roles 一覧(roles-table-wrap)が残り高さを占有 → 中身が多くてもダイアログはビューポート内に収まる。 */
 #add-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
   display: flex;
   flex-direction: column;
-  min-height: 360px;
+  min-height: min(360px, 92vh);
   max-height: 92vh;
   height: 82vh;              /* 既定でウィンドウ高を活かす（resize で変更可） */
   resize: both;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 #add-dialog #add-form { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 #add-dialog .roles-fieldset { display: flex; flex-direction: column; min-height: 0; flex: 1; }
