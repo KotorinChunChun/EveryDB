@@ -701,6 +701,42 @@ impl Connector for GraphOneDriveConnector {
     }
 }
 
+// ---- OneDrive（個人 Microsoft アカウント本人）----
+#[derive(Deserialize)]
+pub(crate) struct MicrosoftAccountOneDriveConnector {
+    access_token: String,
+    #[serde(flatten)]
+    common: CommonCfg,
+}
+impl Connector for MicrosoftAccountOneDriveConnector {
+    fn fetch(&self) -> Result<Vec<Record>> {
+        let access_token = self.access_token.trim();
+        if access_token.is_empty() {
+            return Err(anyhow!(
+                "Microsoft アカウント（個人）の認可が完了していません"
+            ));
+        }
+        let client = GraphClient::new_with_token(access_token);
+        let mut out = Vec::new();
+        walk_drive(
+            &client,
+            personal_onedrive_base(),
+            "root",
+            &self.common,
+            &mut out,
+        )?;
+        Ok(out)
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        static_field_names(DRIVE_ITEM_FIELD_NAMES)
+    }
+}
+
+fn personal_onedrive_base() -> &'static str {
+    "me/drive"
+}
+
 // ---- Teams タスク & Planner（グループ ID 単位で配下の全プランのタスクを集約）----
 #[derive(Deserialize)]
 pub(crate) struct GraphPlannerConnector {
@@ -957,6 +993,11 @@ mod graph_delegated_endpoint_tests {
             one_drive_base(&auth("delegated"), "ignored@example.com").unwrap(),
             "me/drive"
         );
+    }
+
+    #[test]
+    fn personal_onedrive_has_its_own_signed_in_user_base() {
+        assert_eq!(personal_onedrive_base(), "me/drive");
     }
 
     #[test]

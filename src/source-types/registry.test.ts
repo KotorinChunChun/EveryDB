@@ -66,4 +66,17 @@ describe("source type metadata", () => {
     expect(browseCapabilityForType("unknown")).toBeNull();
     expect(openCapabilityForType("unknown")).toBe("none");
   });
+
+  it("keeps organizational and personal OneDrive as separate persisted types", () => {
+    expect(SOURCE_TYPE_METADATA.find((item) => item.id === "graph_onedrive")).toMatchObject({
+      label: "OneDrive（組織）",
+      credentialScope: "graph",
+    });
+    expect(SOURCE_TYPE_METADATA.find((item) => item.id === "microsoft_account_onedrive")).toMatchObject({
+      label: "OneDrive（個人）",
+      credentialScope: "microsoft_account",
+      guide: "microsoft365-personal",
+    });
+    expect(representativeTypeForCredentialScope("microsoft_account")).toBe("microsoft_account_onedrive");
+  });
 });

@@ -40,4 +40,11 @@ describe("source type forms", () => {
       expect(passwordFields.every((field) => field.credentialScope !== undefined)).toBe(true);
     }
   });
+
+  it("gives personal OneDrive only a personal Microsoft credential field", () => {
+    const definition = TYPE_DEFS.find((item) => item.value === "microsoft_account_onedrive")!;
+    expect(definition.fields.map((field) => field.key)).toEqual(["access_token"]);
+    expect(definition.fields[0].credentialScope).toBe("microsoft_account");
+    expect(definition.fields.some((field) => field.key === "tenant_id" || field.key === "user")).toBe(false);
+  });
 });

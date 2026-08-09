@@ -97,6 +97,14 @@ const GRAPH_AUTH_FIELDS: FieldDef[] = [
   { key: "client_id", label: "クライアントID", kind: "text", placeholder: "アプリケーション(クライアント) ID", helpUrl: ENTRA_APPS_URL },
   { key: "client_secret", label: "クライアントシークレット(値)", kind: "password", placeholder: "シークレットの値(ID ではない)", helpUrl: ENTRA_APPS_URL, credentialScope: "graph", credentialBundleFields: ["tenant_id", "client_id"] },
 ];
+const MICROSOFT_ACCOUNT_AUTH_FIELDS: FieldDef[] = [
+  {
+    key: "access_token",
+    label: "Microsoft アカウント",
+    kind: "password",
+    credentialScope: "microsoft_account",
+  },
+];
 export const TYPE_DEFS: TypeDef[] = [
   { value: "csv", label: "CSV ファイル", fields: [
     pathField(CSV_FILTERS),
@@ -152,7 +160,8 @@ export const TYPE_DEFS: TypeDef[] = [
   { value: "graph_intune_devices", label: "Intune デバイス一覧", fields: [...GRAPH_AUTH_FIELDS] },
   { value: "graph_licenses", label: "Microsoft 365 ライセンス一覧", fields: [...GRAPH_AUTH_FIELDS] },
   { value: "graph_calendar", label: "Outlook 予定表", fields: [...GRAPH_AUTH_FIELDS, { key: "user", label: "対象ユーザー(UPN/メール)", kind: "text", placeholder: "user@example.com" }] },
-  { value: "graph_onedrive", label: "OneDrive", fields: [...GRAPH_AUTH_FIELDS, { key: "user", label: "対象ユーザー(UPN/メール)", kind: "text", placeholder: "user@example.com" }] },
+  { value: "graph_onedrive", label: "OneDrive（組織）", fields: [...GRAPH_AUTH_FIELDS, { key: "user", label: "対象ユーザー(UPN/メール)", kind: "text", placeholder: "user@example.com" }] },
+  { value: "microsoft_account_onedrive", label: "OneDrive（個人）", fields: [...MICROSOFT_ACCOUNT_AUTH_FIELDS] },
   { value: "graph_planner", label: "Teams タスク & Planner", fields: [...GRAPH_AUTH_FIELDS, { key: "group_id", label: "対象チーム(グループ)のID", kind: "text", placeholder: "Entra管理センター等で確認したグループID" }] },
   { value: "browser_history", label: "ブラウザ: 閲覧履歴", fields: [
     { key: "browser", label: "ブラウザ", kind: "select", options: BROWSER_OPTIONS },

@@ -1153,6 +1153,59 @@ mod tests {
     }
 
     #[test]
+    fn organizational_and_personal_onedrive_credentials_are_isolated_by_scope() {
+        let conn = open_test_db();
+        let organization_id = add_credential(
+            &conn,
+            "graph",
+            "組織",
+            r#"{"tenant_id":"tenant","client_id":"org-client","client_secret":"secret"}"#,
+        )
+        .unwrap();
+        let personal_id = add_credential(
+            &conn,
+            MICROSOFT_ACCOUNT_SCOPE,
+            "個人",
+            r#"{"client_id":"personal-client","refresh_token":"refresh"}"#,
+        )
+        .unwrap();
+
+        let organization_config =
+            serde_json::json!({ "client_secret": format!("cred:{organization_id}") }).to_string();
+        let personal_config =
+            serde_json::json!({ "access_token": format!("cred:{personal_id}") }).to_string();
+        validate_source_credential_compatibility(&conn, "graph_onedrive", &organization_config)
+            .unwrap();
+        validate_source_credential_compatibility(
+            &conn,
+            MICROSOFT_ACCOUNT_ONEDRIVE_TYPE,
+            &personal_config,
+        )
+        .unwrap();
+
+        let wrong_organization =
+            serde_json::json!({ "client_secret": format!("cred:{personal_id}") }).to_string();
+        let error =
+            validate_source_credential_compatibility(&conn, "graph_onedrive", &wrong_organization)
+                .unwrap_err()
+                .to_string();
+        assert!(error.contains("期待: graph"));
+        assert!(error.contains("実際: microsoft_account"));
+
+        let wrong_personal =
+            serde_json::json!({ "access_token": format!("cred:{organization_id}") }).to_string();
+        let error = validate_source_credential_compatibility(
+            &conn,
+            MICROSOFT_ACCOUNT_ONEDRIVE_TYPE,
+            &wrong_personal,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("期待: microsoft_account"));
+        assert!(error.contains("実際: graph"));
+    }
+
+    #[test]
     fn graph_profile_preserves_legacy_defaults() {
         let app_only = graph_profile(&serde_json::json!({})).unwrap();
         assert_eq!(app_only.auth_method, GraphAuthMethod::AppOnly);
