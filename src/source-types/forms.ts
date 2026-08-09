@@ -108,6 +108,15 @@ const MICROSOFT_ACCOUNT_AUTH_FIELDS: FieldDef[] = [
 export const TYPE_DEFS: TypeDef[] = [
   { value: "csv", label: "CSV ファイル", fields: [
     pathField(CSV_FILTERS),
+    { key: "encoding", label: "文字コード", kind: "select", options: [
+      { value: "auto", label: "自動判定" }, { value: "utf8", label: "UTF-8" }, { value: "shift_jis", label: "Shift_JIS" },
+    ] },
+    { key: "line_ending", label: "改行コード", kind: "select", options: [
+      { value: "auto", label: "自動判定" }, { value: "crlf", label: "CRLF (Windows)" }, { value: "lf", label: "LF" }, { value: "cr", label: "CR" },
+    ] },
+    { key: "delimiter", label: "区切り文字", kind: "select", options: [
+      { value: ",", label: "カンマ (,)" }, { value: "\t", label: "タブ" }, { value: ";", label: "セミコロン (;)" }, { value: "|", label: "パイプ (|)" },
+    ] },
     { key: "skip_rows_top", label: "先頭から読み飛ばす行数", kind: "number", placeholder: "0", min: 0, optional: true },
     { key: "has_header", label: "（読み飛ばした後の）先頭行はヘッダー", kind: "checkbox", default: true },
     { key: "skip_rows_bottom", label: "末尾から読み飛ばす行数", kind: "number", placeholder: "0", min: 0, optional: true },

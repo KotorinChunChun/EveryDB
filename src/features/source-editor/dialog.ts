@@ -21,6 +21,7 @@ import { clearLinkedCredentials, setLinkedCredentials } from "./linked-credentia
 import type { RoleEditorController } from "./role-editor";
 import { configWithoutRoleKeys, roleStateFromConfig } from "./roles";
 import { makeApiKeyButton, makeLinkButton } from "./ui-buttons";
+import { createCsvPreviewController } from "./csv-preview";
 
 export interface SourceEditorDialogElements {
   dialog: HTMLDialogElement;
@@ -122,6 +123,7 @@ export function mountSourceEditorDialog(
   let nameManuallyEdited = false;
   /** 接続先追加フロー（保存後にテーブル選択ダイアログへ進む） */
   let connectionAddMode = false;
+  const csvPreview = createCsvPreviewController({ getConfig: () => buildConfigFromFields().config });
 
   for (const t of TYPE_DEFS) {
     const opt = document.createElement("option");
@@ -490,6 +492,7 @@ export function mountSourceEditorDialog(
         cb.addEventListener("change", () => {
           autoFillDefaultName();
           maybeFetchAndRenderFields();
+          csvPreview.schedule();
         });
         label.append(cb, document.createTextNode(" " + f.label));
       } else if (f.kind === "select") {
@@ -508,6 +511,7 @@ export function mountSourceEditorDialog(
           maybeFetchAndRenderFields();
           // excel_range の start_mode/end_mode 連動表示
           syncExcelRangeModeVisibility();
+          csvPreview.schedule();
         });
         label.appendChild(sel);
       } else if (f.kind === "textarea") {
@@ -541,7 +545,10 @@ export function mountSourceEditorDialog(
           elements.dynamicEl.appendChild(input);
           continue;
         }
-        input.addEventListener("input", () => autoFillDefaultName());
+        input.addEventListener("input", () => {
+          autoFillDefaultName();
+          csvPreview.schedule();
+        });
         input.addEventListener("change", () => {
           autoFillDefaultName();
           maybeFetchAndRenderFields();
@@ -578,6 +585,7 @@ export function mountSourceEditorDialog(
                   input.value = picked;
                   autoFillDefaultName();
                   maybeFetchAndRenderFields();
+                  csvPreview.schedule();
                 }
               } catch (e) {
                 console.error("ファイル選択に失敗:", e);
@@ -680,6 +688,14 @@ export function mountSourceEditorDialog(
         }
       }
       elements.dynamicEl.appendChild(label);
+    }
+    if (def.value === "csv") {
+      const previewHost = document.createElement("section");
+      previewHost.className = "csv-preview";
+      elements.dynamicEl.appendChild(previewHost);
+      csvPreview.mount(previewHost);
+    } else {
+      csvPreview.clear();
     }
     // 参照(ブラウズ)ボタンは新規追加時のみ（編集時は種別固定・接続情報も隠れているため意味がない）。
     if (dialogMode === "add") {
@@ -911,6 +927,7 @@ export function mountSourceEditorDialog(
         pathEl.value = path;
         autoFillDefaultName();
         maybeFetchAndRenderFields();
+        csvPreview.schedule();
       } else if (keyPathEl) {
         keyPathEl.value = path;
         autoFillDefaultName();

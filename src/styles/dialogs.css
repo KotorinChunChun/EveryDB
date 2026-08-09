@@ -164,6 +164,24 @@
 .browse-area { margin-bottom: 10px; }
 .browse-area .btn { margin-bottom: 6px; }
 
+.csv-preview {
+  min-width: 0; margin: 10px 0 4px; padding: 10px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2);
+}
+.csv-preview-heading { font-size: 12px; font-weight: 600; margin-bottom: 5px; }
+.csv-preview-status { color: var(--muted); font-size: 11px; margin-bottom: 6px; white-space: normal; }
+.csv-preview-status[data-state="error"] { color: var(--error-state-text); }
+.csv-preview-table-wrap { max-height: 300px; overflow: auto; font-size: 11px; }
+.csv-preview-table { width: max-content; min-width: 100%; border-collapse: collapse; }
+.csv-preview-table th,
+.csv-preview-table td {
+  max-width: 240px; padding: 4px 7px; border: 1px solid var(--border);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;
+}
+.csv-preview-table thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); }
+.csv-preview-table tbody th { position: sticky; left: 0; background: var(--panel); color: var(--muted); }
+.csv-preview-gap td { text-align: center; color: var(--muted); background: var(--panel); }
+
 .roles-fieldset { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin: 12px 0; }
 .roles-fieldset legend { color: var(--muted); font-size: 12px; padding: 0 4px; }
 .roles-toolbar { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 8px; }
