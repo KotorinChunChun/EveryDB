@@ -1,6 +1,6 @@
 [package]
 name = "everydb"
-version = "0.0.6"
+version = "0.1.0"
 description = "各種データソースをローカル SQLite にキャッシュして横断高速検索するツール"
 authors = ["EveryDB"]
 edition = "2021"
