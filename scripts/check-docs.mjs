@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const docsRoot = join(root, "docs");
+const devRoot = join(root, "dev");
 const files = [join(root, "README.md")];
 const categoryLabels = {
   local: "ローカル",
@@ -34,6 +35,11 @@ function sourceCatalog(manifest) {
 }
 
 collectMarkdown(docsRoot);
+for (const entry of readdirSync(devRoot)) {
+  const path = join(devRoot, entry);
+  const isCurrentPlanningDocument = /^(?:v\d+\.\d+\.\d+-(?:req|imp|task)|PLAN_IDEAS|reject)\.md$/.test(entry);
+  if (isCurrentPlanningDocument && statSync(path).isFile()) files.push(path);
+}
 
 const errors = [];
 for (const file of files) {

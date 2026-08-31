@@ -4,6 +4,14 @@ dev/*
 !dev/scripts/
 dev/scripts/*
 !dev/scripts/*.ps1
+!dev/history/
+dev/history/*
+!dev/history/*.md
+!dev/v*-req.md
+!dev/v*-imp.md
+!dev/v*-task.md
+!dev/PLAN_IDEAS.md
+!dev/reject.md
 release/
 node_modules/
 dist/
