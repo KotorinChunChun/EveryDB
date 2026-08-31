@@ -42,7 +42,7 @@ use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 use app_state::AppState;
-use lifecycle::shutdown_background_tasks;
+use lifecycle::{cancel_oauth_tasks, shutdown_background_tasks};
 
 /// トレイの「表示」・グローバルホットキーで共通のウィンドウ表示処理。
 /// 表示後に検索ボックスへフォーカスさせるイベントを送る（要件 §9-5: Everything ライク挙動）。
@@ -146,7 +146,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
-                    shutdown_background_tasks(window.app_handle());
+                    cancel_oauth_tasks(window.app_handle());
                     if let Err(error) = window.hide() {
                         internal_log::warn("window", format!("hide failed: {error}"));
                     }
