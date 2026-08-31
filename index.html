@@ -343,6 +343,13 @@
         </div>
         <span class="roles-hint">Notion/Airtable/Microsoft 365/Box/PostgreSQL/MySQL のトークン・パスワードを名前を付けて保存し、複数のデータソースで使い回せます</span>
       </div>
+      <div class="field">バックアップと復元
+        <div class="zoom-row">
+          <button type="button" id="s-backup" class="btn">バックアップを保存</button>
+          <button type="button" id="s-restore" class="btn">バックアップから復元</button>
+        </div>
+        <span id="s-backup-status" class="roles-hint">秘密値はDPAPI暗号文のまま含まれます。他のPCやWindowsユーザーでは再認可が必要になる場合があります。</span>
+      </div>
       <div class="dialog-actions">
         <button id="settings-close" class="btn">閉じる</button>
       </div>

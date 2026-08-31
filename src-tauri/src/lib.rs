@@ -1,4 +1,6 @@
 pub mod app_state;
+pub mod backup_commands;
+pub mod backup_service;
 pub mod box_oauth;
 pub mod browse;
 pub mod browse_commands;
@@ -85,6 +87,7 @@ pub fn run() {
             // キャッシュ DB を初期化して状態管理下に置く。
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
+            backup_service::apply_pending_restore(&dir)?;
             let conn = db::open_cached_database(&dir.join("cache.db"))?;
             // 前回のズーム倍率とホットキーを復元する（要件 REQ-UI-01 / §9-5）。
             let saved_zoom: f64 = db::get_meta(&conn, "ui_zoom")?
@@ -160,6 +163,8 @@ pub fn run() {
             source_commands::delete_source,
             source_commands::set_refresh_interval,
             source_commands::reload_sources,
+            backup_commands::export_database_backup,
+            backup_commands::stage_database_restore,
             search_commands::search,
             search_commands::add_search_history_entry,
             search_commands::list_search_history,

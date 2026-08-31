@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use super::{get_meta, set_meta};
 pub(super) const SCHEMA_VERSION_KEY: &str = "schema_version";
-const CURRENT_SCHEMA_VERSION: i64 = 2;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 2;
 
 /// cache.db を開き、必要な場合だけ移行前バックアップを取ってから初期化する。
 ///

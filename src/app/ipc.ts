@@ -110,6 +110,11 @@ export interface FieldPreview {
   from_cache: boolean;
 }
 
+export interface BackupInfo {
+  schema_version: number;
+  source_count: number;
+}
+
 /** Rust の invoke_handler と 1 対 1 で同期する IPC 契約。 */
 export interface IpcContract {
   list_sources: { args: undefined; result: SourceInfo[] };
@@ -127,6 +132,8 @@ export interface IpcContract {
   preview_source_fields_by_id: { args: { id: number }; result: FieldPreview };
   set_refresh_interval: { args: { id: number; seconds: number }; result: void };
   reload_sources: { args: { sourceIds: number[] }; result: ReloadSummary };
+  export_database_backup: { args: { path: string }; result: BackupInfo };
+  stage_database_restore: { args: { path: string }; result: BackupInfo };
 
   search: {
     args: { query: string; sourceIds: number[]; seq: number; limit?: number | null };

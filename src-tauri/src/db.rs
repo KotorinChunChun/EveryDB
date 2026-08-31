@@ -11,6 +11,7 @@ use crate::model::Record;
 /// 行数上限の既定値（UI から変更可能）。
 pub const DEFAULT_ROW_LIMIT: i64 = 10000;
 mod migrations;
+pub(crate) use migrations::CURRENT_SCHEMA_VERSION;
 pub use migrations::{init_schema, open_cached_database};
 #[cfg(test)]
 use migrations::{initialize_database_with, table_has_column, SCHEMA_VERSION_KEY};

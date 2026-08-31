@@ -2,6 +2,7 @@ import { $ } from "../../app/dom";
 import { invoke } from "../../app/ipc";
 import { appState } from "../../app/state";
 import type { ReloadSummary } from "../../shared/types";
+import { open, save } from "@tauri-apps/plugin-dialog";
 
 type Theme = "dark" | "light" | "night";
 
@@ -115,6 +116,38 @@ export function mountSettings(deps: SettingsDeps): SettingsController {
 
   $<HTMLButtonElement>("settings-close").onclick = () => $<HTMLDialogElement>("settings-dialog").close();
   $<HTMLButtonElement>("s-reload").onclick = () => void reloadAllSources();
+
+  $<HTMLButtonElement>("s-backup").onclick = async () => {
+    const path = await save({
+      defaultPath: "EveryDB-backup.sqlite3",
+      filters: [{ name: "EveryDB SQLiteバックアップ", extensions: ["sqlite3", "db"] }],
+    });
+    if (!path) return;
+    const status = $<HTMLElement>("s-backup-status");
+    try {
+      const info = await invoke("export_database_backup", { path });
+      status.textContent = `バックアップを保存しました（ソース${info.source_count}件、schema ${info.schema_version}）。`;
+    } catch (error) {
+      status.textContent = `バックアップに失敗しました: ${String(error)}`;
+    }
+  };
+
+  $<HTMLButtonElement>("s-restore").onclick = async () => {
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "EveryDB SQLiteバックアップ", extensions: ["sqlite3", "db"] }],
+    });
+    if (!selected || Array.isArray(selected)) return;
+    if (!window.confirm("現在のデータは復元直前に退避されます。選択したバックアップを次回起動時に復元しますか？")) return;
+    const status = $<HTMLElement>("s-backup-status");
+    try {
+      const info = await invoke("stage_database_restore", { path: selected });
+      status.textContent = `復元を予約しました（ソース${info.source_count}件）。通知領域のメニューからEveryDBを終了し、もう一度起動してください。`;
+    } catch (error) {
+      status.textContent = `復元の予約に失敗しました: ${String(error)}`;
+    }
+  };
 
   $<HTMLSelectElement>("s-theme").addEventListener("change", async (e) => {
     const theme = (e.target as HTMLSelectElement).value as Theme;

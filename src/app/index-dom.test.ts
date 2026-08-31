@@ -7,6 +7,7 @@ const requiredIds = [
   "app", "search", "sources", "status", "grid", "grid-head", "grid-viewport", "grid-rows", "result-info",
   "add-dialog", "parent-dialog", "column-map-dialog", "settings-dialog", "credential-manager",
   "guide-dialog", "confirm-dialog", "url-auto-input-dialog", "export-dialog", "shortcut-guide-dialog",
+  "empty-state", "empty-state-sample", "empty-state-add", "s-backup", "s-restore", "s-backup-status",
   "simple-picker-dialog-template",
   "connection-chooser-filter", "connection-chooser-filter-clear",
 ];
