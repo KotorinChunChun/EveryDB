@@ -1,4 +1,5 @@
 import { invoke } from "./ipc";
+import { resolveResource } from "@tauri-apps/api/path";
 import { $ } from "./dom";
 import { mountDialogAccessibility } from "./dialog-a11y";
 import { mountSimplePickerDialogs } from "./simple-picker-dialogs";
@@ -35,6 +36,7 @@ import { mountSourcesSidebar } from "../features/sources/sidebar";
 import { mountSearchControllerFromDom } from "../features/search/controller";
 import { gridColumnWidth } from "../features/grid/data";
 import { mountSourcePickers } from "../features/pickers";
+import { mountEmptyState } from "../features/onboarding/empty-state";
 
 mountSimplePickerDialogs();
 mountDialogAccessibility();
@@ -90,6 +92,7 @@ let openEditDialog: (id: number) => Promise<void>;
 let openParentSettingsDialog: (parentKey: string) => Promise<void>;
 let sourceEditor: SourceEditorDialogController;
 let parentSettings: ParentSettingsDialogController;
+let emptyState: ReturnType<typeof mountEmptyState>;
 
 function totalGridWidth(): number {
   return appState.columns.reduce(
@@ -215,8 +218,9 @@ export async function loadSources() {
   const list = await invoke("list_sources");
   replaceSourcesList(list);
   saveSelectedSourcesState();
+  emptyState.render(list.length > 0);
   renderSources();
-  runSearch();
+  await runSearch();
 }
 
 export async function refreshSidebar() {
@@ -409,6 +413,35 @@ openParentSettingsDialog = parentSettings.openParentSettingsDialog;
 mountConnectionChooser({
   openAddDialog: (opts) => sourceEditor.openAddDialog(opts),
   openParentSettingsDialog: (key) => openParentSettingsDialog(key),
+});
+
+const SAMPLE_SOURCE_NAME = "サンプル（顧客名簿）";
+emptyState = mountEmptyState({
+  root: $<HTMLElement>("empty-state"),
+  grid: $<HTMLElement>("grid"),
+  sampleButton: $<HTMLButtonElement>("empty-state-sample"),
+  addButton: $<HTMLButtonElement>("empty-state-add"),
+  error: $<HTMLElement>("empty-state-error"),
+}, {
+  openConnectionChooser: () => $<HTMLButtonElement>("add").click(),
+  addSample: async () => {
+    let sample = appState.sources.find((source) => source.name === SAMPLE_SOURCE_NAME);
+    if (sample) {
+      await invoke("reload_sources", { sourceIds: [sample.id] });
+    } else {
+      const path = await resolveResource("samples/customers.csv");
+      await invoke("add_source", {
+        type: "csv",
+        name: SAMPLE_SOURCE_NAME,
+        configJson: JSON.stringify({ path }),
+      });
+    }
+    await loadSources();
+    sample = appState.sources.find((source) => source.name === SAMPLE_SOURCE_NAME);
+    if (!sample || sample.status === "error") {
+      throw new Error(sample?.last_error ?? "サンプルの状態を確認できませんでした");
+    }
+  },
 });
 
 const settings = mountSettings({

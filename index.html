@@ -57,6 +57,18 @@
         <div id="sidebar-resizer" class="sidebar-resizer" title="ドラッグして幅を変更"></div>
 
         <main class="content">
+          <section id="empty-state" class="empty-state" aria-labelledby="empty-state-title" hidden>
+            <div class="empty-state-card">
+              <p class="empty-state-eyebrow">EveryDBへようこそ</p>
+              <h1 id="empty-state-title">手元のデータを、ひとつの画面から検索できます</h1>
+              <p>まずは同梱の顧客名簿サンプルを取り込むか、お使いの接続先を追加してください。</p>
+              <div class="empty-state-actions">
+                <button id="empty-state-sample" class="btn primary" type="button">サンプルで試す</button>
+                <button id="empty-state-add" class="btn" type="button">接続先を追加</button>
+              </div>
+              <p id="empty-state-error" class="empty-state-error" role="alert" hidden></p>
+            </div>
+          </section>
           <div id="grid" class="grid" tabindex="0">
             <div id="grid-head" class="grid-head"></div>
             <div id="grid-viewport" class="grid-viewport">

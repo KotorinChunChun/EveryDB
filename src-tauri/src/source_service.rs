@@ -15,6 +15,15 @@ fn validate_credential_compatibility(
         .map_err(|error| ServiceError::validation(error.to_string()))
 }
 
+fn validate_new_source_type(type_: &str) -> ServiceResult<()> {
+    if type_ == "excel_cell" {
+        return Err(ServiceError::validation(
+            "Excelセル指定は新規追加できません。Excel範囲を使用してください",
+        ));
+    }
+    Ok(())
+}
+
 pub fn list_sources(state: &AppState) -> ServiceResult<Vec<SourceInfo>> {
     let conn = lock_db(state)?;
     db::list_sources(&conn)
@@ -27,6 +36,7 @@ pub fn add_source(
     name: String,
     config_json: String,
 ) -> ServiceResult<i64> {
+    validate_new_source_type(&type_)?;
     let id = {
         let conn = lock_db(state)?;
         validate_credential_compatibility(&conn, &type_, &config_json)?;
@@ -69,6 +79,7 @@ pub fn add_source_from_sibling(
     config_json: String,
     shared_keys: Vec<String>,
 ) -> ServiceResult<i64> {
+    validate_new_source_type(&type_)?;
     let id = {
         let conn = lock_db(state)?;
         let (_, sibling_json) = db::get_source_config(&conn, sibling_id)
@@ -275,6 +286,26 @@ mod source_service_tests {
         .unwrap_err()
         .to_string();
         assert!(error.contains("委任 OAuth に対応していません"));
+        assert!(crate::db::list_sources(&state.db.lock().unwrap())
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn add_source_rejects_legacy_excel_cell_without_inserting() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::init_schema(&conn).unwrap();
+        let state = AppState::new(conn);
+
+        let error = add_source(
+            &state,
+            "excel_cell".to_string(),
+            "旧セル指定".to_string(),
+            r#"{"path":"book.xlsx","sheet":"Sheet1","cell":"A1"}"#.to_string(),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("Excel範囲"));
         assert!(crate::db::list_sources(&state.db.lock().unwrap())
             .unwrap()
             .is_empty());

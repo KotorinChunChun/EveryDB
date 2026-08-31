@@ -36,7 +36,7 @@ Windows の「設定」→「アプリ」から EveryDB をアンインストー
 
 ## 対応データソース
 
-現在は34種類をサポートしています。
+現在は35種類をサポートしています。
 
 - ローカル: CSV、SQLite、Access、Excel（テーブル／範囲／シート一覧）、フォルダ、IME辞書、ブラウザ履歴・ブックマーク・ダウンロード履歴
 - Microsoft 365: Entra ID、Teams、SharePoint、Intune、ライセンス、Outlook予定表、OneDrive、Planner
