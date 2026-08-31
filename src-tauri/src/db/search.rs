@@ -7,7 +7,7 @@ use crate::model::{Row, SearchPreset};
 const PER_SOURCE_CAP: i64 = 200;
 /// 検索（要件 §5-2 / §6-2 / §9-5）。
 /// 空クエリはブラウズ、単一語は 1〜2 文字 LIKE / 3 文字以上 FTS、
-/// **半角スペース区切りの複数語は AND 検索**（全語を LIKE で AND 結合、要件 §9-5）。
+/// **半角スペース区切りの複数語は AND 検索**（長語は FTS、短語は LIKE、要件 §9-5）。
 pub fn search(
     conn: &Connection,
     query: &str,
@@ -46,9 +46,7 @@ pub fn search(
     Ok((rows, truncated))
 }
 
-/// 複数語 AND 検索。全語を `search_text LIKE` の AND で結合する
-/// （語ごとに FTS/LIKE を混在させると MATCH の複数回結合が煩雑になるため、
-/// 複数語ケースは LIKE の AND に統一する。対象件数は TOTAL_CAP で頭打ちのため十分高速）。
+/// 複数語 AND 検索。3文字以上は FTS5 trigram、1〜2文字は LIKE を使う。
 fn multi_term_and_search(
     conn: &Connection,
     terms: &[&str],
@@ -59,8 +57,15 @@ fn multi_term_and_search(
     let mut conds = Vec::with_capacity(terms.len());
     let mut binds: Vec<SqlValue> = id_params.to_vec();
     for t in terms {
-        conds.push("r.search_text LIKE ? ESCAPE '\\'".to_string());
-        binds.push(SqlValue::Text(format!("%{}%", escape_like(t))));
+        if t.chars().count() >= 3 {
+            conds.push(
+                "r.id IN (SELECT rowid FROM records_fts WHERE records_fts MATCH ?)".to_string(),
+            );
+            binds.push(SqlValue::Text(fts_phrase(t)));
+        } else {
+            conds.push("r.search_text LIKE ? ESCAPE '\\'".to_string());
+            binds.push(SqlValue::Text(format!("%{}%", escape_like(t))));
+        }
     }
     let sql = format!(
         "SELECT r.source_id, s.name, r.label, r.open_ref, r.row_number, r.fields_json
@@ -117,8 +122,7 @@ fn fts_search(
     id_params: &[SqlValue],
     limit: i64,
 ) -> Result<Vec<Row>> {
-    // trigram では部分一致をフレーズとして与える。内部の " は "" にエスケープ。
-    let match_str = format!("\"{}\"", q.replace('"', "\"\""));
+    let match_str = fts_phrase(q);
     let sql = format!(
         "SELECT sid, sname, label, open_ref, row_number, fields_json FROM (
             SELECT r.source_id AS sid, s.name AS sname, r.label AS label,
@@ -241,4 +245,9 @@ fn escape_like(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_")
+}
+
+/// trigram の部分一致へ安全なフレーズとして渡す。入力を FTS 構文にしない。
+fn fts_phrase(s: &str) -> String {
+    format!("\"{}\"", s.replace('"', "\"\""))
 }

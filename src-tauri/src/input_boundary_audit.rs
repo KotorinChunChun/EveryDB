@@ -89,6 +89,41 @@ mod tests {
     }
 
     #[test]
+    fn multi_term_search_uses_fts_for_three_character_terms() {
+        let (conn, sid) = open_with_records(&[
+            ("both", "東京都 営業部"),
+            ("wrong-city", "大阪府 営業部"),
+            ("wrong-department", "東京都 開発部"),
+        ]);
+        let (hits, _) = db::search(&conn, "東京都 営業部", &[sid], db::DEFAULT_ROW_LIMIT).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].label.as_deref(), Some("both"));
+    }
+
+    #[test]
+    fn multi_term_search_combines_short_like_and_long_fts_terms() {
+        let (conn, sid) = open_with_records(&[
+            ("both", "東京 営業部"),
+            ("wrong-city", "大阪 営業部"),
+            ("wrong-department", "東京 開発部"),
+        ]);
+        let (hits, _) = db::search(&conn, "東京 営業部", &[sid], db::DEFAULT_ROW_LIMIT).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].label.as_deref(), Some("both"));
+    }
+
+    #[test]
+    fn multi_term_fts_quotes_are_treated_as_literal_input() {
+        let (conn, sid) = open_with_records(&[
+            ("quoted", r#"東京都 \"営業部\""#),
+            ("ordinary", "東京都 営業部"),
+        ]);
+        let (hits, _) =
+            db::search(&conn, r#"東京都 \"営業部\""#, &[sid], db::DEFAULT_ROW_LIMIT).unwrap();
+        assert!(hits.len() <= 1);
+    }
+
+    #[test]
     fn empty_and_whitespace_only_queries_browse_without_error() {
         let (conn, sid) = open_with_records(&[("a", "one"), ("b", "two")]);
         let (all, _) = db::search(&conn, "", &[sid], db::DEFAULT_ROW_LIMIT).unwrap();
