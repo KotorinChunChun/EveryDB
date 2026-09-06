@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+
 # EveryDB 開発起動スクリプト（テスト用データ入りで起動）。
 #
 # 「cargo run」を src-tauri 直下で直に叩くと、Tauri の beforeDevCommand（Vite開発サーバー起動）
@@ -7,7 +9,7 @@
 # ローカルサンプルデータ（CSV/Excel/フォルダ/IME辞書/accdb）を生成し、実際にアプリが使う
 # キャッシュ DB へ登録してから起動する。
 #
-# 実行: pwsh -File dev/scripts/run_dev.ps1
+# 実行: pwsh -File dev/scripts/run-debug-EveryDB-all-sample.ps1
 # Notion/SharePoint/EntraID/Teams も一緒に読み込みたい場合は、事前に
 # $env:EVERYDB_NOTION_TOKEN 等を設定してから本スクリプトを実行する（README.md 参照）。
 
@@ -17,7 +19,8 @@ Set-Location $root
 
 Write-Output "===== 1/4: npm 依存関係 ====="
 if (-not (Test-Path (Join-Path $root "node_modules"))) {
-    npm install
+    npm ci
+    if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE" }
 } else {
     Write-Output "node_modules は既に存在するためスキップ"
 }
@@ -26,6 +29,7 @@ Write-Output "===== 2/4: ローカルサンプルデータの生成 ====="
 Push-Location (Join-Path $root "src-tauri")
 try {
     cargo run --example gen_samples
+    if ($LASTEXITCODE -ne 0) { throw "gen_samples failed with exit code $LASTEXITCODE" }
 } finally {
     Pop-Location
 }
@@ -33,7 +37,8 @@ try {
 # accdb サンプルは ACE OLEDB(Office/Access Runtime) が無い環境では作れないため、
 # 失敗してもスクリプト全体は止めない(ベストエフォート)。
 try {
-    pwsh -File (Join-Path $root "dev\scripts\gen_access_sample.ps1")
+    pwsh -File (Join-Path $root "dev\scripts\generate-EveryDB-access-sample.ps1")
+    if ($LASTEXITCODE -ne 0) { throw "Access sample generation failed with exit code $LASTEXITCODE" }
 } catch {
     Write-Warning "accdb サンプル生成をスキップ(ACE OLEDB 未導入の可能性): $($_.Exception.Message)"
 }
@@ -44,9 +49,11 @@ Write-Output "===== 3/4: テスト用データソースをキャッシュ DB へ
 Push-Location (Join-Path $root "src-tauri")
 try {
     cargo run --example seed_test_sources
+    if ($LASTEXITCODE -ne 0) { throw "seed_test_sources failed with exit code $LASTEXITCODE" }
 } finally {
     Pop-Location
 }
 
 Write-Output "===== 4/4: アプリ起動(npm run tauri dev) ====="
 npm run tauri dev
+if ($LASTEXITCODE -ne 0) { throw "tauri dev failed with exit code $LASTEXITCODE" }

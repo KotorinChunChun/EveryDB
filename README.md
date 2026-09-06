@@ -72,6 +72,7 @@ Windows の「設定」→「アプリ」から EveryDB をアンインストー
 
 ## 開発者向け文書
 
+- [開発者ガイド](docs/DEVELOPERS_GUIDE.md)
 - [ビルド方法](docs/development/building.md)
 - [テスト方法](docs/development/testing.md)
 - [アーキテクチャ](docs/development/architecture.md)

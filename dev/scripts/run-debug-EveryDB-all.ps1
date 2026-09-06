@@ -8,7 +8,7 @@
   Vite 開発サーバーと Rust デバッグビルドが立ち上がります。
 
 .EXAMPLE
-  pwsh -File .\dev\scripts\start-debug.ps1
+  pwsh -File .\dev\scripts\run-debug-EveryDB-all.ps1
 #>
 [CmdletBinding()]
 param()

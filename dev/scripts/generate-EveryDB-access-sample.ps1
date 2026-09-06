@@ -1,8 +1,10 @@
+#Requires -Version 7.0
+
 # Access(accdb) のダミーデータ生成ツール（開発・検証用）。
 # gen_samples.rs は accdb を作れない（Rust に accdb 書き込み手段が無い）ため、
 # ACE OLEDB プロバイダ + ADOX を使う本スクリプトで samples/access_db.accdb を生成する。
 #
-# 実行: pwsh -File dev/scripts/gen_access_sample.ps1
+# 実行: pwsh -File dev/scripts/generate-EveryDB-access-sample.ps1
 # 前提: Microsoft.ACE.OLEDB.12.0 または 16.0 が登録済み（Office / Access Runtime）。
 
 $ErrorActionPreference = "Stop"

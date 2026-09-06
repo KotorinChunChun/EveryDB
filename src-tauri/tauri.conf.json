@@ -35,7 +35,7 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../samples/customers.csv": "samples/customers.csv"
+      "resources/samples/customers.csv": "samples/customers.csv"
     }
   }
 }
