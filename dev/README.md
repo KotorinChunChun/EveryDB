@@ -30,6 +30,7 @@
 | `scripts/run-debug-EveryDB-all-sample.ps1` | ローカルサンプルを生成・登録して Debug 起動 |
 | `scripts/run-release-EveryDB-all.ps1` | バンドルを作らず Release 構成をビルドして起動 |
 | `scripts/run-exe-EveryDB-all.ps1` | 既存の Release 実行ファイルをビルドせず起動 |
+| `scripts/build-debug-EveryDB-kotorintoys.ps1` | KotorinToys管理連携版を専用Debug出力先へビルド |
 | `scripts/generate-EveryDB-access-sample.ps1` | Access 用ローカル試験データを生成する補助処理 |
 | `scripts/test-script-naming.ps1` | 運用スクリプトの命名を自動検査 |
 

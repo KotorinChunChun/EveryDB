@@ -20,6 +20,7 @@ pub mod graph_oauth;
 mod input_boundary_audit;
 pub mod internal_log;
 pub mod lifecycle;
+pub mod management;
 pub mod model;
 pub mod opener;
 #[cfg(test)]
@@ -38,28 +39,54 @@ pub mod source_commands;
 pub mod source_service;
 pub mod winauth;
 
+use std::path::PathBuf;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+mod window_title;
 
 use app_state::AppState;
 use lifecycle::{cancel_oauth_tasks, shutdown_background_tasks};
 
 /// トレイの「表示」・グローバルホットキーで共通のウィンドウ表示処理。
 /// 表示後に検索ボックスへフォーカスさせるイベントを送る（要件 §9-5: Everything ライク挙動）。
-fn show_main_window(app: &tauri::AppHandle) {
+fn show_main_window(app: &tauri::AppHandle) -> bool {
     if let Some(w) = app.get_webview_window("main") {
-        if let Err(error) = w.show() {
-            internal_log::warn("window", format!("show failed: {error}"));
-        }
-        if let Err(error) = w.set_focus() {
-            internal_log::warn("window", format!("focus failed: {error}"));
-        }
+        let visible = match w.show() {
+            Ok(()) => true,
+            Err(error) => {
+                internal_log::warn("window", format!("show failed: {error}"));
+                false
+            }
+        };
+        let focused = match w.set_focus() {
+            Ok(()) => true,
+            Err(error) => {
+                internal_log::warn("window", format!("focus failed: {error}"));
+                false
+            }
+        };
         if let Err(error) = app.emit("focus-search", ()) {
             internal_log::warn("window", format!("focus-search emit failed: {error}"));
         }
+        return visible && focused;
     }
+    false
+}
+
+fn app_data_dir(app: &tauri::AppHandle) -> anyhow::Result<PathBuf> {
+    #[cfg(debug_assertions)]
+    if let Some(directory) = std::env::var_os("EVERYDB_TEST_DATA_DIR") {
+        let directory = PathBuf::from(directory);
+        anyhow::ensure!(
+            directory.is_absolute(),
+            "Debug試験用データ保存先は絶対パスで指定してください"
+        );
+        return Ok(directory);
+    }
+    Ok(app.path().app_data_dir()?)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -85,7 +112,7 @@ pub fn run() {
         )
         .setup(|app| {
             // キャッシュ DB を初期化して状態管理下に置く。
-            let dir = app.path().app_data_dir()?;
+            let dir = app_data_dir(app.handle())?;
             std::fs::create_dir_all(&dir)?;
             backup_service::apply_pending_restore(&dir)?;
             let conn = db::open_cached_database(&dir.join("cache.db"))?;
@@ -101,6 +128,9 @@ pub fn run() {
                 state.scheduler_shutdown.clone()
             };
             if let Some(w) = app.get_webview_window("main") {
+                if let Err(error) = w.set_title(&window_title::WindowTitle::create()) {
+                    internal_log::warn("window", format!("title update failed: {error}"));
+                }
                 if let Err(error) = w.set_zoom(saved_zoom) {
                     internal_log::warn("window", format!("restore zoom failed: {error}"));
                 }
@@ -116,7 +146,9 @@ pub fn run() {
                 .tooltip("EveryDB")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => show_main_window(app),
+                    "show" => {
+                        let _ = show_main_window(app);
+                    }
                     "reload" => refresh::reload_all_now(app),
                     "quit" => app.exit(0),
                     _ => {}
@@ -131,18 +163,9 @@ pub fn run() {
                 );
             }
 
-            // "--minimized"（自動起動経由）の場合はウィンドウを出さずトレイ常駐のまま待機する。
-            let launched_minimized = std::env::args().any(|a| a == "--minimized");
-            if launched_minimized {
-                if let Some(w) = app.get_webview_window("main") {
-                    if let Err(error) = w.hide() {
-                        internal_log::warn("window", format!("minimized hide failed: {error}"));
-                    }
-                }
-            }
-
             // 定期自動更新タイマーを起動。
             refresh::spawn_scheduler(app.handle().clone(), scheduler_shutdown);
+            app.manage(management::Management::start(app.handle().clone())?);
             Ok(())
         })
         // ウィンドウの×は終了せずトレイに格納する。OAuth 実行中なら取消する。
@@ -230,9 +253,25 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
-            if let RunEvent::Exit = event {
-                shutdown_background_tasks(app);
+        .run(|app, event| match event {
+            RunEvent::Ready => {
+                // Tauriが初期ウィンドウを表示した後で隠し、管理側のReady応答前に反映する。
+                let startup =
+                    std::env::args().any(|arg| arg == "--minimized" || arg == "--startup");
+                if startup {
+                    if let Some(window) = app.get_webview_window("main") {
+                        if let Err(error) = window.hide() {
+                            internal_log::warn("window", format!("minimized hide failed: {error}"));
+                        }
+                    }
+                } else {
+                    let _ = show_main_window(app);
+                }
+                if let Some(management) = app.try_state::<management::Management>() {
+                    management.set_ready();
+                }
             }
+            RunEvent::Exit => shutdown_background_tasks(app),
+            _ => {}
         });
 }

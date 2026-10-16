@@ -74,6 +74,7 @@ Windows の「設定」→「アプリ」から EveryDB をアンインストー
 
 - [開発者ガイド](docs/DEVELOPERS_GUIDE.md)
 - [ビルド方法](docs/development/building.md)
+- [KotorinToysとの連携](docs/kotorintoys-integration.md)
 - [テスト方法](docs/development/testing.md)
 - [アーキテクチャ](docs/development/architecture.md)
 - [データソース追加手順](docs/development/adding-a-data-source.md)

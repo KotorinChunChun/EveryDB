@@ -26,6 +26,12 @@ npm run check:all
 pwsh -File .\dev\scripts\run-debug-EveryDB-all.ps1
 ```
 
+KotorinToys本体から起動する管理連携版は、専用の出力先にビルドします。
+
+```powershell
+pwsh -File .\dev\scripts\build-debug-EveryDB-kotorintoys.ps1
+```
+
 ローカルサンプルを生成・登録して起動する場合は `run-debug-EveryDB-all-sample.ps1` を使用します。この入口は実際のユーザープロファイルの EveryDB キャッシュへ試験ソースを登録するため、通常起動と区別してください。
 
 ## Release構成の起動

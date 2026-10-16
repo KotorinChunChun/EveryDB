@@ -12,7 +12,8 @@
   "app": {
     "windows": [
       {
-        "title": "いつでも、どこでも、データをちゅんちゅん - EveryDB",
+        "title": "EveryDB",
+      "visible": false,
         "width": 1100,
         "height": 720,
         "minWidth": 700,
