@@ -1,0 +1,14 @@
+/target
+.claude/
+/dev/private/
+/dev/temp/
+/release/
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+*.log
+/dev/history/*/logs/
+/samples/
+*.pfx
+*.p12

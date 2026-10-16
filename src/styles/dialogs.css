@@ -1,0 +1,438 @@
+/* 幅広ダイアログ・フィールド役割編集・ブラウズ領域。
+   通常時の560pxは維持し、狭いウィンドウでは左右16pxを残して縮める。 */
+.dialog.wide {
+  width: min(560px, calc(100vw - 32px));
+  min-width: min(560px, calc(100vw - 32px));
+  max-width: min(720px, calc(100vw - 32px));
+  box-sizing: border-box;
+}
+
+/* 種別セレクト（または種別ラベル）と「📖 手順書」ボタンの並び */
+.type-row { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 10px; }
+.type-row .type-label { flex: 1; margin-bottom: 0; }
+.type-row > .btn { flex: none; height: 28px; padding: 0 12px; }
+.type-row #parent-type-label { flex: 1; margin: 0; }
+
+/* 手順書ダイアログ（docs/guides/*.md の簡易 Markdown 表示） */
+#guide-dialog { max-height: 90vh; display: flex; flex-direction: column; }
+.guide-body {
+  flex: 1; min-height: 0; overflow-y: auto; padding-right: 6px;
+  font-size: 13px; line-height: 1.7;
+}
+.guide-body h2 { font-size: 15px; margin: 18px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.guide-body h3 { font-size: 13px; margin: 14px 0 4px; color: var(--muted); }
+.guide-body p { margin: 6px 0; }
+.guide-body ul, .guide-body ol { margin: 6px 0; padding-left: 22px; }
+.guide-body li { margin: 3px 0; }
+.guide-body code {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 3px;
+  padding: 0 4px; font-size: 12px;
+}
+.guide-body pre {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px;
+  padding: 8px 10px; overflow-x: auto; margin: 8px 0;
+}
+.guide-body pre code { background: none; border: none; padding: 0; }
+.guide-body a { color: var(--accent-2); cursor: pointer; }
+.guide-body table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 12px; }
+.guide-body th, .guide-body td {
+  border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top;
+}
+.guide-body th { background: var(--panel-2); color: var(--muted); }
+
+/* 接続設定ダイアログ: 下部にテーブル一覧を内包するため、はみ出したらダイアログ自体をスクロールさせる。 */
+#parent-dialog { max-height: 92vh; overflow-y: auto; }
+#parent-tables-fieldset .picker-list { max-height: 260px; }
+#parent-tables-hint { white-space: pre-line; margin-top: 6px; display: block; }
+#parent-tables-fieldset .picker-toolbar { flex-wrap: wrap; }
+#parent-tables-fieldset .picker-toolbar .btn { padding: 2px 8px; font-size: 11px; }
+
+/* データソース追加/編集ダイアログ: ウィンドウの高さを活かして縦に伸ばし、右下ハンドルでサイズ可変にする。
+   flex 縦積みにして roles 一覧(roles-table-wrap)が残り高さを占有 → 中身が多くてもダイアログはビューポート内に収まる。 */
+#add-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: min(360px, 92vh);
+  max-height: 92vh;
+  height: 82vh;              /* 既定でウィンドウ高を活かす（resize で変更可） */
+  resize: both;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+/* author style の display:flex が UA 既定の dialog:not([open]) を上書きしないよう、閉状態を明示する。 */
+#add-dialog:not([open]) { display: none; }
+#add-dialog #add-form { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+#add-dialog .roles-fieldset {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  flex: 1;
+}
+#add-dialog .roles-fieldset:not(.config-fieldset) {
+  min-height: 96px;
+  overflow: auto;
+}
+#add-dialog .roles-table-wrap { max-height: none; flex: 1; min-height: 80px; }
+/* 上部の各フィールドおよびグループボックスコンテナは自然高のまま（伸びるのは roles 一覧のみ）。 */
+#add-dialog > #add-form > label,
+#add-dialog .name-open-row,
+#add-dialog .config-fieldset,
+#add-dialog #f-dynamic,
+#add-dialog #f-belongs-to,
+#add-dialog .browse-area { flex: none; }
+
+/* 表示名と「テーブルを開く」ボタンの並び */
+.name-open-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.name-open-row .name-label {
+  flex: 1;
+  margin-bottom: 0;
+}
+.name-open-row #f-open-table {
+  flex: none;
+  height: 28px;
+  padding: 0 12px;
+}
+
+/* データソース・接続情報 グループボックス（下部 roles-fieldset と同一デザイン） */
+#add-dialog .config-fieldset {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 6px 0 12px 0;
+  transition: padding-bottom 0.2s ease, background 0.2s ease;
+}
+#add-dialog .config-fieldset.collapsed {
+  padding-bottom: 4px;
+}
+#add-dialog .config-legend {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 2px 8px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+#add-dialog .config-legend:hover {
+  background: var(--accent);
+  color: #fff;
+}
+#add-dialog .config-legend-title {
+  display: inline-block;
+}
+#add-dialog .config-summary-badge {
+  font-size: 11px;
+  color: var(--text);
+  background: var(--panel);
+  padding: 2px 8px;
+  border-radius: 12px;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: normal;
+  border: 1px solid var(--border);
+}
+#add-dialog .config-legend:hover .config-summary-badge {
+  border-color: rgba(255, 255, 255, 0.5);
+  color: #fff;
+  background: rgba(0, 0, 0, 0.2);
+}
+#add-dialog .config-accordion-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.dialog-note { color: var(--muted); font-size: 12px; margin: -4px 0 12px; line-height: 1.5; }
+.last-loaded-hint { color: var(--muted); font-size: 11px; margin: -8px 0 12px; }
+.belongs-to-hint {
+  color: var(--muted); font-size: 12px; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 4px; padding: 6px 8px; margin: -4px 0 10px;
+}
+.form-error { color: var(--form-error); font-size: 12px; min-height: 1em; margin-bottom: 6px; }
+.notion-name-status { color: var(--muted); font-size: 11px; margin: -6px 0 10px; white-space: normal; }
+.notion-name-status[data-state="success"] { color: var(--success); }
+.notion-name-status[data-state="error"] {
+  color: var(--error-state-text);
+  background: var(--error-state-bg);
+  border: 1px solid var(--error-state-border);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+.browse-area { margin-bottom: 10px; }
+.browse-area .btn { margin-bottom: 6px; }
+
+.csv-preview {
+  min-width: 0; margin: 10px 0 4px; padding: 10px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2);
+}
+.csv-preview-heading { font-size: 12px; font-weight: 600; margin-bottom: 5px; }
+.csv-preview-status { color: var(--muted); font-size: 11px; margin-bottom: 6px; white-space: normal; }
+.csv-preview-status[data-state="error"] { color: var(--error-state-text); }
+.csv-preview-table-wrap { max-height: 300px; overflow: auto; font-size: 11px; }
+.csv-preview-table { width: max-content; min-width: 100%; border-collapse: collapse; }
+.csv-preview-table th,
+.csv-preview-table td {
+  max-width: 240px; padding: 4px 7px; border: 1px solid var(--border);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;
+}
+.csv-preview-table thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); }
+.csv-preview-table tbody th { position: sticky; left: 0; background: var(--panel); color: var(--muted); }
+.csv-preview-gap td { text-align: center; color: var(--muted); background: var(--panel); }
+
+.roles-fieldset { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin: 12px 0; }
+.roles-fieldset legend { color: var(--muted); font-size: 12px; padding: 0 4px; }
+.roles-toolbar { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 8px; }
+.roles-hint { color: var(--muted); font-size: 11px; }
+.roles-table-wrap { max-height: 260px; overflow-y: auto; }
+.roles-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.roles-table th, .roles-table td { padding: 4px 6px; border-bottom: 1px solid var(--border); text-align: center; }
+.roles-table th { color: var(--muted); font-weight: normal; }
+.roles-table td:nth-child(2), .roles-table th:nth-child(2) { text-align: left; }
+.roles-table td:nth-child(2) { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.roles-table input[type="text"] { width: 110px; padding: 3px 5px; margin: 0; font-size: 12px; }
+.roles-table .r-drag-handle { width: 18px; padding: 4px 2px; cursor: grab; color: var(--muted); user-select: none; }
+.roles-table tr.dragging { opacity: 0.4; }
+.roles-table tr.drag-over { outline: 1px dashed var(--accent-2); outline-offset: -1px; }
+
+/* ピッカー系(Notion DB / テーブル一括 / SharePoint) */
+.picker-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px; }
+.picker-item { padding: 7px 10px; cursor: pointer; border-bottom: 1px solid #2a2a2a; font-size: 13px; }
+.picker-item:last-child { border-bottom: none; }
+.picker-item:hover { background: var(--panel-2); }
+.picker-empty { padding: 12px; color: var(--muted); text-align: center; }
+.picker-list.checklist .picker-item { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.picker-list.checklist .picker-item:hover { background: var(--panel-2); }
+.picker-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.picker-item .badge { margin-left: auto; font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; }
+.credential-picker-item {
+  display: flex; width: 100%; flex-direction: column; align-items: stretch; gap: 3px;
+  border: 0; border-bottom: 1px solid var(--border); background: transparent;
+  color: var(--text); text-align: left; font: inherit;
+}
+.credential-picker-item:disabled { cursor: not-allowed; opacity: 0.72; }
+.credential-picker-item:disabled:hover { background: transparent; }
+.credential-compatibility-summary,
+.credential-compatibility-reason { display: block; font-size: 11px; color: var(--muted); }
+.credential-compatibility-reason,
+.credential-permission-status[data-state="error"] {
+  color: var(--error-state-text);
+  background: var(--error-state-bg);
+  border: 1px solid var(--error-state-border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  white-space: normal;
+}
+.credential-permission-status { display: block; font-size: 11px; color: var(--muted); white-space: normal; }
+.credential-capability-options { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.credential-capability-option { display: flex; align-items: flex-start; gap: 7px; margin: 0; }
+.credential-capability-option input { flex: 0 0 auto; margin-top: 2px; }
+.graph-self-subject-hint { display: block; margin-top: 4px; }
+
+.connection-kind-item {
+  display: block; width: 100%; text-align: left;
+  background: none; border: none; color: inherit; font: inherit;
+}
+.connection-kind-group {
+  position: sticky; top: 0; z-index: 1;
+  padding: 6px 10px; border-bottom: 1px solid var(--border);
+  background: var(--panel-2); color: var(--muted);
+  font-size: 11px; font-weight: 600;
+}
+/* 選択結果の件数やstep切替で外寸を変えないpicker共通枠。
+   利用者のresizeは許可し、アプリウィンドウが縮んだ場合だけviewport内へ制約する。 */
+.dialog.stable-picker-dialog {
+  width: min(720px, calc(100vw - 32px));
+  height: min(620px, calc(100vh - 32px));
+  min-width: min(360px, calc(100vw - 32px));
+  min-height: min(280px, calc(100vh - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  resize: both;
+  overflow: auto;
+}
+.dialog.stable-picker-dialog[open] { display: flex; flex-direction: column; }
+.dialog.stable-picker-dialog:not([open]) { display: none; }
+.stable-picker-dialog > .picker-list,
+.stable-picker-dialog > .picker-table-wrap,
+.stable-picker-dialog > .cell-picker-grid-wrap { flex: 1; min-height: 0; max-height: none; }
+.stable-picker-dialog .sp-step:not([hidden]) { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.stable-picker-dialog .sp-step > .picker-list,
+.stable-picker-dialog .sp-step > .picker-table-wrap { flex: 1; min-height: 0; max-height: none; }
+.stable-picker-dialog > .dialog-actions { flex: none; }
+.stable-picker-dialog .search,
+.stable-picker-dialog .source-filter-wrap { flex: none; }
+.connection-chooser-filter-wrap { margin-bottom: 8px; }
+#connection-chooser-list { max-height: none; }
+
+/* 保存済みトークン（要件: トークン管理画面）。「プロファイル」欄は新規作成ボタンも既存の
+ * プロファイルも同じ幅・同じ見た目の「行」として並べ、クリックで選択（着色）する1つのリストにする。 */
+.cm-profile-list { border: 1px solid var(--border); border-radius: 6px; max-height: 240px; overflow-y: auto; }
+.cm-profile-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; box-sizing: border-box; text-align: left; padding: 8px 10px;
+  border: none; border-bottom: 1px solid #2a2a2a; background: none; color: var(--text);
+  cursor: pointer; font: inherit; font-size: 13px;
+}
+.cm-profile-item:last-child { border-bottom: none; }
+.cm-profile-item:hover { background: var(--panel-2); }
+.cm-profile-item.selected { background: rgba(51, 153, 255, 0.18); box-shadow: inset 3px 0 0 var(--accent-2); }
+.cm-new-item { color: var(--accent-2); font-weight: 600; }
+.cm-profile-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.cm-profile-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cm-profile-item .btn { flex: none; }
+.cm-profile-usage { font-size: 11px; color: var(--muted); white-space: normal; word-break: break-all; }
+
+/* トークンコピー時の通知トースト（非モーダル・画面中央・1秒でフェードアウト）。 */
+.toast {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 20px; font-size: 13px; z-index: 9999;
+  pointer-events: none; opacity: 1; transition: opacity 0.4s ease;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+.toast.toast-fade-out { opacity: 0; }
+
+/* 接続画面の「使用するトークン」表示（読み取り専用の値入力欄は出さず、プロファイル名だけ見せる）。 */
+.credential-profile-chip {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px;
+  padding: 6px 10px; font-size: 13px;
+}
+.credential-profile-chip.unset { color: var(--muted); }
+.credential-authorization-status { white-space: normal; word-break: break-word; }
+
+.sp-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.sp-tab { padding: 5px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px 4px 0 0; color: var(--muted); cursor: pointer; }
+.sp-tab.active { color: var(--text); border-bottom-color: var(--panel-2); background: var(--accent); }
+.sp-step { margin-bottom: 4px; }
+.sp-selected-site { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.picker-table-wrap { max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px; }
+.picker-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.picker-table th, .picker-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.picker-table th { position: sticky; top: 0; background: var(--panel-2); z-index: 1; white-space: nowrap; }
+.picker-table th.sortable { cursor: pointer; user-select: none; }
+.picker-table th.sortable:hover { color: var(--text); }
+.picker-table th.sort-asc::after { content: " ▲"; font-size: 10px; }
+.picker-table th.sort-desc::after { content: " ▼"; font-size: 10px; }
+.picker-table tbody tr { cursor: pointer; }
+.picker-table tbody tr:hover { background: var(--panel-2); }
+.picker-table .col-id { font-family: monospace; font-size: 11px; color: var(--muted); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-table .col-desc { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.browse-inline-row { margin-bottom: 8px; }
+.auto-setup-row .zoom-row { margin-top: 3px; flex-wrap: wrap; }
+
+/* Excel セル選択グリッド */
+.cell-picker-grid-wrap {
+  max-height: 60vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+.cell-grid {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+.cell-grid th, .cell-grid td {
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  text-align: left;
+  white-space: nowrap;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cell-grid th {
+  background: var(--panel);
+  color: var(--muted);
+  font-weight: normal;
+  text-align: center;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.cell-grid th.row-header {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  width: 30px;
+  min-width: 30px;
+}
+.cell-grid th.corner-header {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 3;
+}
+.cell-grid td {
+  cursor: pointer;
+  background: var(--panel-2);
+  transition: background 0.1s, color 0.1s;
+}
+.cell-grid td:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.cell-grid td .cell-addr {
+  font-size: 9px;
+  color: var(--muted);
+  display: block;
+  line-height: 1;
+  margin-bottom: 2px;
+}
+.cell-grid td:hover .cell-addr {
+  color: #ddd;
+}
+
+/* --- 列選択モードハイライト --- */
+.cell-grid th.col-header {
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s, color 0.1s;
+}
+.cell-grid th.col-header:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.cell-grid th.col-selected,
+.cell-grid td.col-selected,
+.cell-grid td.cell-selected {
+  background: var(--accent) !important;
+  color: #fff !important;
+}
+.cell-grid th.col-selected .cell-addr,
+.cell-grid td.col-selected .cell-addr,
+.cell-grid td.cell-selected .cell-addr {
+  color: #fff !important;
+}
+
+/* --- Excel セル範囲インライン水平配置 --- */
+.range-inline-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.range-inline-row > * {
+  flex: 0 1 auto;
+}
