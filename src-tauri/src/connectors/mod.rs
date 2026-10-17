@@ -135,9 +135,13 @@ mod tests {
     use std::path::Path;
 
     fn sample(name: &str) -> String {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("samples")
+        std::env::var_os("EVERYDB_TEST_SAMPLES_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("samples")
+            })
             .join(name)
             .to_string_lossy()
             .into_owned()

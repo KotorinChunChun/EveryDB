@@ -15,6 +15,8 @@ $ErrorActionPreference = 'Stop'
 $ProductPattern = '^(build|run|test|publish)-(debug|release|exe)-EveryDB-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)?\.ps1$'
 $AuxiliaryNames = @(
   'generate-EveryDB-access-sample.ps1',
+  'import-EveryDB-development-environment.ps1',
+  'test-development-environment.ps1',
   'test-script-naming.ps1'
 )
 $AllowedModes = @{

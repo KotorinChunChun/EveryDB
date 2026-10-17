@@ -15,6 +15,8 @@ param()
 
 $ErrorActionPreference = 'Stop'
 
+& (Join-Path $PSScriptRoot 'import-EveryDB-development-environment.ps1')
+
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 Set-Location -LiteralPath $RepoRoot
 

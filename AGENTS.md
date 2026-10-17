@@ -6,7 +6,7 @@
 
 - PowerShell は PowerShell 7 以降の `pwsh` を使用する。
 - ドキュメントとコミットログは日本語で記録する。
-- 秘密値をソース、文書、ログ、コミットへ残さない。公開可能な証明書メタデータと秘密鍵を区別する。
+- 開発用の秘密情報はリポジトリ外の `C:\AI\env\EveryDB\` へ保存する。秘密値をソース、文書、ログ、コミットへ残さない。公開可能な証明書メタデータと秘密鍵を区別する。
 - 大きな変更はフェーズとチェックリストへ分ける。各フェーズで関連テストとビルドを実行し、成功後に日本語のコミットを作る。
 - 外部公開、署名、既存リリースの置換は、ユーザーが明示的に依頼した場合だけ行う。
 - 過去資料の未チェック欄だけで未実装と判断せず、後続の完了記録とユーザー確認を照合する。
@@ -23,8 +23,7 @@
 | `dev/testing/` | 継続更新する検証記録 |
 | `dev/private/` | 秘密情報・個人情報を含む非公開資料。Git・公開成果物・通常調査から除外 |
 | `dev/temp/` | プロジェクト外の一時制作物。Git・目録・通常調査から除外 |
-| `dev/vX.Y.Z-req.md`、`-imp.md`、`-task.md` | 実装予定・実装中の版別資料 |
-| `dev/history/vX.Y.Z/` | 完成済みの版別資料一式 |
+| `dev/history/vX.Y.Z/` | 進行中・未来・完了済みの版別要求・計画・報告 |
 | `src/` | TypeScript フロントエンドと固有テスト |
 | `src-tauri/` | Rust／Tauri ソース、製品同梱リソース、Rust 固有テスト |
 | `shared/` | TypeScript と Rust が共有する宣言的データ |
@@ -40,8 +39,9 @@
 | 作業・目的 | 読む資料 |
 | :--- | :--- |
 | 概要・利用方法 | [README.md](README.md)、[使い方](docs/user-guide.md)、必要な接続先ガイド |
+| 開発用秘密情報 | [外部保管と読込み](docs/development/secrets.md) |
 | ビルド・改造 | [開発者ガイド](docs/DEVELOPERS_GUIDE.md)、[ビルド方法](docs/development/building.md)、[テスト方法](docs/development/testing.md) |
-| 要求の実装 | 対象の `dev/vX.Y.Z-req.md` と対応する `imp`・`task` |
+| 要求の実装 | 対象の `dev/history/vX.Y.Z/vX.Y.Z-req.md` と対応する `imp`・`task` |
 | API・内部仕様 | [アーキテクチャ](docs/development/architecture.md)、該当する `docs/` と対象ソース |
 | データソース追加 | [データソース追加手順](docs/development/adding-a-data-source.md)、該当ガイドと registry |
 | 将来機能 | [将来案](dev/roadmap/PLAN_IDEAS.md)、必要な不採用記録 |
@@ -53,8 +53,8 @@
 
 ## 版別資料の運用
 
-- 要求は `dev/vX.Y.Z-req.md`、AI の実装計画・報告は `dev/vX.Y.Z-imp.md`、要求が粗い場合の進捗は `dev/vX.Y.Z-task.md` に記録する。
-- 実装予定・実装中の複数版は `dev/` 直下へ置ける。完成した一式だけを `dev/history/vX.Y.Z/` へ移す。
+- 要求は `dev/history/vX.Y.Z/vX.Y.Z-req.md`、AI の実装計画・報告は `dev/history/vX.Y.Z/vX.Y.Z-imp.md`、要求が粗い場合の進捗は `dev/history/vX.Y.Z/vX.Y.Z-task.md` に記録する。
+- 版別資料は最初から `dev/history/vX.Y.Z/` に置き、進行中・未来・完了済みで配置を変えない。
 - 未完了事項を別版や roadmap へ送る場合、移動元と引き継ぎ先の双方に出典と参照を残す。次版開始やリリースだけを完了理由にしない。
 
 ## スクリプト

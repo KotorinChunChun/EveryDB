@@ -14,6 +14,8 @@
 # $env:EVERYDB_NOTION_TOKEN 等を設定してから本スクリプトを実行する（README.md 参照）。
 
 $ErrorActionPreference = "Stop"
+
+& (Join-Path $PSScriptRoot 'import-EveryDB-development-environment.ps1')
 $root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $root
 

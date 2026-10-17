@@ -15,8 +15,20 @@ fn samples_dir() -> PathBuf {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let dir = samples_dir();
+    let mut args = std::env::args().skip(1);
+    let dir = match args.next().as_deref() {
+        None => samples_dir(),
+        Some("--output-dir") => PathBuf::from(args.next().ok_or("出力先が必要です")?),
+        Some(_) => return Err("指定できる引数は --output-dir <出力先> です".into()),
+    };
+    if args.next().is_some() {
+        return Err("余分な引数があります".into());
+    }
     fs::create_dir_all(&dir)?;
+    fs::write(
+        dir.join("customers.csv"),
+        include_str!("../resources/samples/customers.csv"),
+    )?;
     gen_xlsx(&dir)?;
     gen_msime_dict(&dir)?;
     gen_google_dict(&dir)?;

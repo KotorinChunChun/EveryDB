@@ -12,3 +12,32 @@ src-tauri/gen/
 /samples/
 *.pfx
 *.p12
+
+# 開発用の秘密値は C:\AI\env\EveryDB\ で管理する
+.env
+.env.*
+*.env
+!.env.example
+!*.env.example
+secrets.json
+credentials.json
+.npmrc
+*.pem
+*.key
+id_rsa
+id_ed25519
+
+# キャッシュDB・バックアップの誤登録を防ぐ
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db.*.bak
+*.db.backup
+.DS_Store
+Thumbs.db
