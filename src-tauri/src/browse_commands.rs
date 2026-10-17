@@ -5,8 +5,17 @@ use crate::browse;
 use crate::browse_service;
 
 #[tauri::command]
-pub fn browse_notion_databases(token: String) -> Result<Vec<browse::NotionDbEntry>, String> {
-    browse_service::browse_notion_databases(&token).map_err(Into::into)
+pub fn preview_csv(config_json: String) -> Result<crate::connectors::CsvPreview, String> {
+    browse_service::preview_csv(&config_json).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn browse_notion_databases(
+    state: State<'_, AppState>,
+    credential_id: i64,
+) -> Result<Vec<browse::NotionDbEntry>, String> {
+    browse_service::browse_notion_databases_for_credential(&state, credential_id)
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -20,8 +29,32 @@ pub fn browse_notion_databases_for_source(
 }
 
 #[tauri::command]
-pub fn browse_airtable_bases(token: String) -> Result<Vec<browse::AirtableBaseEntry>, String> {
-    browse_service::browse_airtable_bases(&token).map_err(Into::into)
+pub fn browse_notion_database(
+    state: State<'_, AppState>,
+    credential_id: i64,
+    database_id: String,
+) -> Result<browse::NotionDbEntry, String> {
+    browse_service::browse_notion_database_for_credential(&state, credential_id, &database_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn browse_notion_database_for_source(
+    state: State<'_, AppState>,
+    id: i64,
+    overrides_json: String,
+    database_id: String,
+) -> Result<browse::NotionDbEntry, String> {
+    browse_service::browse_notion_database_for_source(&state, id, &overrides_json, &database_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn browse_airtable_bases(
+    state: State<'_, AppState>,
+    credential_id: i64,
+) -> Result<Vec<browse::AirtableBaseEntry>, String> {
+    browse_service::browse_airtable_bases_for_credential(&state, credential_id).map_err(Into::into)
 }
 
 #[tauri::command]
@@ -36,10 +69,12 @@ pub fn browse_airtable_bases_for_source(
 
 #[tauri::command]
 pub fn browse_airtable_tables(
-    token: String,
+    state: State<'_, AppState>,
+    credential_id: i64,
     base_id: String,
 ) -> Result<Vec<browse::AirtableTableEntry>, String> {
-    browse_service::browse_airtable_tables(&token, &base_id).map_err(Into::into)
+    browse_service::browse_airtable_tables_for_credential(&state, credential_id, &base_id)
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -64,29 +99,39 @@ pub fn browse_graph_site_resources_for_source(
 }
 
 #[tauri::command]
-pub fn browse_graph_sites(auth: browse::GraphAuthArgs) -> Result<Vec<browse::SiteEntry>, String> {
-    browse_service::browse_graph_sites(&auth).map_err(Into::into)
+pub fn browse_graph_sites(
+    state: State<'_, AppState>,
+    credential_id: i64,
+) -> Result<Vec<browse::SiteEntry>, String> {
+    browse_service::browse_graph_sites_for_credential(&state, credential_id).map_err(Into::into)
 }
 
 #[tauri::command]
-pub fn browse_graph_teams(auth: browse::GraphAuthArgs) -> Result<Vec<browse::TeamEntry>, String> {
-    browse_service::browse_graph_teams(&auth).map_err(Into::into)
+pub fn browse_graph_teams(
+    state: State<'_, AppState>,
+    credential_id: i64,
+) -> Result<Vec<browse::TeamEntry>, String> {
+    browse_service::browse_graph_teams_for_credential(&state, credential_id).map_err(Into::into)
 }
 
 #[tauri::command]
 pub fn browse_graph_team_site_url(
-    auth: browse::GraphAuthArgs,
+    state: State<'_, AppState>,
+    credential_id: i64,
     team_group_id: String,
 ) -> Result<String, String> {
-    browse_service::browse_graph_team_site_url(&auth, &team_group_id).map_err(Into::into)
+    browse_service::browse_graph_team_site_url_for_credential(&state, credential_id, &team_group_id)
+        .map_err(Into::into)
 }
 
 #[tauri::command]
 pub fn browse_graph_site_resources(
-    auth: browse::GraphAuthArgs,
+    state: State<'_, AppState>,
+    credential_id: i64,
     site_url: String,
 ) -> Result<Vec<browse::SiteResourceEntry>, String> {
-    browse_service::browse_graph_site_resources(&auth, &site_url).map_err(Into::into)
+    browse_service::browse_graph_site_resources_for_credential(&state, credential_id, &site_url)
+        .map_err(Into::into)
 }
 
 #[tauri::command]

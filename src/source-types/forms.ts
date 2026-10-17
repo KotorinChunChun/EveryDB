@@ -10,6 +10,8 @@ export interface FieldDef {
   browse?: "file" | "folder"; // 参照ボタンを付ける（ファイル/フォルダ選択ダイアログ）
   options?: { value: string; label: string }[]; // kind: "select" 用
   min?: number; // kind: "number" 用
+  /** API 等から取得した値を表示するだけで、利用者には変更させない。 */
+  readOnly?: boolean;
   dialogFilters?: { name: string; extensions: string[] }[]; // browse: "file" 用の拡張子フィルタ
   /** API キー・トークンの取得ページ。指定すると入力欄の横に「🔑 取得…」ボタンを出す。 */
   helpUrl?: string;
@@ -97,9 +99,26 @@ const GRAPH_AUTH_FIELDS: FieldDef[] = [
   { key: "client_id", label: "クライアントID", kind: "text", placeholder: "アプリケーション(クライアント) ID", helpUrl: ENTRA_APPS_URL },
   { key: "client_secret", label: "クライアントシークレット(値)", kind: "password", placeholder: "シークレットの値(ID ではない)", helpUrl: ENTRA_APPS_URL, credentialScope: "graph", credentialBundleFields: ["tenant_id", "client_id"] },
 ];
+const MICROSOFT_ACCOUNT_AUTH_FIELDS: FieldDef[] = [
+  {
+    key: "access_token",
+    label: "Microsoft アカウント",
+    kind: "password",
+    credentialScope: "microsoft_account",
+  },
+];
 export const TYPE_DEFS: TypeDef[] = [
   { value: "csv", label: "CSV ファイル", fields: [
     pathField(CSV_FILTERS),
+    { key: "encoding", label: "文字コード", kind: "select", options: [
+      { value: "auto", label: "自動判定" }, { value: "utf8", label: "UTF-8" }, { value: "shift_jis", label: "Shift_JIS" },
+    ] },
+    { key: "line_ending", label: "改行コード", kind: "select", options: [
+      { value: "auto", label: "自動判定" }, { value: "crlf", label: "CRLF (Windows)" }, { value: "lf", label: "LF" }, { value: "cr", label: "CR" },
+    ] },
+    { key: "delimiter", label: "区切り文字", kind: "select", options: [
+      { value: ",", label: "カンマ (,)" }, { value: "\t", label: "タブ" }, { value: ";", label: "セミコロン (;)" }, { value: "|", label: "パイプ (|)" },
+    ] },
     { key: "skip_rows_top", label: "先頭から読み飛ばす行数", kind: "number", placeholder: "0", min: 0, optional: true },
     { key: "has_header", label: "（読み飛ばした後の）先頭行はヘッダー", kind: "checkbox", default: true },
     { key: "skip_rows_bottom", label: "末尾から読み飛ばす行数", kind: "number", placeholder: "0", min: 0, optional: true },
@@ -128,45 +147,49 @@ export const TYPE_DEFS: TypeDef[] = [
   { value: "ime_google", label: "IME辞書: Google 日本語入力", fields: [pathField(TEXT_FILTERS)] },
   { value: "notion", label: "Notion データベース", fields: [
     { key: "token", label: "インテグレーショントークン", kind: "password", placeholder: "ntn_...", helpUrl: NOTION_INTEGRATIONS_URL, credentialScope: "notion" },
-    { key: "url_helper", label: "Notion データベース URL (ペーストで自動設定)", kind: "text", placeholder: "https://www.notion.so/.../a86724d5...", optional: true },
+    { key: "url_helper", label: "URL から自動設定", kind: "text", optional: true },
     { key: "database_id", label: "データベースID", kind: "text", placeholder: "URL 内の 32 桁 ID" },
+    { key: "database_name", label: "データベース名 (Notionから自動同期)", kind: "text", placeholder: "IDから自動取得します", readOnly: true },
   ], browse: "notion" },
-  { value: "graph_entra_users", label: "EntraID ユーザー一覧", fields: [...GRAPH_AUTH_FIELDS] },
-  { value: "graph_entra_groups", label: "EntraID グループ一覧", fields: [...GRAPH_AUTH_FIELDS] },
+  { value: "graph_entra_users", label: "Entra ID ユーザー一覧", fields: [...GRAPH_AUTH_FIELDS] },
+  { value: "graph_entra_groups", label: "Entra ID グループ一覧", fields: [...GRAPH_AUTH_FIELDS] },
   { value: "graph_teams", label: "Teams チーム一覧", fields: [...GRAPH_AUTH_FIELDS] },
   { value: "graph_sharepoint_list", label: "SharePoint リスト", fields: [
     ...GRAPH_AUTH_FIELDS,
-    { key: "url_helper", label: "SharePoint リスト URL (ペーストで自動設定)", kind: "text", placeholder: "https://～/sites/サイト名/Lists/リスト名/...", optional: true },
+    { key: "url_helper", label: "URL から自動設定", kind: "text", optional: true },
     { key: "site_url", label: "サイトURL", kind: "text", placeholder: "https://～/sites/サイト名" },
+    { key: "site_display_name", label: "サイト表示名 (自動)", kind: "text", optional: true },
     { key: "list_name", label: "リスト名", kind: "text", placeholder: "SampleList" },
   ], browse: "sharepoint" },
   { value: "graph_sharepoint_library", label: "SharePoint ドキュメントライブラリ", fields: [
     ...GRAPH_AUTH_FIELDS,
-    { key: "url_helper", label: "SharePoint ライブラリ URL (ペーストで自動設定)", kind: "text", placeholder: "https://～/sites/サイト名/...", optional: true },
+    { key: "url_helper", label: "URL から自動設定", kind: "text", optional: true },
     { key: "site_url", label: "サイトURL", kind: "text", placeholder: "https://～/sites/サイト名" },
+    { key: "site_display_name", label: "サイト表示名 (自動)", kind: "text", optional: true },
     { key: "library_name", label: "ライブラリ名(空欄=既定)", kind: "text", placeholder: "空欄で既定ライブラリ", optional: true },
   ], browse: "sharepoint" },
-  { value: "graph_entra_devices", label: "EntraID デバイス一覧", fields: [...GRAPH_AUTH_FIELDS] },
+  { value: "graph_entra_devices", label: "Entra ID デバイス一覧", fields: [...GRAPH_AUTH_FIELDS] },
   { value: "graph_intune_devices", label: "Intune デバイス一覧", fields: [...GRAPH_AUTH_FIELDS] },
   { value: "graph_licenses", label: "Microsoft 365 ライセンス一覧", fields: [...GRAPH_AUTH_FIELDS] },
   { value: "graph_calendar", label: "Outlook 予定表", fields: [...GRAPH_AUTH_FIELDS, { key: "user", label: "対象ユーザー(UPN/メール)", kind: "text", placeholder: "user@example.com" }] },
-  { value: "graph_onedrive", label: "OneDrive", fields: [...GRAPH_AUTH_FIELDS, { key: "user", label: "対象ユーザー(UPN/メール)", kind: "text", placeholder: "user@example.com" }] },
+  { value: "graph_onedrive", label: "OneDrive（組織）", fields: [...GRAPH_AUTH_FIELDS, { key: "user", label: "対象ユーザー(UPN/メール)", kind: "text", placeholder: "user@example.com" }] },
+  { value: "microsoft_account_onedrive", label: "OneDrive（個人）", fields: [...MICROSOFT_ACCOUNT_AUTH_FIELDS] },
   { value: "graph_planner", label: "Teams タスク & Planner", fields: [...GRAPH_AUTH_FIELDS, { key: "group_id", label: "対象チーム(グループ)のID", kind: "text", placeholder: "Entra管理センター等で確認したグループID" }] },
   { value: "browser_history", label: "ブラウザ: 閲覧履歴", fields: [
     { key: "browser", label: "ブラウザ", kind: "select", options: BROWSER_OPTIONS },
-    { key: "path", label: "History / places.sqlite のパス", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "history" },
+    { key: "path", label: "プロファイル", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "history" },
   ] },
   { value: "browser_bookmarks", label: "ブラウザ: ブックマーク", fields: [
     { key: "browser", label: "ブラウザ", kind: "select", options: BROWSER_OPTIONS },
-    { key: "path", label: "Bookmarks / places.sqlite のパス", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "bookmarks" },
+    { key: "path", label: "プロファイル", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "bookmarks" },
   ] },
   { value: "browser_downloads", label: "ブラウザ: ダウンロード履歴", fields: [
     { key: "browser", label: "ブラウザ", kind: "select", options: BROWSER_OPTIONS },
-    { key: "path", label: "History / places.sqlite のパス（Chromium系は履歴と同じファイル）", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "history" },
+    { key: "path", label: "プロファイル", kind: "text", placeholder: "「候補から選択…」で自動検出できます", browse: "file", browserProfile: "history" },
   ] },
   { value: "google_sheets", label: "Google スプレッドシート", fields: [
     { key: "key_path", label: "サービスアカウント鍵(JSON)のパス", kind: "text", placeholder: "C:\\path\\to\\service-account.json", browse: "file", dialogFilters: JSON_FILTERS, helpUrl: "https://console.cloud.google.com/apis/credentials" },
-    { key: "url_helper", label: "Google スプレッドシート URL (ペーストで自動設定)", kind: "text", placeholder: "https://docs.google.com/spreadsheets/d/.../edit", optional: true },
+    { key: "url_helper", label: "URL から自動設定", kind: "text", optional: true },
     { key: "spreadsheet_id", label: "スプレッドシートID", kind: "text", placeholder: "URL の /d/ と /edit の間の文字列" },
     { key: "range", label: "範囲(任意)", kind: "text", placeholder: "Sheet1!A1:D50 / 空欄=先頭シート全域", optional: true },
     { key: "has_header", label: "先頭行はヘッダー", kind: "checkbox", default: true },
@@ -176,7 +199,7 @@ export const TYPE_DEFS: TypeDef[] = [
   ] },
   { value: "airtable", label: "Airtable", fields: [
     { key: "token", label: "Personal Access Token", kind: "password", placeholder: "pat...", helpUrl: "https://airtable.com/create/tokens", linkUrl: "https://airtable.com/workspaces", linkLabel: "🌐 ワークスペース…", credentialScope: "airtable" },
-    { key: "url_helper", label: "Airtable URL (ペーストで自動設定)", kind: "text", placeholder: "https://airtable.com/app.../tbl.../viw...", optional: true },
+    { key: "url_helper", label: "URL から自動設定", kind: "text", optional: true },
     { key: "base_id", label: "Base ID (実際の接続用)", kind: "text", placeholder: "app...", browseAirtableBase: true },
     { key: "base_name", label: "Base名 (キャプション・確認用)", kind: "text", placeholder: "選択時に自動補完されます", optional: true },
     { key: "table", label: "テーブル ID (実際の接続用)", kind: "text", placeholder: "tbl... または テーブル名", browseAirtableTable: true },

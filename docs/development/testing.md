@@ -8,6 +8,16 @@ npm run check:all
 
 `check:all` は TypeScript型検査、Vitest、公開文書検査、本番フロントビルド、Rustのformat、Clippy、ライブラリテスト、バイナリビルドを順に実行します。外部サービスの認証情報やWindows Helloは使用しません。
 
+Rustテストの前に、追跡された生成コードと同梱CSVから架空のサンプル一式を `dev/history/v<版>/logs/offline-quality-<識別子>/samples/` へ生成します。テストは `EVERYDB_TEST_SAMPLES_DIR` によりその出力だけを参照します。開発者の既存 `samples/` と秘密情報は読み込みません。GitHub CIも同じ入口を使います。
+
+開発用環境ファイルの安全な読込みは `pwsh -File dev/scripts/test-development-environment.ps1` で確認します。ライブ試験の秘密情報は [開発用秘密情報](secrets.md) に従い `C:\AI\env\EveryDB\` へ保存してください。
+
+運用スクリプトの命名だけを確認する場合は次を実行します。
+
+```powershell
+pwsh -File .\dev\scripts\test-script-naming.ps1
+```
+
 ## ライブテスト
 
 Rustの一部テストは外部サービス、ローカルブラウザプロファイル、ODBCドライバ、認証情報を必要とするため `ignored` です。秘密情報はリポジトリや設定ファイルへ保存せず、実行時の環境変数だけで渡してください。

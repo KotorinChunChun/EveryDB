@@ -36,6 +36,8 @@ export interface ThemeTokenSet {
   danger: string;
   onDanger: string;
   formError: string;
+  errorStateBg: string;
+  errorStateText: string;
 }
 
 /** `tokens.css` と同期したテーマ色（監査用）。 */
@@ -49,6 +51,8 @@ export const THEME_TOKENS: Record<"dark" | "light" | "night", ThemeTokenSet> = {
     danger: "#5a1d1d",
     onDanger: "#ffffff",
     formError: "#f85149",
+    errorStateBg: "#3a1518",
+    errorStateText: "#ffd7d9",
   },
   light: {
     bg: "#ffffff",
@@ -59,6 +63,8 @@ export const THEME_TOKENS: Record<"dark" | "light" | "night", ThemeTokenSet> = {
     danger: "#c62828",
     onDanger: "#ffffff",
     formError: "#b42318",
+    errorStateBg: "#fde7e9",
+    errorStateText: "#7d1117",
   },
   night: {
     bg: "#000000",
@@ -69,5 +75,7 @@ export const THEME_TOKENS: Record<"dark" | "light" | "night", ThemeTokenSet> = {
     danger: "#b33333",
     onDanger: "#ffffff",
     formError: "#ff6b6b",
+    errorStateBg: "#260000",
+    errorStateText: "#ffffff",
   },
 };

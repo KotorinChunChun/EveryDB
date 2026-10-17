@@ -12,6 +12,7 @@ export { mountCredentialSelector } from "./selector";
 export interface CredentialsDeps {
   getSourceEditor: CredentialSelectorDeps["getSourceEditor"];
   openGuide: CredentialManagerDeps["openGuide"];
+  openGuideDoc: CredentialManagerDeps["openGuideDoc"];
 }
 
 export interface CredentialsController extends WinAuthController, CredentialManagerController, CredentialSelectorController {}
@@ -19,7 +20,11 @@ export interface CredentialsController extends WinAuthController, CredentialMana
 /** Windows Hello + トークン選択ピッカー + トークン管理画面を一括でマウントする。 */
 export function mountCredentials(deps: CredentialsDeps): CredentialsController {
   const winAuth = createWinAuth();
-  const manager = mountCredentialManager({ winAuth, openGuide: deps.openGuide });
+  const manager = mountCredentialManager({
+    winAuth,
+    openGuide: deps.openGuide,
+    openGuideDoc: deps.openGuideDoc,
+  });
   const selector = mountCredentialSelector({ getSourceEditor: deps.getSourceEditor, manager });
 
   return {

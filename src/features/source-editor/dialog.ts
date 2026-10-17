@@ -1,8 +1,8 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { $ } from "../../app/dom";
+import { $, promptUrlInput } from "../../app/dom";
 import { invoke } from "../../app/ipc";
 import { appState } from "../../app/state";
-import type { SourceDetail } from "../../shared/types";
+
 import {
   parseAirtableUrl,
   parseGoogleSheetsUrl,
@@ -15,29 +15,20 @@ import type { ParentKind } from "../../source-types/registry";
 import { SECRET_PLACEHOLDER } from "./constants";
 import { isConfigIncomplete } from "./config-rules";
 import { deriveDefaultName } from "./default-name";
+import { browsePlacement } from "./browse-placement";
+import {
+  isApiOwnedSourceName,
+  isNotionNameResolved,
+  normalizeNotionDatabaseId,
+  notionNameFailureMessage,
+} from "./notion-name-policy";
+import { parentBrowseKind } from "./connection-kinds";
+import { duplicateConfirmMessage, findDuplicateSource } from "./source-identity";
 import { clearLinkedCredentials, setLinkedCredentials } from "./linked-credentials";
 import type { RoleEditorController } from "./role-editor";
 import { configWithoutRoleKeys, roleStateFromConfig } from "./roles";
 import { makeApiKeyButton, makeLinkButton } from "./ui-buttons";
-
-interface AirtableBaseItem {
-  id: string;
-  name: string;
-  permission_level: string;
-}
-
-interface AirtableViewItem {
-  id: string;
-  name: string;
-  type_: string;
-}
-
-interface AirtableTableItem {
-  id: string;
-  name: string;
-  primary_field_id: string;
-  views: AirtableViewItem[];
-}
+import { createCsvPreviewController } from "./csv-preview";
 
 export interface SourceEditorDialogElements {
   dialog: HTMLDialogElement;
@@ -69,6 +60,7 @@ export interface SourceEditorDialogActions {
   sharedKeysFor: (kind: ParentKind) => string[];
   tableOpenUrl: (type: string, cfg: Record<string, unknown>) => string | null;
   loadSources: () => Promise<void>;
+  openParentSettingsDialog: (parentKey: string) => Promise<void>;
   ensureUnlocked: () => Promise<boolean>;
   guideTextFor: (type: string) => string | null;
   openGuide: (type: string) => void;
@@ -81,6 +73,7 @@ export interface SourceEditorDialogActions {
       idPrefix: string,
       row: HTMLElement,
       label: HTMLElement,
+      sourceType: string,
     ) => void;
     openBrowserProfilePicker: (target: "history" | "bookmarks", input: HTMLInputElement) => void;
     openSheetPicker: (input: HTMLInputElement) => void;
@@ -99,8 +92,15 @@ export interface SourceEditorDialogActions {
   };
 }
 
+export interface OpenAddDialogOptions {
+  type?: string;
+  title?: string;
+  /** 接続先追加フロー（保存後に接続設定ダイアログを開く） */
+  connectionAdd?: boolean;
+}
+
 export interface SourceEditorDialogController {
-  openAddDialog: () => void;
+  openAddDialog: (options?: OpenAddDialogOptions) => void;
   openEditDialog: (id: number) => Promise<void>;
   getEditingId: () => number | null;
   getDialogMode: () => "add" | "edit";
@@ -109,7 +109,10 @@ export interface SourceEditorDialogController {
   maybeAutoFillName: (path?: string) => void;
   maybeFetchAndRenderFields: () => void;
   autoFillDefaultName: (force?: boolean) => void;
+  applySharePointSiteSelection: (siteUrl: string, displayName: string) => Promise<void>;
   resolveAirtableCaptions: (baseId?: string, tableId?: string, viewId?: string) => Promise<void>;
+  applyNotionSelection: (databaseId: string, databaseName: string) => void;
+  resolveNotionCaption: (databaseId: string) => Promise<void>;
 }
 
 export function mountSourceEditorDialog(
@@ -127,6 +130,14 @@ export function mountSourceEditorDialog(
   let hiddenSharedValues: Record<string, unknown> = {};
   /** 追加時、表示名をユーザーが手動で編集したら以後はファイルパスからの自動入力で上書きしない。 */
   let nameManuallyEdited = false;
+  /** 最後にNotion APIで名称取得に成功したID。別IDの古い名称を保存しないために使う。 */
+  let resolvedNotionDatabaseId = "";
+  /** 古い非同期応答が、新しく入力されたIDの名称を上書きしないための連番。 */
+  let notionNameRequestSequence = 0;
+  let notionNameResolveTimer: number | null = null;
+  /** 接続先追加フロー（保存後にテーブル選択ダイアログへ進む） */
+  let connectionAddMode = false;
+  const csvPreview = createCsvPreviewController({ getConfig: () => buildConfigFromFields().config });
 
   for (const t of TYPE_DEFS) {
     const opt = document.createElement("option");
@@ -225,24 +236,17 @@ export function mountSourceEditorDialog(
    * トークン未入力・未解錠・API失敗時は静かに諦める（ID自体は既に埋まっているため実害はない）。 */
   async function resolveAirtableCaptions(baseId?: string, tableId?: string, viewId?: string) {
     const tokenEl = document.getElementById("fd-token") as HTMLInputElement | null;
-    let token = tokenEl?.value.trim() ?? "";
-    if (tokenEl?.dataset.credRef) {
-      try {
-        token = await invoke<string>("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
-      } catch {
-        return; // 静かに諦める（ID は既に反映済みのため実害は無い）。
-      }
-    }
-    if (!token || token === SECRET_PLACEHOLDER) return;
+    const credentialId = Number(tokenEl?.dataset.credRef);
+    if (!Number.isSafeInteger(credentialId) || credentialId <= 0) return;
     try {
       if (baseId) {
-        const bases = await invoke<AirtableBaseItem[]>("browse_airtable_bases", { token });
+        const bases = await invoke("browse_airtable_bases", { credentialId });
         const b = bases.find((x) => x.id === baseId);
         const nameEl = document.getElementById("fd-base_name") as HTMLInputElement | null;
         if (b && nameEl && !nameEl.value.trim()) nameEl.value = b.name;
       }
       if (baseId && tableId) {
-        const tables = await invoke<AirtableTableItem[]>("browse_airtable_tables", { token, baseId });
+        const tables = await invoke("browse_airtable_tables", { credentialId, baseId });
         const t = tables.find((x) => x.id === tableId);
         const tNameEl = document.getElementById("fd-table_name") as HTMLInputElement | null;
         if (t && tNameEl && !tNameEl.value.trim()) tNameEl.value = t.name;
@@ -257,6 +261,90 @@ export function mountSourceEditorDialog(
     } finally {
       autoFillDefaultName();
     }
+  }
+
+  function setNotionNameStatus(state: "idle" | "loading" | "success" | "error", message: string) {
+    const statusEl = document.getElementById("notion-name-status");
+    if (!statusEl) return;
+    statusEl.dataset.state = state;
+    statusEl.textContent = message;
+  }
+
+  function applyResolvedNotionName(databaseId: string, databaseName: string) {
+    const idEl = document.getElementById("fd-database_id") as HTMLInputElement | null;
+    const nameEl = document.getElementById("fd-database_name") as HTMLInputElement | null;
+    if (idEl) idEl.value = databaseId;
+    if (nameEl) nameEl.value = databaseName;
+    resolvedNotionDatabaseId = databaseId;
+    elements.nameInput.value = databaseName;
+    nameManuallyEdited = false;
+    setNotionNameStatus("success", `Notionから最新名「${databaseName}」を取得しました。`);
+    updateConfigSummaryBadge();
+  }
+
+  function applyNotionSelection(databaseId: string, databaseName: string) {
+    notionNameRequestSequence += 1;
+    if (notionNameResolveTimer !== null) {
+      window.clearTimeout(notionNameResolveTimer);
+      notionNameResolveTimer = null;
+    }
+    applyResolvedNotionName(databaseId, databaseName);
+    maybeFetchAndRenderFields();
+  }
+
+  async function resolveNotionCaption(databaseId: string) {
+    databaseId = databaseId.trim();
+    if (!databaseId) return;
+    const nameEl = document.getElementById("fd-database_name") as HTMLInputElement | null;
+    const requestSequence = ++notionNameRequestSequence;
+    const hasSavedName = (nameEl?.value.trim() ?? "").length > 0;
+    const credentialId = Number((document.getElementById("fd-token") as HTMLInputElement | null)?.dataset.credRef);
+    if (dialogMode === "add" && (!Number.isSafeInteger(credentialId) || credentialId <= 0)) {
+      setNotionNameStatus("error", "データベース名を取得するには、先に保存済みトークンを選択してください。");
+      return;
+    }
+    setNotionNameStatus("loading", "Notionから最新のデータベース名を取得しています…");
+    try {
+      const result = dialogMode === "edit" && editingId !== null
+        ? await invoke("browse_notion_database_for_source", {
+            id: editingId,
+            overridesJson: JSON.stringify(buildConfigFromFields().config),
+            databaseId,
+          })
+        : await invoke("browse_notion_database", {
+            credentialId,
+            databaseId,
+          });
+      if (requestSequence !== notionNameRequestSequence || !result.title) return;
+      applyResolvedNotionName(databaseId, result.title);
+    } catch (error) {
+      if (requestSequence !== notionNameRequestSequence) return;
+      // API・通信失敗時は入力値を一切変更せず、最後の成功名を維持する。
+      setNotionNameStatus("error", notionNameFailureMessage(error, hasSavedName));
+    }
+  }
+
+  function resolveNotionCaptionNow(databaseId: string) {
+    if (notionNameResolveTimer !== null) {
+      window.clearTimeout(notionNameResolveTimer);
+      notionNameResolveTimer = null;
+    }
+    void resolveNotionCaption(databaseId);
+  }
+
+  function scheduleNotionCaptionResolution(databaseId: string) {
+    if (notionNameResolveTimer !== null) window.clearTimeout(notionNameResolveTimer);
+    notionNameRequestSequence += 1;
+    if (normalizeNotionDatabaseId(databaseId).length !== 32) {
+      notionNameResolveTimer = null;
+      setNotionNameStatus("idle", "32桁のデータベースIDを入力するとNotionから名前を取得します。");
+      return;
+    }
+    setNotionNameStatus("loading", "入力されたIDを確認しています…");
+    notionNameResolveTimer = window.setTimeout(() => {
+      notionNameResolveTimer = null;
+      void resolveNotionCaption(databaseId);
+    }, 250);
   }
 
   /** 各種データソース URL が入力・ペーストされた際、設定 ID フィールドを自動入力・展開する。 */
@@ -300,6 +388,7 @@ export function mountSourceEditorDialog(
         if (el) el.value = info.databaseId;
         autoFillDefaultName();
         maybeFetchAndRenderFields();
+        resolveNotionCaptionNow(info.databaseId);
         return;
       }
     }
@@ -328,7 +417,7 @@ export function mountSourceEditorDialog(
   /** 追加ダイアログ等でデータソース設定・種別の変更時や未入力時に表示名を自動入力・補完する。 */
   function autoFillDefaultName(force: boolean = false) {
     if (dialogMode !== "add") return;
-    if (!force && nameManuallyEdited) return;
+    if (!force && nameManuallyEdited && elements.typeSel.value !== "notion") return;
     const { config } = buildConfigFromFields();
     const name = deriveDefaultName(elements.typeSel.value, config);
     if (name) {
@@ -368,9 +457,8 @@ export function mountSourceEditorDialog(
     toggleField("end_mode", "end_cell", "end_ref_column");
   }
 
-  function renderBrowseArea(def: TypeDef) {
-    elements.browseAreaEl.innerHTML = "";
-    if (!def.browse) return;
+  function createBrowseButton(def: TypeDef): HTMLButtonElement | null {
+    if (!def.browse) return null;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn";
@@ -392,7 +480,7 @@ export function mountSourceEditorDialog(
         btn.onclick = () => pickers.openTablePicker("excel_table");
         break;
       case "sharepoint":
-        btn.textContent = "サイト/チームから選択…";
+        btn.textContent = "サイト・チームから選択…";
         btn.onclick = pickers.openSharePointPicker;
         break;
       case "airtable":
@@ -403,11 +491,77 @@ export function mountSourceEditorDialog(
         };
         break;
     }
-    elements.browseAreaEl.appendChild(btn);
+    return btn;
+  }
+
+  function renderAutoSetupRow(def: TypeDef) {
+    const field = document.createElement("div");
+    field.className = "field auto-setup-row";
+    const labelSpan = document.createElement("span");
+    labelSpan.textContent = "自動設定";
+    field.appendChild(labelSpan);
+
+    const btnRow = document.createElement("div");
+    btnRow.className = "zoom-row";
+    const urlBtn = document.createElement("button");
+    urlBtn.type = "button";
+    urlBtn.className = "btn";
+    urlBtn.textContent = "URLから自動入力";
+    urlBtn.onclick = async () => {
+      const url = await promptUrlInput();
+      if (url) tryApplyUrlOrFileDropHelper(url);
+    };
+    btnRow.appendChild(urlBtn);
+    if (browsePlacement(def, dialogMode) === "auto-setup") {
+      const browseBtn = createBrowseButton(def);
+      if (browseBtn) btnRow.appendChild(browseBtn);
+    }
+    field.appendChild(btnRow);
+    elements.dynamicEl.appendChild(field);
+  }
+
+  function renderBrowseArea(def: TypeDef) {
+    elements.browseAreaEl.innerHTML = "";
+    if (browsePlacement(def, dialogMode) !== "separate") return;
+    const btn = createBrowseButton(def);
+    if (btn) elements.browseAreaEl.appendChild(btn);
+  }
+
+  async function applySharePointSiteSelection(siteUrl: string, displayName: string) {
+    const siteEl = document.getElementById("fd-site_url") as HTMLInputElement | null;
+    if (siteEl) siteEl.value = siteUrl;
+    const siteNameEl = document.getElementById("fd-site_display_name") as HTMLInputElement | null;
+    if (siteNameEl) siteNameEl.value = displayName;
+    const listEl = document.getElementById("fd-list_name") as HTMLInputElement | null;
+    if (listEl) listEl.value = "";
+    const libEl = document.getElementById("fd-library_name") as HTMLInputElement | null;
+    if (libEl) libEl.value = "";
+    if (displayName) {
+      try {
+        await invoke("set_parent_label", { parentKey: siteUrl, label: displayName });
+        appState.parentLabelOverrides.set(siteUrl, displayName);
+      } catch (e) {
+        console.warn("接続先ラベルの保存に失敗:", e);
+      }
+    }
+    autoFillDefaultName();
+    maybeFetchAndRenderFields();
   }
 
   function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] = []) {
     const def = currentTypeDef();
+    notionNameRequestSequence += 1;
+    if (notionNameResolveTimer !== null) {
+      window.clearTimeout(notionNameResolveTimer);
+      notionNameResolveTimer = null;
+    }
+    const isNotion = isApiOwnedSourceName(def.value);
+    elements.nameInput.readOnly = isNotion;
+    elements.nameInput.title = isNotion ? "Notionから取得した最新のデータベース名へ自動同期します" : "";
+    elements.nameInput.setAttribute("aria-readonly", isNotion ? "true" : "false");
+    resolvedNotionDatabaseId = isNotion && String(prefill?.database_name ?? "").trim()
+      ? String(prefill?.database_id ?? "")
+      : "";
     elements.dynamicEl.innerHTML = "";
     let currentInlineRow: HTMLElement | null = null;
     // 秘密フィールドの束（token/client_secret/password 本体 + tenant_id 等のバンドル）を先に洗い出す。
@@ -422,6 +576,21 @@ export function mountSourceEditorDialog(
     }
     for (const f of def.fields) {
       if (hideKeys.includes(f.key)) continue;
+      if (f.key === "site_display_name") {
+        const hidden = document.createElement("input");
+        hidden.type = "text";
+        hidden.id = `fd-${f.key}`;
+        hidden.hidden = true;
+        if (prefill && prefill[f.key] !== undefined && prefill[f.key] !== null) {
+          hidden.value = String(prefill[f.key]);
+        }
+        elements.dynamicEl.appendChild(hidden);
+        continue;
+      }
+      if (f.key === "url_helper") {
+        renderAutoSetupRow(def);
+        continue;
+      }
       const isCredOwner = !!f.credentialScope;
       const isCredManagedSibling = !isCredOwner && credentialManagedKeys.has(f.key);
       const label = document.createElement("label");
@@ -434,6 +603,7 @@ export function mountSourceEditorDialog(
         cb.addEventListener("change", () => {
           autoFillDefaultName();
           maybeFetchAndRenderFields();
+          csvPreview.schedule();
         });
         label.append(cb, document.createTextNode(" " + f.label));
       } else if (f.kind === "select") {
@@ -452,6 +622,7 @@ export function mountSourceEditorDialog(
           maybeFetchAndRenderFields();
           // excel_range の start_mode/end_mode 連動表示
           syncExcelRangeModeVisibility();
+          csvPreview.schedule();
         });
         label.appendChild(sel);
       } else if (f.kind === "textarea") {
@@ -471,6 +642,8 @@ export function mountSourceEditorDialog(
         input.type = f.kind === "password" ? "password" : f.kind === "number" ? "number" : "text";
         input.autocomplete = f.kind === "password" ? "off" : "on";
         input.id = `fd-${f.key}`;
+        input.readOnly = f.readOnly === true;
+        if (input.readOnly) input.setAttribute("aria-readonly", "true");
         if (f.kind === "number" && f.min !== undefined) input.min = String(f.min);
         if (f.placeholder && !isCredManagedSibling) input.placeholder = f.placeholder;
         if (prefill) {
@@ -486,15 +659,13 @@ export function mountSourceEditorDialog(
           continue;
         }
         input.addEventListener("input", () => {
-          tryApplyUrlOrFileDropHelper(input.value);
           autoFillDefaultName();
-        });
-        input.addEventListener("paste", (e) => {
-          const text = e.clipboardData?.getData("text") || "";
-          if (text) tryApplyUrlOrFileDropHelper(text);
+          csvPreview.schedule();
+          if (def.value === "notion" && f.key === "database_id") {
+            scheduleNotionCaptionResolution(input.value);
+          }
         });
         input.addEventListener("change", () => {
-          tryApplyUrlOrFileDropHelper(input.value);
           autoFillDefaultName();
           maybeFetchAndRenderFields();
           // URL貼り付けが ID 欄より先にトークンより先行した場合など、トークン確定時点で
@@ -505,6 +676,10 @@ export function mountSourceEditorDialog(
             const viewId = (document.getElementById("fd-view") as HTMLInputElement | null)?.value.trim();
             if (baseId || tableId) void resolveAirtableCaptions(baseId || undefined, tableId || undefined, viewId || undefined);
           }
+          if (def.value === "notion" && (f.key === "database_id" || f.key === "token")) {
+            const databaseId = (document.getElementById("fd-database_id") as HTMLInputElement | null)?.value.trim();
+            if (databaseId) resolveNotionCaptionNow(databaseId);
+          }
         });
         if (isCredOwner || f.browse || f.helpUrl || f.linkUrl || f.browserProfile || f.browseSheet || f.browseTable || f.browseCell || f.browseColumn || f.browseAirtableBase || f.browseAirtableTable || f.browseAirtableView) {
           // 参照ボタン（ファイル/フォルダ選択）、API キー取得ページを開くボタン、リンクボタン、
@@ -513,7 +688,7 @@ export function mountSourceEditorDialog(
           const row = document.createElement("div");
           row.className = "path-row";
           row.appendChild(input);
-          if (isCredOwner) pickers.wireCredentialSelector(input, f, "fd-", row, label);
+          if (isCredOwner) pickers.wireCredentialSelector(input, f, "fd-", row, label, def.value);
           if (f.browse) {
             const browseBtn = document.createElement("button");
             browseBtn.type = "button";
@@ -530,6 +705,7 @@ export function mountSourceEditorDialog(
                   input.value = picked;
                   autoFillDefaultName();
                   maybeFetchAndRenderFields();
+                  csvPreview.schedule();
                 }
               } catch (e) {
                 console.error("ファイル選択に失敗:", e);
@@ -632,6 +808,26 @@ export function mountSourceEditorDialog(
         }
       }
       elements.dynamicEl.appendChild(label);
+      if (def.value === "notion" && f.key === "database_name") {
+        const statusEl = document.createElement("div");
+        statusEl.id = "notion-name-status";
+        statusEl.className = "notion-name-status";
+        statusEl.dataset.state = "idle";
+        statusEl.setAttribute("role", "status");
+        statusEl.setAttribute("aria-live", "polite");
+        statusEl.textContent = String(prefill?.database_name ?? "").trim()
+          ? "最後に正常取得して保存したデータベース名です。最新名を確認します。"
+          : "データベースを選択するか、IDを入力するとNotionから名前を取得します。";
+        elements.dynamicEl.appendChild(statusEl);
+      }
+    }
+    if (def.value === "csv") {
+      const previewHost = document.createElement("section");
+      previewHost.className = "csv-preview";
+      elements.dynamicEl.appendChild(previewHost);
+      csvPreview.mount(previewHost);
+    } else {
+      csvPreview.clear();
     }
     // 参照(ブラウズ)ボタンは新規追加時のみ（編集時は種別固定・接続情報も隠れているため意味がない）。
     if (dialogMode === "add") {
@@ -679,12 +875,12 @@ export function mountSourceEditorDialog(
       let names: string[];
       let fromCache = false;
       if (dialogMode === "edit" && editingId !== null) {
-        const preview = await invoke<{ names: string[]; from_cache: boolean }>("preview_source_fields_by_id", { id: editingId });
+        const preview = await invoke("preview_source_fields_by_id", { id: editingId });
         names = preview.names;
         fromCache = preview.from_cache;
       } else {
         const { config } = buildConfigFromFields();
-        names = await invoke<string[]>("preview_source_fields", { type: elements.typeSel.value, configJson: JSON.stringify(config) });
+        names = await invoke("preview_source_fields", { type: elements.typeSel.value, configJson: JSON.stringify(config) });
       }
       roleEditor.render(names);
       if (fromCache) {
@@ -705,7 +901,7 @@ export function mountSourceEditorDialog(
     roleEditor.render([...roleEditor.getLastFieldNames()]);
   };
 
-  function openAddDialog() {
+  function openAddDialog(options: OpenAddDialogOptions = {}) {
     dialogMode = "add";
     editingId = null;
     roleEditor.setRoleState(null);
@@ -713,11 +909,12 @@ export function mountSourceEditorDialog(
     hiddenSharedKeys = [];
     hiddenSharedValues = {};
     nameManuallyEdited = false;
+    connectionAddMode = options.connectionAdd ?? false;
     elements.belongsToEl.hidden = true;
     elements.lastLoadedEl.hidden = true;
-    elements.addDialogTitle.textContent = "テーブル追加";
+    elements.addDialogTitle.textContent = options.title ?? (connectionAddMode ? "接続先を追加" : "テーブル追加");
     elements.nameInput.value = "";
-    elements.typeSel.value = "csv";
+    elements.typeSel.value = options.type ?? "csv";
     elements.typeSel.disabled = false;
     setConfigAccordionOpen(true);
     renderTypeFields();
@@ -725,12 +922,13 @@ export function mountSourceEditorDialog(
   }
 
   elements.nameInput.addEventListener("input", () => {
+    if (elements.typeSel.value === "notion") return;
     nameManuallyEdited = true;
     updateConfigSummaryBadge();
   });
 
   async function openEditDialog(id: number) {
-    const detail = await invoke<SourceDetail>("get_source_detail", { id });
+    const detail = await invoke("get_source_detail", { id });
     const info = appState.sources.find((s) => s.id === id);
     dialogMode = "edit";
     editingId = id;
@@ -772,6 +970,11 @@ export function mountSourceEditorDialog(
     renderTypeFields(prefill, hiddenSharedKeys);
     elements.dialog.showModal();
 
+    if (detail.type_ === "notion") {
+      const databaseId = String(prefill.database_id ?? "").trim();
+      if (databaseId) resolveNotionCaptionNow(databaseId);
+    }
+
     // 編集ダイアログでは開いた直後にフィールド一覧を自動取得して表示する。
     // 既存の「再読込」ボタンは、接続情報を変更した後などに手動で取り直す用途になる。
     await fetchAndRenderFields();
@@ -783,7 +986,6 @@ export function mountSourceEditorDialog(
     }
   }
 
-  elements.addBtn.onclick = () => openAddDialog();
   elements.addCancelBtn.onclick = () => elements.dialog.close("cancel");
 
   elements.addForm.addEventListener("submit", async (e) => {
@@ -798,6 +1000,17 @@ export function mountSourceEditorDialog(
     e.preventDefault();
     let name = elements.nameInput.value.trim();
     const { config, missingText } = buildConfigFromFields();
+    if (elements.typeSel.value === "notion") {
+      const databaseId = String(config.database_id ?? "");
+      const databaseName = String(config.database_name ?? "");
+      if (!isNotionNameResolved(databaseId, resolvedNotionDatabaseId, databaseName)) {
+        setNotionNameStatus("error", "現在のデータベースIDの最新名を確認できていないため保存できません。接続設定を確認して再試行してください。");
+        setConfigAccordionOpen(true);
+        return;
+      }
+      name = databaseName.trim();
+      elements.nameInput.value = name;
+    }
     if (!name) {
       name = deriveDefaultName(elements.typeSel.value, config);
       if (name) elements.nameInput.value = name;
@@ -813,13 +1026,29 @@ export function mountSourceEditorDialog(
     try {
       if (dialogMode === "edit" && editingId !== null) {
         await invoke("update_source", { id: editingId, name, configJson: JSON.stringify(config) });
+        elements.typeSel.disabled = false;
+        await actions.loadSources();
+        elements.dialog.close();
       } else {
         const type_ = elements.typeSel.value;
-        await invoke("add_source", { type: type_, name, configJson: JSON.stringify(config) });
+        const dup = await findDuplicateSource(type_, config, appState.sources);
+        if (dup) {
+          if (window.confirm(duplicateConfirmMessage(dup.name))) {
+            await invoke("reload_sources", { sourceIds: [dup.id] });
+            await actions.loadSources();
+            elements.dialog.close();
+          }
+          return;
+        }
+        const newId = await invoke("add_source", { type: type_, name, configJson: JSON.stringify(config) });
+        elements.typeSel.disabled = false;
+        await actions.loadSources();
+        elements.dialog.close();
+        const added = appState.sources.find((s) => s.id === newId);
+        if (connectionAddMode && added && parentBrowseKind(type_) !== null) {
+          await actions.openParentSettingsDialog(added.parent);
+        }
       }
-      elements.typeSel.disabled = false;
-      await actions.loadSources();
-      elements.dialog.close();
     } catch (err) {
       alert("保存に失敗: " + String(err));
     } finally {
@@ -843,17 +1072,16 @@ export function mountSourceEditorDialog(
       const path = actions.normalizePath(rawPath);
       const pathEl = document.getElementById("fd-path") as HTMLInputElement | null;
       const keyPathEl = document.getElementById("fd-key_path") as HTMLInputElement | null;
-      const urlHelperEl = document.getElementById("fd-url_helper") as HTMLInputElement | null;
       if (pathEl) {
         pathEl.value = path;
         autoFillDefaultName();
         maybeFetchAndRenderFields();
+        csvPreview.schedule();
       } else if (keyPathEl) {
         keyPathEl.value = path;
         autoFillDefaultName();
         maybeFetchAndRenderFields();
-      } else if (urlHelperEl) {
-        urlHelperEl.value = path;
+      } else {
         tryApplyUrlOrFileDropHelper(path);
       }
     }
@@ -870,7 +1098,7 @@ export function mountSourceEditorDialog(
     if (el.dataset.credLabel) return;
     const ok = await actions.ensureUnlocked();
     if (ok && editingId !== null) {
-      const detail = await invoke<SourceDetail>("get_source_detail", { id: editingId });
+      const detail = await invoke("get_source_detail", { id: editingId });
       el.value = String((detail.config as Record<string, unknown>)[el.id.replace("fd-", "")] ?? "");
     }
   });
@@ -887,7 +1115,10 @@ export function mountSourceEditorDialog(
     maybeAutoFillName,
     maybeFetchAndRenderFields,
     autoFillDefaultName,
+    applySharePointSiteSelection,
     resolveAirtableCaptions,
+    applyNotionSelection,
+    resolveNotionCaption,
   };
 }
 

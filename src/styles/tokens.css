@@ -21,6 +21,9 @@
   --accent-focus: #1a8fd8;
   --danger-focus: #9c3a3a;
   --form-error: #f85149;
+  --error-state-bg: #3a1518;
+  --error-state-border: #b84a52;
+  --error-state-text: #ffd7d9;
   /* 通常ボタンのホバー背景。以前は固定値 #87878c を全テーマ共通で使っていたため、
      背景/文字色はテーマごとに変わるのにホバーだけ変わらない（要件: 分岐していないのはおかしい）
      という不具合になっていた。--panel-2 を基準にテーマごとの方向（暗背景なら明るく、
@@ -55,6 +58,9 @@
   --accent-focus: #073d63;
   --danger-focus: #8c1a1a;
   --form-error: #b42318;
+  --error-state-bg: #fde7e9;
+  --error-state-border: #b4232d;
+  --error-state-text: #7d1117;
   --btn-hover-bg: #d8d8d8;
   --sel: #cfe4f7;
   --row-alt: #f7f7f7;
@@ -80,6 +86,9 @@
   --accent-focus: #7ec4ff;
   --danger-focus: #e06a6a;
   --form-error: #ff6b6b;
+  --error-state-bg: #260000;
+  --error-state-border: #ff6b6b;
+  --error-state-text: #ffffff;
   --btn-hover-bg: #232323;
   --sel: #003a66;
   --row-alt: #080808;

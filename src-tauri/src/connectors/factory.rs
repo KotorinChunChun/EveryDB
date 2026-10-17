@@ -13,7 +13,7 @@ use super::graph_data::{
     GraphCalendarConnector, GraphDevicesConnector, GraphGroupsConnector,
     GraphIntuneDevicesConnector, GraphLicensesConnector, GraphOneDriveConnector,
     GraphPlannerConnector, GraphSharePointLibraryConnector, GraphSharePointListConnector,
-    GraphTeamsConnector, GraphUsersConnector,
+    GraphTeamsConnector, GraphUsersConnector, MicrosoftAccountOneDriveConnector,
 };
 use super::local::{
     AccessConnector, BrowserBookmarksConnector, BrowserDownloadsConnector, BrowserHistoryConnector,
@@ -65,6 +65,7 @@ pub const SUPPORTED_SOURCE_TYPES: &[&str] = &[
     "graph_licenses",
     "graph_calendar",
     "graph_onedrive",
+    "microsoft_account_onedrive",
     "graph_planner",
     "browser_history",
     "browser_bookmarks",
@@ -152,6 +153,9 @@ pub fn build_connector(type_: &str, config_json: &str) -> Result<Box<dyn Connect
         "graph_licenses" => Ok(Box::new(from_str::<GraphLicensesConnector>(config_json)?)),
         "graph_calendar" => Ok(Box::new(from_str::<GraphCalendarConnector>(config_json)?)),
         "graph_onedrive" => Ok(Box::new(from_str::<GraphOneDriveConnector>(config_json)?)),
+        "microsoft_account_onedrive" => Ok(Box::new(
+            from_str::<MicrosoftAccountOneDriveConnector>(config_json)?,
+        )),
         "graph_planner" => Ok(Box::new(from_str::<GraphPlannerConnector>(config_json)?)),
         "google_sheets" => Ok(Box::new(from_str::<GoogleSheetsConnector>(config_json)?)),
         "ical_calendar" => Ok(Box::new(from_str::<IcalConnector>(config_json)?)),

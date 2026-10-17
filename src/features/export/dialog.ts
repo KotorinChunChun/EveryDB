@@ -85,7 +85,7 @@ export function mountExportDialog(deps: ExportDialogDeps): ExportDialogControlle
       const bytes = await encodeExportText(
         text,
         format === "json" ? "utf8" : encoding,
-        async (value) => new Uint8Array(await invoke<number[]>("encode_shift_jis", { text: value })),
+        async (value) => new Uint8Array(await invoke("encode_shift_jis", { text: value })),
       );
       await writeFile(path, bytes);
       $<HTMLDialogElement>("export-dialog").close();

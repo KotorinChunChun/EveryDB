@@ -8,7 +8,11 @@ function joinWrapped(a: string, b: string): string {
 }
 
 /** インライン記法（**強調** / `コード` / [表示](URL)）を DOM として組み立てる。 */
-function appendInlineMarkdown(parent: HTMLElement, text: string) {
+export interface MarkdownRenderOptions {
+  onOpenDocument?: (name: string) => void;
+}
+
+function appendInlineMarkdown(parent: HTMLElement, text: string, onOpenDocument?: (name: string) => void) {
   const re = /\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)/g;
   let last = 0;
   let m: RegExpExecArray | null;
@@ -30,6 +34,11 @@ function appendInlineMarkdown(parent: HTMLElement, text: string) {
       a.title = url;
       a.onclick = (ev) => {
         ev.preventDefault();
+        const localGuide = /^(?:\.\/)?([A-Za-z0-9_-]+)\.md(?:#[^)]+)?$/.exec(url);
+        if (localGuide && onOpenDocument) {
+          onOpenDocument(localGuide[1]);
+          return;
+        }
         void invoke("open_ref", { target: url }).catch(() => {});
       };
       parent.appendChild(a);
@@ -40,7 +49,7 @@ function appendInlineMarkdown(parent: HTMLElement, text: string) {
 }
 
 /** 手順書用の最小限の Markdown レンダラ（見出し / 箇条書き / 番号付き / 表 / コード / 段落）。 */
-export function renderMarkdownInto(container: HTMLElement, md: string) {
+export function renderMarkdownInto(container: HTMLElement, md: string, options: MarkdownRenderOptions = {}) {
   container.innerHTML = "";
   const lines = md.replace(/<!--[\s\S]*?-->/g, "").split(/\r?\n/);
   let i = 0;
@@ -67,7 +76,7 @@ export function renderMarkdownInto(container: HTMLElement, md: string) {
     const h = /^(#{1,4})\s+(.*)$/.exec(line);
     if (h) {
       const el = document.createElement(`h${h[1].length}`);
-      appendInlineMarkdown(el, h[2]);
+      appendInlineMarkdown(el, h[2], options.onOpenDocument);
       container.appendChild(el);
       i++;
       continue;
@@ -79,7 +88,7 @@ export function renderMarkdownInto(container: HTMLElement, md: string) {
       const htr = document.createElement("tr");
       for (const c of cellsOf(line)) {
         const th = document.createElement("th");
-        appendInlineMarkdown(th, c);
+        appendInlineMarkdown(th, c, options.onOpenDocument);
         htr.appendChild(th);
       }
       thead.appendChild(htr);
@@ -90,7 +99,7 @@ export function renderMarkdownInto(container: HTMLElement, md: string) {
         const tr = document.createElement("tr");
         for (const c of cellsOf(lines[i])) {
           const td = document.createElement("td");
-          appendInlineMarkdown(td, c);
+          appendInlineMarkdown(td, c, options.onOpenDocument);
           tr.appendChild(td);
         }
         tbody.appendChild(tr);
@@ -115,7 +124,7 @@ export function renderMarkdownInto(container: HTMLElement, md: string) {
           i++;
         }
         const li = document.createElement("li");
-        appendInlineMarkdown(li, text);
+        appendInlineMarkdown(li, text, options.onOpenDocument);
         list.appendChild(li);
       }
       container.appendChild(list);
@@ -129,7 +138,7 @@ export function renderMarkdownInto(container: HTMLElement, md: string) {
       i++;
     }
     const p = document.createElement("p");
-    appendInlineMarkdown(p, text);
+    appendInlineMarkdown(p, text, options.onOpenDocument);
     container.appendChild(p);
   }
 }

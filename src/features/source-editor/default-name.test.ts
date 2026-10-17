@@ -12,5 +12,8 @@ describe("source editor default name", () => {
     expect(deriveDefaultName("airtable", { base_name: "営業", table_name: "案件", view_name: "進行中" })).toBe("営業: 案件 (進行中)");
     expect(deriveDefaultName("web_page", { url: "https://example.com/docs/guide" })).toBe("example.com/guide");
     expect(deriveDefaultName("graph_sharepoint_library", {})).toBe("ドキュメントライブラリ");
+    expect(deriveDefaultName("graph_sharepoint_list", { site_display_name: "営業サイト" })).toBe("営業サイト");
+    expect(deriveDefaultName("graph_sharepoint_list", { site_display_name: "営業サイト", list_name: "案件" })).toBe("案件");
+    expect(deriveDefaultName("notion", { database_id: "0123456789abcdef", database_name: "案件管理" })).toBe("案件管理");
   });
 });

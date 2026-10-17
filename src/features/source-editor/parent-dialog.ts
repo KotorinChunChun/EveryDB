@@ -1,7 +1,7 @@
 import { $, confirmDelete, setPickerMessage } from "../../app/dom";
 import { invoke } from "../../app/ipc";
 import { appState } from "../../app/state";
-import type { SourceDetail, SourceInfo } from "../../shared/types";
+import type { SourceInfo } from "../../shared/types";
 import { TYPE_DEFS } from "../../source-types/forms";
 import type { FieldDef } from "../../source-types/forms";
 import type { ParentKind } from "../../source-types/registry";
@@ -10,28 +10,10 @@ import { SECRET_PLACEHOLDER } from "./constants";
 import type { FieldRendererActions } from "./field-renderer";
 import { renderFieldsInto } from "./field-renderer";
 import { setLinkedCredentials } from "./linked-credentials";
+import { GRAPH_ONE_CLICK_TYPES, parentBrowseKind, type ParentBrowseKind } from "./connection-kinds";
+import { duplicateConfirmMessage, findDuplicateSource } from "./source-identity";
+import { sharedConfigWouldChange } from "./shared-values-diff";
 import { currentFieldRawValue, parentKindLabel, sharedKeysFor } from "./shared-config";
-
-type ParentBrowseKind = "sqlite" | "accdb" | "excel_table" | "sharepoint" | "notion" | "graph365" | "airtable";
-
-/** 接続先ダイアログから配下テーブルを一覧取得して追加/削除できる種別。それ以外は非対応（個別に追加/削除）。 */
-function parentBrowseKind(repType: string): ParentBrowseKind | null {
-  if (repType === "sqlite") return "sqlite";
-  if (repType === "accdb") return "accdb";
-  if (repType === "excel_table") return "excel_table";
-  if (repType.startsWith("graph_sharepoint")) return "sharepoint";
-  if (repType === "notion") return "notion";
-  if (repType === "airtable") return "airtable";
-  // Microsoft 365(Graph) は API での一覧取得ではなく、実装済みの種別そのものを一覧に出す。
-  if (repType.startsWith("graph")) return "graph365";
-  return null;
-}
-
-/** Microsoft 365: 接続情報（テナント/クライアント/シークレット）だけで使える＝ワンクリックで追加できる種別。 */
-const GRAPH_ONE_CLICK_TYPES = [
-  "graph_entra_users", "graph_entra_groups", "graph_entra_devices",
-  "graph_intune_devices", "graph_licenses", "graph_teams",
-];
 /** Microsoft 365: 対象ユーザーやグループ ID など追加入力が要るため一覧からは追加できない種別。 */
 const GRAPH_PARAMETERIZED_TYPES = ["graph_calendar", "graph_onedrive", "graph_planner"];
 
@@ -185,11 +167,11 @@ export function mountParentSettingsDialog(
     try {
       if (kind === "sqlite" || kind === "accdb" || kind === "excel_table") {
         const cmd = kind === "sqlite" ? "browse_sqlite_tables" : kind === "accdb" ? "browse_accdb_tables" : "browse_excel_tables";
-        const names = await invoke<string[]>(cmd, { path: shared.path });
+        const names = await invoke(cmd, { path: shared.path });
         parentTableItems = names.map((n) => ({ key: n, label: n, type_: repType, extraConfig: { table: n } }));
       } else if (kind === "sharepoint") {
         // 秘密フィールド（client_secret）はマスクされている可能性があるため、保存済み設定を使う。
-        const resources = await invoke<{ display_name: string; kind: string }[]>(
+        const resources = await invoke(
           "browse_graph_site_resources_for_source",
           { id: siblingId, overridesJson: JSON.stringify(shared) },
         );
@@ -200,20 +182,20 @@ export function mountParentSettingsDialog(
           extraConfig: r.kind === "library" ? { library_name: r.display_name } : { list_name: r.display_name },
         }));
       } else if (kind === "notion") {
-        const dbs = await invoke<{ id: string; title: string }[]>(
+        const dbs = await invoke(
           "browse_notion_databases_for_source",
           { id: siblingId, overridesJson: JSON.stringify(shared) },
         );
-        parentTableItems = dbs.map((d) => ({ key: d.id, label: d.title || "(無題)", type_: "notion", extraConfig: { database_id: d.id } }));
+        parentTableItems = dbs.map((d) => ({ key: d.id, label: d.title || "(無題)", type_: "notion", extraConfig: { database_id: d.id, database_name: d.title || "(無題)" } }));
       } else if (kind === "airtable") {
-        const tbls = await invoke<{ id: string; name: string }[]>(
+        const tbls = await invoke(
           "browse_airtable_tables_for_source",
           { id: siblingId, overridesJson: JSON.stringify(shared), baseId: null },
         );
         // base_id/base_name は共有フィールド(token)には含めていないため、兄弟テーブルの設定から
         // 引き継ぐ。無いと新規テーブルがどの Base にも属さない扱いになり、汎用の「Airtable」
         // ツリーへ入ってしまう（実際に発生した不具合）。
-        const siblingDetail = await invoke<SourceDetail>("get_source_detail", { id: siblingId }).catch(() => null);
+        const siblingDetail = await invoke("get_source_detail", { id: siblingId }).catch(() => null);
         const baseId = siblingDetail ? String(siblingDetail.config.base_id ?? "") : "";
         const baseName = siblingDetail ? String(siblingDetail.config.base_name ?? "") : "";
         parentTableItems = tbls.map((t) => ({
@@ -242,7 +224,7 @@ export function mountParentSettingsDialog(
       }
     } else {
       const details = await Promise.all(
-        children.map((c) => invoke<SourceDetail>("get_source_detail", { id: c.id }).catch(() => null)),
+        children.map((c) => invoke("get_source_detail", { id: c.id }).catch(() => null)),
       );
       children.forEach((c, i) => {
         const cfg = details[i]?.config;
@@ -319,12 +301,12 @@ export function mountParentSettingsDialog(
     setLinkedCredentials({});
     if (fieldDefs.length > 0) {
       try {
-        const detail = await invoke<SourceDetail>("get_source_detail", { id: children[0].id });
+        const detail = await invoke("get_source_detail", { id: children[0].id });
         prefill = detail.config;
         setLinkedCredentials(detail.linked_credentials ?? {});
       } catch { /* noop */ }
     }
-    renderFieldsInto(elements.dynamicEl, "pf-", fieldDefs, actions.fieldRenderer, prefill);
+    renderFieldsInto(elements.dynamicEl, "pf-", fieldDefs, actions.fieldRenderer, repType, prefill);
 
     parentDialogState = { parentKey, keys, fieldDefs, children, repType };
     if (!elements.dialog.open) elements.dialog.showModal();
@@ -339,7 +321,7 @@ export function mountParentSettingsDialog(
     if (el.dataset.credLabel) return;
     const ok = await actions.ensureUnlocked();
     if (ok) {
-      const detail = await invoke<SourceDetail>("get_source_detail", { id: parentDialogState.children[0].id });
+      const detail = await invoke("get_source_detail", { id: parentDialogState.children[0].id });
       el.value = String((detail.config as Record<string, unknown>)[el.id.replace("pf-", "")] ?? "");
     }
   });
@@ -386,17 +368,37 @@ export function mountParentSettingsDialog(
       if (!ok) return;
     }
 
+    const prevLabel = appState.parentLabelOverrides.get(parentKey) ?? "";
+    const labelChanged = newLabel !== prevLabel;
+    if (toAdd.length === 0 && toRemove.length === 0 && !labelChanged) {
+      let anySharedChange = false;
+      for (const c of children) {
+        const detail = await invoke("get_source_detail", { id: c.id });
+        if (sharedConfigWouldChange(detail.config, sharedValues, keys, actions.normalizePath)) {
+          anySharedChange = true;
+          break;
+        }
+      }
+      if (!anySharedChange) {
+        elements.errorEl.textContent = "変更はありません";
+        return;
+      }
+    }
+
     elements.saveBtn.disabled = true;
     elements.cancelBtn.disabled = true;
     elements.closeXBtn.disabled = true;
     elements.saveStatusEl.hidden = false;
     try {
-      await invoke("set_parent_label", { parentKey, label: newLabel });
-      if (newLabel) appState.parentLabelOverrides.set(parentKey, newLabel);
-      else appState.parentLabelOverrides.delete(parentKey);
+      if (labelChanged) {
+        await invoke("set_parent_label", { parentKey, label: newLabel });
+        if (newLabel) appState.parentLabelOverrides.set(parentKey, newLabel);
+        else appState.parentLabelOverrides.delete(parentKey);
+      }
 
       for (const c of children) {
-        const detail = await invoke<SourceDetail>("get_source_detail", { id: c.id });
+        const detail = await invoke("get_source_detail", { id: c.id });
+        if (!sharedConfigWouldChange(detail.config, sharedValues, keys, actions.normalizePath)) continue;
         const cfg = { ...detail.config };
         for (const k of keys) {
           if (!(k in sharedValues)) continue;
@@ -411,6 +413,13 @@ export function mountParentSettingsDialog(
         const config: Record<string, unknown> = { ...item.extraConfig };
         for (const k of keys) {
           if (sharedValues[k] !== undefined) config[k] = sharedValues[k];
+        }
+        const dup = await findDuplicateSource(item.type_, config, appState.sources);
+        if (dup) {
+          if (window.confirm(duplicateConfirmMessage(dup.name))) {
+            await invoke("reload_sources", { sourceIds: [dup.id] });
+          }
+          continue;
         }
         try {
           // 秘密フィールドがマスクされたままでも壊れないよう、既存テーブルの暗号化済み設定を引き継ぐ。

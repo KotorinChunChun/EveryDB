@@ -1,11 +1,19 @@
+import { SOURCE_TYPE_METADATA, openCapabilityForType } from "../../source-types/registry";
+
+function includesTable(capability: string): boolean {
+  return capability === "table" || capability === "table-and-parent";
+}
+
 /** テーブル単位の「開く」操作が意味を持つデータソース種別。 */
-export const TABLE_OPENABLE_TYPES = new Set([
-  "notion", "graph_entra_users", "graph_entra_groups", "graph_entra_devices",
-  "graph_intune_devices", "graph_licenses", "graph_teams",
-  "graph_sharepoint_list", "graph_sharepoint_library",
-  "airtable", "google_sheets", "ical_calendar",
-]);
+export const TABLE_OPENABLE_TYPES = new Set(
+  SOURCE_TYPE_METADATA.filter((item) => includesTable(item.open)).map((item) => item.id),
+);
 
 export function canOpenTable(type: string): boolean {
-  return TABLE_OPENABLE_TYPES.has(type);
+  return includesTable(openCapabilityForType(type));
+}
+
+export function canOpenParent(type: string): boolean {
+  const capability = openCapabilityForType(type);
+  return capability === "parent" || capability === "table-and-parent";
 }

@@ -6,8 +6,10 @@ import { mountSimplePickerDialogs, SIMPLE_PICKER_DIALOGS } from "./simple-picker
 const requiredIds = [
   "app", "search", "sources", "status", "grid", "grid-head", "grid-viewport", "grid-rows", "result-info",
   "add-dialog", "parent-dialog", "column-map-dialog", "settings-dialog", "credential-manager",
-  "guide-dialog", "confirm-dialog", "export-dialog", "shortcut-guide-dialog",
+  "guide-dialog", "confirm-dialog", "url-auto-input-dialog", "export-dialog", "shortcut-guide-dialog",
+  "empty-state", "empty-state-sample", "empty-state-add", "s-backup", "s-restore", "s-backup-status",
   "simple-picker-dialog-template",
+  "connection-chooser-filter", "connection-chooser-filter-clear",
 ];
 
 function mountAppDom(): void {
@@ -60,6 +62,29 @@ describe("index.html structural smoke test", () => {
       expect(dialog?.querySelector(".picker-list"), `#${def.dialogId} picker list`).not.toBeNull();
       expect(document.getElementById(def.closeId), `#${def.closeId}`).not.toBeNull();
       expect(dialog?.getAttribute("aria-labelledby")).toBe(def.titleId);
+    }
+  });
+
+  it("separates organizational and personal Microsoft credential scopes", () => {
+    mountAppDom();
+    const options = [...document.querySelectorAll<HTMLOptionElement>("#cm-scope option")]
+      .map((option) => ({ value: option.value, label: option.textContent }));
+    expect(options).toContainEqual({ value: "graph", label: "Microsoft Entra ID（組織）" });
+    expect(options).toContainEqual({ value: "microsoft_account", label: "Microsoft アカウント（個人）" });
+  });
+
+  it("keeps every result-driven picker in a stable resizable frame", () => {
+    mountAppDom();
+    const ids = [
+      "connection-chooser",
+      "cell-picker",
+      "table-picker",
+      "sp-picker",
+      "credential-select-picker",
+      ...SIMPLE_PICKER_DIALOGS.map((definition) => definition.dialogId),
+    ];
+    for (const id of ids) {
+      expect(document.getElementById(id)?.classList.contains("stable-picker-dialog"), id).toBe(true);
     }
   });
 });

@@ -18,7 +18,7 @@ pub use factory::{build_connector, is_supported_source_type, Connector, SUPPORTE
 pub use limits::{DB_FETCH_LIMIT, MAX_FETCH_RECORDS};
 
 pub(crate) use graph_data::{json_scalar_to_string, urlencoding_light};
-pub(crate) use local::{cell_to_string, col_to_letters};
+pub(crate) use local::{cell_to_string, col_to_letters, preview_csv, CsvPreview};
 
 #[cfg(test)]
 use cloud::{
@@ -74,6 +74,9 @@ pub fn raw_field_names(type_: &str, config_json: &str) -> Result<Vec<String>> {
 #[derive(Deserialize)]
 struct SourceTypeManifestEntry {
     id: String,
+    browse: Option<String>,
+    open: String,
+    guide: String,
 }
 
 #[cfg(test)]
@@ -85,8 +88,32 @@ fn source_type_manifest_matches_factory_registry() {
     let manifest_ids: Vec<&str> = manifest.iter().map(|entry| entry.id.as_str()).collect();
 
     assert_eq!(manifest_ids, SUPPORTED_SOURCE_TYPES);
+    for entry in &manifest {
+        assert!(
+            matches!(
+                entry.browse.as_deref(),
+                None | Some(
+                    "notion" | "sqlite" | "accdb" | "excel_table" | "sharepoint" | "airtable"
+                )
+            ),
+            "unknown browse capability for {}",
+            entry.id
+        );
+        assert!(
+            matches!(
+                entry.open.as_str(),
+                "none" | "table" | "parent" | "table-and-parent"
+            ),
+            "unknown open capability for {}",
+            entry.id
+        );
+        assert!(
+            !entry.guide.trim().is_empty(),
+            "guide is missing for {}",
+            entry.id
+        );
+    }
 }
-
 #[cfg(test)]
 #[test]
 fn every_registered_source_type_has_a_factory_branch() {
@@ -105,13 +132,9 @@ fn every_registered_source_type_has_a_factory_branch() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     fn sample(name: &str) -> String {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("samples")
-            .join(name)
+        crate::test_fixtures::sample(name)
             .to_string_lossy()
             .into_owned()
     }

@@ -2,7 +2,6 @@ import { $, setPickerMessage } from "../../app/dom";
 import { invoke } from "../../app/ipc";
 import { appState } from "../../app/state";
 import { colLetterOf, formatSelectedColumns, parseColumnSelection } from "../../shared/excel-columns";
-import { SECRET_PLACEHOLDER } from "../source-editor/constants";
 import type { SourcePickerDeps, SourcePickers } from "./types";
 
 export type { SourcePickerDeps, SourcePickers } from "./types";
@@ -38,22 +37,17 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
 
   async function openNotionPicker() {
     const tokenEl = document.getElementById("fd-token") as HTMLInputElement | null;
-    let token = tokenEl?.value.trim();
-    if (tokenEl?.dataset.credRef) {
-      try {
-        token = await invoke<string>("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
-      } catch (e) {
-        alert("トークンの取得に失敗しました: " + String(e));
-        return;
-      }
+    const credentialId = Number(tokenEl?.dataset.credRef);
+    if (!Number.isSafeInteger(credentialId) || credentialId <= 0) {
+      alert("先に保存済みトークンを選択してください");
+      return;
     }
-    if (!token || token === SECRET_PLACEHOLDER) { alert("先にトークンを選択してください"); return; }
     const listEl = $<HTMLDivElement>("notion-picker-list");
     listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
     const dlg = $<HTMLDialogElement>("notion-picker");
     dlg.showModal();
     try {
-      const dbs = await invoke<{ id: string; title: string }[]>("browse_notion_databases", { token });
+      const dbs = await invoke("browse_notion_databases", { credentialId });
       listEl.innerHTML = "";
       if (dbs.length === 0) {
         listEl.innerHTML = "<div class='picker-empty'>アクセス可能なデータベースがありません（インテグレーションに共有してください）</div>";
@@ -63,10 +57,8 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
         item.className = "picker-item";
         item.textContent = db.title || "(無題)";
         item.onclick = () => {
-          (document.getElementById("fd-database_id") as HTMLInputElement).value = db.id;
           const sourceEditor = getSourceEditor();
-          sourceEditor.autoFillDefaultName();
-          sourceEditor.maybeFetchAndRenderFields();
+          sourceEditor.applyNotionSelection(db.id, db.title || "(無題)");
           dlg.close();
         };
         listEl.appendChild(item);
@@ -84,7 +76,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     const dlg = $<HTMLDialogElement>("browser-profile-picker");
     dlg.showModal();
     try {
-      const entries = await invoke<{ label: string; path: string }[]>("browse_browser_profiles", { browser, target });
+      const entries = await invoke("browse_browser_profiles", { browser, target });
       listEl.innerHTML = "";
       if (entries.length === 0) {
         listEl.innerHTML = "<div class='picker-empty'>候補が見つかりませんでした</div>";
@@ -121,7 +113,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     const dlg = $<HTMLDialogElement>("sheet-picker");
     dlg.showModal();
     try {
-      const sheets = await invoke<string[]>("browse_excel_sheets", { path });
+      const sheets = await invoke("browse_excel_sheets", { path });
       listEl.innerHTML = "";
       if (sheets.length === 0) {
         listEl.innerHTML = "<div class='picker-empty'>シートが見つかりませんでした</div>";
@@ -157,7 +149,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     const dlg = $<HTMLDialogElement>("sheet-picker");
     dlg.showModal();
     try {
-      const tables = await invoke<string[]>("browse_excel_tables", { path });
+      const tables = await invoke("browse_excel_tables", { path });
       listEl.innerHTML = "";
       if (tables.length === 0) {
         listEl.innerHTML = "<div class='picker-empty'>テーブルが見つかりませんでした</div>";
@@ -183,8 +175,8 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
   async function fetchAirtableBasesForPicker(): Promise<AirtableBaseItem[]> {
     const tokenEl = (document.getElementById("fd-token") ?? document.getElementById("pf-token")) as HTMLInputElement | null;
     if (tokenEl?.dataset.credRef) {
-      const token = await invoke<string>("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
-      return await invoke<AirtableBaseItem[]>("browse_airtable_bases", { token });
+      const credentialId = Number(tokenEl.dataset.credRef);
+      return await invoke("browse_airtable_bases", { credentialId });
     }
     const sourceEditor = getSourceEditor();
     const parentSettings = getParentSettings();
@@ -193,7 +185,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
       const overrides = sourceEditor.getEditingId() !== null
         ? JSON.stringify(sourceEditor.getConfigFromFields().config)
         : JSON.stringify(parentSettings.getParentSharedValues());
-      return await invoke<AirtableBaseItem[]>("browse_airtable_bases_for_source", { id: sid, overridesJson: overrides });
+      return await invoke("browse_airtable_bases_for_source", { id: sid, overridesJson: overrides });
     }
     alert("先にトークンを選択してください");
     throw new Error("トークン未選択");
@@ -208,8 +200,8 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
       throw new Error("Base ID 必須");
     }
     if (tokenEl?.dataset.credRef) {
-      const token = await invoke<string>("credential_secret_value", { id: Number(tokenEl.dataset.credRef) });
-      return await invoke<AirtableTableItem[]>("browse_airtable_tables", { token, baseId });
+      const credentialId = Number(tokenEl.dataset.credRef);
+      return await invoke("browse_airtable_tables", { credentialId, baseId });
     }
     const sourceEditor = getSourceEditor();
     const parentSettings = getParentSettings();
@@ -218,7 +210,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
       const overrides = sourceEditor.getEditingId() !== null
         ? JSON.stringify(sourceEditor.getConfigFromFields().config)
         : JSON.stringify(parentSettings.getParentSharedValues());
-      return await invoke<AirtableTableItem[]>("browse_airtable_tables_for_source", { id: sid, overridesJson: overrides, baseId: baseId || null });
+      return await invoke("browse_airtable_tables_for_source", { id: sid, overridesJson: overrides, baseId: baseId || null });
     }
     alert("先にトークンを選択してください");
     throw new Error("トークン未選択");
@@ -385,7 +377,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     };
 
     try {
-      const res = await invoke<{ start_row: number; start_col: number; rows: string[][] }>("browse_excel_grid", { path, sheet, rows: 10, cols: 10, mode: typeof gridMode === "string" ? gridMode : "top" });
+      const res = await invoke("browse_excel_grid", { path, sheet, rows: 10, cols: 10, mode: typeof gridMode === "string" ? gridMode : "top" });
       wrapEl.innerHTML = "";
       const table = document.createElement("table");
       table.className = "cell-grid";
@@ -544,7 +536,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     const cmd = browse === "sqlite" ? "browse_sqlite_tables" : browse === "accdb" ? "browse_accdb_tables" : "browse_excel_tables";
     let names: string[];
     try {
-      names = await invoke<string[]>(cmd, { path });
+      names = await invoke(cmd, { path });
     } catch (e) {
       setPickerMessage(tablePickerList, `取得失敗: ${String(e)}`);
       return;
@@ -595,138 +587,182 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
 
   let spMode: "sites" | "teams" = "sites";
 
-  async function graphAuthFromDialog(): Promise<{ tenant_id: string; client_id: string; client_secret: string } | null> {
-    const tenant_id = (document.getElementById("fd-tenant_id") as HTMLInputElement | null)?.value.trim();
-    const client_id = (document.getElementById("fd-client_id") as HTMLInputElement | null)?.value.trim();
-    const secretEl = document.getElementById("fd-client_secret") as HTMLInputElement | null;
-    if (!tenant_id || !client_id) return null;
-    let client_secret: string | undefined;
-    if (secretEl?.dataset.credRef) {
-      client_secret = await invoke<string>("credential_secret_value", { id: Number(secretEl.dataset.credRef) });
-    }
-    if (!client_secret) return null;
-    return { tenant_id, client_id, client_secret };
+
+  interface SpPickerRow {
+    id: string;
+    display_name: string;
+    description: string;
+    created_date_time: string;
+    key: string;
   }
 
-  async function loadSpSourceList(auth: { tenant_id: string; client_id: string; client_secret: string }) {
+  type SpSortKey = "display_name" | "id" | "description" | "created_date_time";
+  let spSortKey: SpSortKey = "display_name";
+  let spSortAsc = true;
+  let spPickerRows: SpPickerRow[] = [];
+  let spPickerCredentialId: number | null = null;
+  let spPickerKind: "site" | "team" = "site";
+
+  function graphCredentialIdFromDialog(): number | null {
+    const secretEl = document.getElementById("fd-client_secret") as HTMLInputElement | null;
+    const credentialId = Number(secretEl?.dataset.credRef);
+    return Number.isSafeInteger(credentialId) && credentialId > 0 ? credentialId : null;
+  }
+
+  function formatSpCreatedAt(iso: string): string {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString("ja-JP");
+  }
+
+  function compareSpRows(a: SpPickerRow, b: SpPickerRow): number {
+    if (spSortKey === "created_date_time") {
+      const ad = Date.parse(a.created_date_time) || 0;
+      const bd = Date.parse(b.created_date_time) || 0;
+      return spSortAsc ? ad - bd : bd - ad;
+    }
+    const av = (a[spSortKey] || "").toLowerCase();
+    const bv = (b[spSortKey] || "").toLowerCase();
+    const cmp = av.localeCompare(bv, "ja");
+    return spSortAsc ? cmp : -cmp;
+  }
+
+  function renderSpSourceTable() {
+    const listEl = $<HTMLDivElement>("sp-source-list");
+    const filterEl = $<HTMLInputElement>("sp-filter");
+    const q = filterEl.value.trim().toLowerCase();
+    const filtered = spPickerRows.filter((row) => {
+      if (!q) return true;
+      const hay = [row.display_name, row.id, row.description, row.key].join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+    filtered.sort(compareSpRows);
+
+    listEl.innerHTML = "";
+    const table = document.createElement("table");
+    table.className = "picker-table";
+    const thead = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+    const columns: { key: SpSortKey; label: string }[] = [
+      { key: "display_name", label: "表示名" },
+      { key: "id", label: "ID" },
+      { key: "description", label: "概要" },
+      { key: "created_date_time", label: "作成日" },
+    ];
+    for (const col of columns) {
+      const th = document.createElement("th");
+      th.className = "sortable" + (spSortKey === col.key ? (spSortAsc ? " sort-asc" : " sort-desc") : "");
+      th.textContent = col.label;
+      th.onclick = () => {
+        if (spSortKey === col.key) spSortAsc = !spSortAsc;
+        else {
+          spSortKey = col.key;
+          spSortAsc = true;
+        }
+        renderSpSourceTable();
+      };
+      headerRow.appendChild(th);
+    }
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    if (filtered.length === 0) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 4;
+      td.className = "picker-empty";
+      td.textContent = "見つかりませんでした";
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    } else {
+      for (const row of filtered) {
+        const tr = document.createElement("tr");
+        tr.title = row.key;
+        const nameTd = document.createElement("td");
+        nameTd.textContent = row.display_name || row.key;
+        const idTd = document.createElement("td");
+        idTd.className = "col-id";
+        idTd.textContent = row.id;
+        idTd.title = row.id;
+        const descTd = document.createElement("td");
+        descTd.className = "col-desc";
+        descTd.textContent = row.description;
+        descTd.title = row.description;
+        const dateTd = document.createElement("td");
+        dateTd.textContent = formatSpCreatedAt(row.created_date_time);
+        tr.append(nameTd, idTd, descTd, dateTd);
+        tr.onclick = () => void onSpSourceRowClick(row);
+        tbody.appendChild(tr);
+      }
+    }
+    table.appendChild(tbody);
+    listEl.appendChild(table);
+  }
+
+  async function onSpSourceRowClick(row: SpPickerRow) {
+    if (spPickerCredentialId === null) return;
+    let siteUrl = row.key;
+    const displayName = row.display_name || siteUrl;
+    if (spPickerKind === "team") {
+      try {
+        siteUrl = await invoke("browse_graph_team_site_url", { credentialId: spPickerCredentialId, teamGroupId: row.id });
+      } catch (e) {
+        alert("サイト解決に失敗: " + String(e));
+        return;
+      }
+    }
+    await getSourceEditor().applySharePointSiteSelection(siteUrl, displayName);
+    $<HTMLDialogElement>("sp-picker").close();
+  }
+
+  async function loadSpSourceList(credentialId: number) {
     const listEl = $<HTMLDivElement>("sp-source-list");
     listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
+    spPickerCredentialId = credentialId;
+    spSortKey = "display_name";
+    spSortAsc = true;
     try {
       if (spMode === "sites") {
-        const sites = await invoke<{ web_url: string; display_name: string }[]>("browse_graph_sites", { auth });
-        renderSpSourceList(sites.map((s) => ({ key: s.web_url, label: s.display_name || s.web_url })), auth, "site");
+        spPickerKind = "site";
+        const sites = await invoke("browse_graph_sites", { credentialId });
+        spPickerRows = sites.map((s) => ({
+          id: s.id,
+          display_name: s.display_name || s.web_url,
+          description: s.description,
+          created_date_time: s.created_date_time,
+          key: s.web_url,
+        }));
       } else {
-        const teams = await invoke<{ group_id: string; display_name: string }[]>("browse_graph_teams", { auth });
-        renderSpSourceList(teams.map((t) => ({ key: t.group_id, label: t.display_name })), auth, "team");
+        spPickerKind = "team";
+        const teams = await invoke("browse_graph_teams", { credentialId });
+        spPickerRows = teams.map((t) => ({
+          id: t.id,
+          display_name: t.display_name,
+          description: t.description,
+          created_date_time: t.created_date_time,
+          key: t.id,
+        }));
       }
+      const filterEl = $<HTMLInputElement>("sp-filter");
+      filterEl.oninput = () => renderSpSourceTable();
+      filterEl.value = "";
+      renderSpSourceTable();
     } catch (e) {
       setPickerMessage(listEl, `取得失敗: ${String(e)}`);
     }
   }
 
-  function renderSpSourceList(
-    items: { key: string; label: string }[],
-    auth: { tenant_id: string; client_id: string; client_secret: string },
-    kind: "site" | "team",
-  ) {
-    const listEl = $<HTMLDivElement>("sp-source-list");
-    const filterEl = $<HTMLInputElement>("sp-filter");
-    const draw = () => {
-      const q = filterEl.value.trim().toLowerCase();
-      listEl.innerHTML = "";
-      const filtered = items.filter((it) => it.label.toLowerCase().includes(q));
-      if (filtered.length === 0) listEl.innerHTML = "<div class='picker-empty'>見つかりませんでした</div>";
-      for (const it of filtered) {
-        const row = document.createElement("div");
-        row.className = "picker-item";
-        row.textContent = it.label;
-        row.onclick = async () => {
-          let siteUrl = it.key;
-          if (kind === "team") {
-            try {
-              siteUrl = await invoke<string>("browse_graph_team_site_url", { auth, teamGroupId: it.key });
-            } catch (e) {
-              alert("サイト解決に失敗: " + String(e));
-              return;
-            }
-          }
-          await openSpResourceStep(auth, siteUrl, it.label);
-        };
-        listEl.appendChild(row);
-      }
-    };
-    filterEl.oninput = draw;
-    filterEl.value = "";
-    draw();
-  }
-
-  async function openSpResourceStep(
-    auth: { tenant_id: string; client_id: string; client_secret: string },
-    siteUrl: string,
-    siteLabel: string,
-  ) {
-    $<HTMLDivElement>("sp-step-source").hidden = true;
-    const stepRes = $<HTMLDivElement>("sp-step-resources");
-    stepRes.hidden = false;
-    $<HTMLDivElement>("sp-picker").querySelector(".sp-selected-site")!.textContent = `サイト: ${siteLabel} (${siteUrl})`;
-    const resList = $<HTMLDivElement>("sp-resource-list");
-    resList.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
-    const addBtn = $<HTMLButtonElement>("sp-picker-add");
-    addBtn.hidden = false;
-
-    const wantKind = $<HTMLSelectElement>("f-type").value === "graph_sharepoint_library" ? "library" : "list";
-    try {
-      const all = await invoke<{ display_name: string; kind: string }[]>("browse_graph_site_resources", { auth, siteUrl });
-      const filtered = all.filter((r) => r.kind === wantKind);
-      resList.innerHTML = "";
-      if (filtered.length === 0) {
-        resList.innerHTML = `<div class='picker-empty'>${wantKind === "library" ? "ライブラリ" : "リスト"}が見つかりませんでした</div>`;
-      }
-      for (const r of filtered) {
-        const item = document.createElement("div");
-        item.className = "picker-item";
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.value = r.display_name;
-        const span = document.createElement("span");
-        span.textContent = r.display_name;
-        item.append(cb, span);
-        resList.appendChild(item);
-      }
-      addBtn.onclick = async () => {
-        const checked = Array.from(resList.querySelectorAll("input:checked")) as HTMLInputElement[];
-        if (checked.length === 0) { $<HTMLDialogElement>("sp-picker").close(); return; }
-        const type_ = $<HTMLSelectElement>("f-type").value;
-        for (const cb of checked) {
-          const displayName = cb.value;
-          const config: Record<string, unknown> =
-            type_ === "graph_sharepoint_library"
-              ? { ...auth, site_url: siteUrl, library_name: displayName }
-              : { ...auth, site_url: siteUrl, list_name: displayName };
-          try {
-            await invoke("add_source", { type: type_, name: displayName, configJson: JSON.stringify(config) });
-          } catch (e) {
-            console.error(`追加失敗 (${displayName}):`, e);
-          }
-        }
-        $<HTMLDialogElement>("sp-picker").close();
-        $<HTMLDialogElement>("add-dialog").close();
-        await loadSources();
-      };
-    } catch (e) {
-      setPickerMessage(resList, `取得失敗: ${String(e)}`);
-    }
-  }
-
   async function openSharePointPicker() {
-    const auth = await graphAuthFromDialog();
-    if (!auth) { alert("先にトークンを選択してください（テナントID/クライアントID/クライアントシークレット）"); return; }
+    const credentialId = graphCredentialIdFromDialog();
+    if (credentialId === null) { alert("先に保存済みトークンを選択してください"); return; }
     spMode = "sites";
     $<HTMLDivElement>("sp-step-source").hidden = false;
     $<HTMLDivElement>("sp-step-resources").hidden = true;
     $<HTMLButtonElement>("sp-picker-add").hidden = true;
     $<HTMLDialogElement>("sp-picker").showModal();
-    await loadSpSourceList(auth);
+    await loadSpSourceList(credentialId);
   }
 
   // ---- dialog close button handlers ----
@@ -748,15 +784,15 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     spMode = "sites";
     $<HTMLButtonElement>("sp-tab-sites").classList.add("active");
     $<HTMLButtonElement>("sp-tab-teams").classList.remove("active");
-    const auth = await graphAuthFromDialog();
-    if (auth) await loadSpSourceList(auth);
+    const credentialId = graphCredentialIdFromDialog();
+    if (credentialId !== null) await loadSpSourceList(credentialId);
   };
   $<HTMLButtonElement>("sp-tab-teams").onclick = async () => {
     spMode = "teams";
     $<HTMLButtonElement>("sp-tab-teams").classList.add("active");
     $<HTMLButtonElement>("sp-tab-sites").classList.remove("active");
-    const auth = await graphAuthFromDialog();
-    if (auth) await loadSpSourceList(auth);
+    const credentialId = graphCredentialIdFromDialog();
+    if (credentialId !== null) await loadSpSourceList(credentialId);
   };
   $<HTMLButtonElement>("sp-picker-cancel").onclick = () => $<HTMLDialogElement>("sp-picker").close();
 

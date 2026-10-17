@@ -45,7 +45,7 @@ export interface SourceDetail {
   linked_credentials: Record<string, CredentialLink>;
 }
 
-export type CredentialScope = "notion" | "airtable" | "graph" | "box" | "postgres" | "mysql";
+export type CredentialScope = "notion" | "airtable" | "graph" | "microsoft_account" | "box" | "postgres" | "mysql";
 
 export interface CredentialUsage {
   source_id: number;

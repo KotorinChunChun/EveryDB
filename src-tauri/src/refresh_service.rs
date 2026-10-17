@@ -4,7 +4,7 @@ use rusqlite::Connection;
 
 use crate::app_state::AppState;
 use crate::internal_log;
-use crate::{connectors, credentials, db};
+use crate::{browse, connectors, credentials, db};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ReloadOneOutcome {
@@ -86,19 +86,148 @@ fn set_status_or_log(conn: &Connection, id: i64, status: &str, error: Option<&st
     }
 }
 
+#[derive(Debug)]
+struct NotionMetadataRequest {
+    token: String,
+    database_id: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct NotionMetadataUpdate {
+    database_id: String,
+    database_name: String,
+}
+
+/// Notionだけ、再読み込み前に最新のデータベース名を取得できる材料を切り出す。
+/// 保存用JSONは資格情報参照・暗号化値を保持し、API呼び出しには解決済みJSONだけを使う。
+fn notion_metadata_request(
+    type_: &str,
+    resolved_config_json: &str,
+) -> anyhow::Result<Option<NotionMetadataRequest>> {
+    if type_ != "notion" {
+        return Ok(None);
+    }
+    let resolved: serde_json::Value = serde_json::from_str(resolved_config_json)?;
+    let token = resolved
+        .get("token")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let database_id = resolved
+        .get("database_id")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+    if token.is_empty() || database_id.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Notionのデータベース名取得に必要な接続情報が不足しています"
+        ));
+    }
+    Ok(Some(NotionMetadataRequest { token, database_id }))
+}
+
+fn resolve_notion_metadata(
+    request: Option<NotionMetadataRequest>,
+) -> anyhow::Result<Option<NotionMetadataUpdate>> {
+    resolve_notion_metadata_with(request, |token, database_id| {
+        Ok(browse::notion_get_database(token, database_id)?.title)
+    })
+}
+
+fn resolve_notion_metadata_with<F>(
+    request: Option<NotionMetadataRequest>,
+    fetch_name: F,
+) -> anyhow::Result<Option<NotionMetadataUpdate>>
+where
+    F: FnOnce(&str, &str) -> anyhow::Result<String>,
+{
+    let Some(request) = request else {
+        return Ok(None);
+    };
+    let database_name = fetch_name(&request.token, &request.database_id)?;
+    Ok(Some(notion_metadata_update(request, database_name)))
+}
+
+fn notion_metadata_update(
+    request: NotionMetadataRequest,
+    database_name: String,
+) -> NotionMetadataUpdate {
+    NotionMetadataUpdate {
+        database_id: request.database_id,
+        database_name,
+    }
+}
+
+fn persist_notion_metadata(
+    conn: &Connection,
+    id: i64,
+    update: Option<&NotionMetadataUpdate>,
+) -> anyhow::Result<()> {
+    if let Some(update) = update {
+        // API通信中に別操作で設定が更新されても、通信前の古いJSONで上書きしない。
+        // 現在値を読み直し、名称の1項目だけを差し替える。
+        let (type_, current_config_json) = db::get_source_config(conn, id)?;
+        if type_ != "notion" {
+            return Err(anyhow::anyhow!(
+                "再読み込み中にデータソース種別が変更されました"
+            ));
+        }
+        let mut current: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&current_config_json)?;
+        let current_database_id = current
+            .get("database_id")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .replace('-', "")
+            .to_ascii_lowercase();
+        let resolved_database_id = update.database_id.replace('-', "").to_ascii_lowercase();
+        if current_database_id != resolved_database_id {
+            return Err(anyhow::anyhow!(
+                "再読み込み中にNotionデータベースIDが変更されました"
+            ));
+        }
+        current.insert(
+            "database_name".to_string(),
+            serde_json::Value::String(update.database_name.clone()),
+        );
+        db::update_source(
+            conn,
+            id,
+            &update.database_name,
+            &serde_json::to_string(&current)?,
+        )?;
+    }
+    Ok(())
+}
+
 pub fn reload_one(conn: &mut Connection, id: i64) -> anyhow::Result<()> {
     let (type_, cfg) = db::get_source_config(conn, id)?;
-    let prepared = (|| -> anyhow::Result<Box<dyn connectors::Connector>> {
-        let resolved_cfg = credentials::resolve_credentials(conn, &cfg)?;
-        connectors::build_connector(&type_, &resolved_cfg)
+    let prepared = (|| -> anyhow::Result<(
+        Box<dyn connectors::Connector>,
+        Option<NotionMetadataRequest>,
+    )> {
+        let resolved_cfg = credentials::resolve_credentials_for_source_type(conn, &type_, &cfg)?;
+        let notion_request = notion_metadata_request(&type_, &resolved_cfg)?;
+        Ok((
+            connectors::build_connector(&type_, &resolved_cfg)?,
+            notion_request,
+        ))
     })();
-    let connector = match prepared {
-        Ok(c) => c,
+    let (connector, notion_request) = match prepared {
+        Ok(value) => value,
         Err(e) => {
             set_status_or_log(conn, id, "error", Some(&e.to_string()));
             return Err(e);
         }
     };
+    let notion_update = match resolve_notion_metadata(notion_request) {
+        Ok(update) => update,
+        Err(error) => {
+            set_status_or_log(conn, id, "error", Some(&error.to_string()));
+            return Err(error);
+        }
+    };
+    persist_notion_metadata(conn, id, notion_update.as_ref())?;
     match connector.fetch() {
         Ok(records) => {
             db::replace_source_records(conn, id, &records)?;
@@ -117,20 +246,28 @@ pub fn reload_one_for_state(state: &AppState, id: i64) -> anyhow::Result<ReloadO
         Some(guard) => guard,
         None => return Ok(ReloadOneOutcome::Cancelled),
     };
-    let connector = {
+    let (connector, notion_request) = {
         let snapshot_started = std::time::Instant::now();
         let conn = state
             .db
             .lock()
             .map_err(|_| anyhow::anyhow!("lock poisoned"))?;
-        let prepared = (|| -> anyhow::Result<Box<dyn connectors::Connector>> {
+        let prepared = (|| -> anyhow::Result<(
+            Box<dyn connectors::Connector>,
+            Option<NotionMetadataRequest>,
+        )> {
             let (type_, cfg) = db::get_source_config(&conn, id)?;
-            let resolved_cfg = credentials::resolve_credentials(&conn, &cfg)?;
-            connectors::build_connector(&type_, &resolved_cfg)
+            let resolved_cfg =
+                credentials::resolve_credentials_for_source_type(&conn, &type_, &cfg)?;
+            let notion_request = notion_metadata_request(&type_, &resolved_cfg)?;
+            Ok((
+                connectors::build_connector(&type_, &resolved_cfg)?,
+                notion_request,
+            ))
         })();
         record_test_snapshot_lock(snapshot_started.elapsed());
         match prepared {
-            Ok(connector) => connector,
+            Ok(value) => value,
             Err(error) => {
                 set_status_or_log(&conn, id, "error", Some(&error.to_string()));
                 return Err(error);
@@ -140,11 +277,27 @@ pub fn reload_one_for_state(state: &AppState, id: i64) -> anyhow::Result<ReloadO
 
     sleep_test_post_snapshot_delay();
 
+    let notion_update = match resolve_notion_metadata(notion_request) {
+        Ok(update) => update,
+        Err(error) => {
+            let conn = state
+                .db
+                .lock()
+                .map_err(|_| anyhow::anyhow!("lock poisoned"))?;
+            set_status_or_log(&conn, id, "error", Some(&error.to_string()));
+            return Err(error);
+        }
+    };
+
     let fetched = connector.fetch();
     let mut conn = state
         .db
         .lock()
         .map_err(|_| anyhow::anyhow!("lock poisoned"))?;
+    if let Err(error) = persist_notion_metadata(&conn, id, notion_update.as_ref()) {
+        set_status_or_log(&conn, id, "error", Some(&error.to_string()));
+        return Err(error);
+    }
     match fetched {
         Ok(records) => {
             db::replace_source_records(&mut conn, id, &records)?;
@@ -237,6 +390,67 @@ mod tests {
     use rusqlite::Connection;
 
     #[test]
+    fn notion_metadata_update_keeps_the_resolved_database_identity() {
+        let resolved = r#"{"token":"ntn_secret","database_id":"0123456789abcdef0123456789abcdef","database_name":"旧名"}"#;
+        let request = notion_metadata_request("notion", resolved)
+            .unwrap()
+            .unwrap();
+        let update = notion_metadata_update(request, "Notion側の最新名".to_string());
+        assert_eq!(update.database_name, "Notion側の最新名");
+        assert_eq!(update.database_id, "0123456789abcdef0123456789abcdef");
+    }
+
+    #[test]
+    fn notion_metadata_update_persists_the_api_name_as_source_name() {
+        let conn = Connection::open_in_memory().unwrap();
+        db::init_schema(&conn).unwrap();
+        let stored = r#"{"token":"cred:42","database_id":"0123456789abcdef0123456789abcdef","database_name":"旧名","display_columns":["件名"]}"#;
+        let id = db::insert_source(&conn, "notion", "以前の手動表示名", stored).unwrap();
+        let resolved = r#"{"token":"ntn_secret","database_id":"0123456789abcdef0123456789abcdef"}"#;
+        let request = notion_metadata_request("notion", resolved)
+            .unwrap()
+            .unwrap();
+        let update = notion_metadata_update(request, "Notion側の最新名".to_string());
+
+        persist_notion_metadata(&conn, id, Some(&update)).unwrap();
+
+        let (_, name, _, config_json) = db::get_source_full(&conn, id).unwrap();
+        assert_eq!(name, "Notion側の最新名");
+        let config: serde_json::Value = serde_json::from_str(&config_json).unwrap();
+        assert_eq!(config["database_name"], "Notion側の最新名");
+        assert_eq!(config["token"], "cred:42");
+        assert_eq!(config["display_columns"][0], "件名");
+    }
+
+    #[test]
+    fn notion_metadata_failure_leaves_saved_names_unchanged() {
+        let conn = Connection::open_in_memory().unwrap();
+        db::init_schema(&conn).unwrap();
+        let stored = r#"{"token":"cred:42","database_id":"0123456789abcdef0123456789abcdef","database_name":"最後の成功名"}"#;
+        let id = db::insert_source(&conn, "notion", "最後の成功名", stored).unwrap();
+        let resolved = r#"{"token":"ntn_secret","database_id":"0123456789abcdef0123456789abcdef"}"#;
+        let request = notion_metadata_request("notion", resolved)
+            .unwrap()
+            .unwrap();
+
+        let result =
+            resolve_notion_metadata_with(Some(request), |_, _| Err(anyhow::anyhow!("offline")));
+
+        assert!(result.is_err());
+        let (_, name, _, config_json) = db::get_source_full(&conn, id).unwrap();
+        assert_eq!(name, "最後の成功名");
+        let config: serde_json::Value = serde_json::from_str(&config_json).unwrap();
+        assert_eq!(config["database_name"], "最後の成功名");
+    }
+
+    #[test]
+    fn non_notion_reload_does_not_request_name_metadata() {
+        assert!(notion_metadata_request("csv", r#"{"path":"x.csv"}"#)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
     fn reload_summary_keeps_success_failure_and_cancelled_details() {
         let mut summary = ReloadSummary::default();
         summary.record(1, Ok(ReloadOneOutcome::Success { record_count: 3 }));
@@ -283,10 +497,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         db::init_schema(&conn).unwrap();
         let state = AppState::new(conn);
-        let samples = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("samples")
-            .join("customers.csv");
+        let samples = crate::test_fixtures::sample("customers.csv");
         let id = db::insert_source(
             &state.db.lock().unwrap(),
             "csv",
@@ -319,11 +530,7 @@ mod tests {
             "csv",
             "sample",
             &serde_json::json!({
-                "path": std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("..")
-                    .join("samples")
-                    .join("customers.csv")
-                    .to_string_lossy()
+                "path": crate::test_fixtures::sample("customers.csv").to_string_lossy()
             })
             .to_string(),
         )
@@ -377,5 +584,38 @@ mod tests {
             info.last_error.unwrap_or_default().contains("9999"),
             "どのトークンが見つからないかがエラーに残ること"
         );
+    }
+
+    #[test]
+    fn reload_rejects_incompatible_graph_auth_before_network_access() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        db::init_schema(&conn).unwrap();
+        let credential_id = crate::credentials::add_credential(
+            &conn,
+            "graph",
+            "SharePoint委任",
+            r#"{"auth_method":"delegated","tenant_id":"t","client_id":"c","capabilities":["sharepoint"],"refresh_token":"not-used"}"#,
+        )
+        .unwrap();
+        let id = db::insert_source(
+            &conn,
+            "graph_teams",
+            "Teams一覧",
+            &serde_json::json!({ "client_secret": format!("cred:{credential_id}") }).to_string(),
+        )
+        .unwrap();
+
+        let error = reload_one(&mut conn, id).unwrap_err().to_string();
+        assert!(error.contains("委任 OAuth に対応していません"));
+        let info = db::list_sources(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|source| source.id == id)
+            .unwrap();
+        assert_eq!(info.status.as_deref(), Some("error"));
+        assert!(info
+            .last_error
+            .unwrap_or_default()
+            .contains("委任 OAuth に対応していません"));
     }
 }

@@ -3,7 +3,7 @@
 use anyhow::{anyhow, Result};
 use csv::ReaderBuilder;
 use rusqlite::{Connection, OpenFlags};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::Read;
 
@@ -15,6 +15,15 @@ use crate::model::Record;
 #[derive(Deserialize)]
 pub(crate) struct CsvConnector {
     path: String,
+    /// "auto"（既定）/ "utf8" / "shift_jis"
+    #[serde(default)]
+    encoding: String,
+    /// "auto"（既定）/ "crlf" / "lf" / "cr"
+    #[serde(default)]
+    line_ending: String,
+    /// 1 byte の区切り文字。未指定は従来互換のカンマ。
+    #[serde(default)]
+    delimiter: String,
     #[serde(default = "default_true")]
     has_header: bool,
     /// 先頭から読み飛ばす行数（表のタイトル行・注記などを除外する。ヘッダー判定はこの後に行う）。
@@ -27,18 +36,145 @@ pub(crate) struct CsvConnector {
     common: CommonCfg,
 }
 
-impl Connector for CsvConnector {
-    fn fetch(&self) -> Result<Vec<Record>> {
-        // 上下の読み飛ばしに対応するため、ヘッダー判定は自前で行う（csv 側は常に has_headers=false）。
+#[derive(Debug, Clone, Serialize)]
+pub struct CsvPreviewRow {
+    pub row_number: usize,
+    pub values: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CsvPreview {
+    pub columns: Vec<String>,
+    pub top_rows: Vec<CsvPreviewRow>,
+    pub bottom_rows: Vec<CsvPreviewRow>,
+    pub total_rows: usize,
+    pub encoding: String,
+    pub line_ending: String,
+    pub delimiter: String,
+}
+
+struct ParsedCsv {
+    headers: Vec<String>,
+    rows: Vec<CsvPreviewRow>,
+    encoding: String,
+    line_ending: String,
+    delimiter: String,
+}
+
+fn decode_csv(bytes: &[u8], requested: &str) -> Result<(String, String)> {
+    let requested = requested.trim().to_ascii_lowercase();
+    let without_bom = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
+    match requested.as_str() {
+        "" | "auto" => {
+            if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
+                return Ok((
+                    String::from_utf8(without_bom.to_vec())?,
+                    "UTF-8 (BOM)".into(),
+                ));
+            }
+            if let Ok(text) = std::str::from_utf8(bytes) {
+                return Ok((text.to_string(), "UTF-8".into()));
+            }
+            let (text, had_errors) = encoding_rs::SHIFT_JIS.decode_without_bom_handling(bytes);
+            if had_errors {
+                Err(anyhow!(
+                    "文字コードを自動判定できませんでした（UTF-8 / Shift_JIS を指定してください）"
+                ))
+            } else {
+                Ok((text.into_owned(), "Shift_JIS".into()))
+            }
+        }
+        "utf8" | "utf-8" => Ok((
+            String::from_utf8(without_bom.to_vec())
+                .map_err(|_| anyhow!("UTF-8 として読み取れない文字があります"))?,
+            if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
+                "UTF-8 (BOM)".into()
+            } else {
+                "UTF-8".into()
+            },
+        )),
+        "shift_jis" | "shift-jis" | "sjis" => {
+            let (text, had_errors) = encoding_rs::SHIFT_JIS.decode_without_bom_handling(bytes);
+            if had_errors {
+                Err(anyhow!("Shift_JIS として読み取れない文字があります"))
+            } else {
+                Ok((text.into_owned(), "Shift_JIS".into()))
+            }
+        }
+        other => Err(anyhow!("未対応の文字コードです: {other}")),
+    }
+}
+
+fn detect_line_ending(text: &str) -> &'static str {
+    if text.contains("\r\n") {
+        "CRLF"
+    } else if text.contains('\n') {
+        "LF"
+    } else if text.contains('\r') {
+        "CR"
+    } else {
+        "なし"
+    }
+}
+
+fn normalize_line_endings(text: String, requested: &str) -> Result<(String, String)> {
+    let requested = requested.trim().to_ascii_lowercase();
+    let detected = detect_line_ending(&text);
+    let selected = match requested.as_str() {
+        "" | "auto" => detected,
+        "crlf" => "CRLF",
+        "lf" => "LF",
+        "cr" => "CR",
+        other => return Err(anyhow!("未対応の改行コードです: {other}")),
+    };
+    if selected != "なし" {
+        let present = match selected {
+            "CRLF" => text.contains("\r\n"),
+            "LF" => text.contains('\n'),
+            "CR" => text.contains('\r'),
+            _ => true,
+        };
+        if !present {
+            return Err(anyhow!(
+                "指定した改行コード {selected} がファイル内に見つかりません"
+            ));
+        }
+    }
+    // csv crateへ渡す前にレコード区切りをLFへ統一する。引用符内改行も改行文字として保持される。
+    let normalized = match selected {
+        "CR" => text.replace("\r\n", "\r").replace('\r', "\n"),
+        _ => text.replace("\r\n", "\n").replace('\r', "\n"),
+    };
+    Ok((normalized, selected.to_string()))
+}
+
+fn delimiter_byte(value: &str) -> Result<(u8, String)> {
+    match value {
+        "" | "," | "comma" => Ok((b',', ",".into())),
+        "\t" | "tab" | "\\t" => Ok((b'\t', "\\t".into())),
+        ";" | "semicolon" => Ok((b';', ";".into())),
+        "|" | "pipe" => Ok((b'|', "|".into())),
+        _ => Err(anyhow!(
+            "区切り文字はカンマ、タブ、セミコロン、パイプから選択してください"
+        )),
+    }
+}
+
+impl CsvConnector {
+    fn parse(&self) -> Result<ParsedCsv> {
+        let bytes = std::fs::read(&self.path)?;
+        let (text, encoding) = decode_csv(&bytes, &self.encoding)?;
+        let (text, line_ending) = normalize_line_endings(text, &self.line_ending)?;
+        let (delimiter, delimiter_label) = delimiter_byte(&self.delimiter)?;
         let mut rdr = ReaderBuilder::new()
             .has_headers(false)
             .flexible(true)
-            .from_path(&self.path)?;
+            .delimiter(delimiter)
+            .from_reader(text.as_bytes());
 
-        // 末尾スキップのため全行をバッファする。
-        let mut all: Vec<csv::StringRecord> = Vec::new();
+        let mut all: Vec<Vec<String>> = Vec::new();
         for result in rdr.records() {
-            all.push(result?);
+            all.push(result?.iter().map(String::from).collect());
         }
 
         let start = (self.skip_rows_top as usize).min(all.len());
@@ -46,29 +182,64 @@ impl Connector for CsvConnector {
             .len()
             .saturating_sub(self.skip_rows_bottom as usize)
             .max(start);
-        let mut iter = all[start..end].iter();
-
-        let headers: Vec<String> = if self.has_header {
-            match iter.next() {
-                Some(first) => first
-                    .iter()
-                    .map(|s| s.trim_start_matches('\u{feff}').to_string())
-                    .collect(),
-                None => return Ok(Vec::new()),
-            }
+        let selected = &all[start..end];
+        let data_start = usize::from(self.has_header && !selected.is_empty());
+        let max_columns = selected
+            .iter()
+            .skip(data_start)
+            .map(Vec::len)
+            .max()
+            .unwrap_or(0);
+        let mut headers = if self.has_header {
+            selected.first().cloned().unwrap_or_default()
         } else {
             Vec::new()
         };
+        let column_count = headers.len().max(max_columns);
+        for i in headers.len()..column_count {
+            headers.push(format!("col{}", i + 1));
+        }
+        for (i, header) in headers.iter_mut().enumerate() {
+            *header = header.trim_start_matches('\u{feff}').to_string();
+            if header.is_empty() {
+                *header = format!("col{}", i + 1);
+            }
+        }
+        if !self.has_header {
+            headers = (0..column_count).map(|i| format!("col{}", i + 1)).collect();
+        }
 
+        let rows = selected
+            .iter()
+            .skip(data_start)
+            .enumerate()
+            .map(|(index, values)| CsvPreviewRow {
+                row_number: start + data_start + index + 1,
+                values: values.clone(),
+            })
+            .collect();
+        Ok(ParsedCsv {
+            headers,
+            rows,
+            encoding,
+            line_ending,
+            delimiter: delimiter_label,
+        })
+    }
+}
+
+impl Connector for CsvConnector {
+    fn fetch(&self) -> Result<Vec<Record>> {
+        let parsed = self.parse()?;
         let mut out = Vec::new();
-        let mut row_idx = if self.has_header { 1i64 } else { 0i64 };
-        for rec in iter {
-            row_idx += 1;
-            let pairs: Vec<(String, String)> = rec
+        for row in parsed.rows {
+            let pairs: Vec<(String, String)> = row
+                .values
                 .iter()
                 .enumerate()
                 .map(|(i, v)| {
-                    let name = headers
+                    let name = parsed
+                        .headers
                         .get(i)
                         .cloned()
                         .unwrap_or_else(|| format!("col{}", i + 1));
@@ -79,28 +250,103 @@ impl Connector for CsvConnector {
                 pairs,
                 &self.path,
                 &self.common,
-                Some(row_idx),
+                Some(row.row_number as i64),
             ));
         }
         Ok(out)
     }
 
     fn field_names(&self) -> Result<Vec<String>> {
-        let mut builder = csv::ReaderBuilder::new();
-        builder.has_headers(self.has_header);
-        let mut rdr = builder.from_path(&self.path)?;
-        if self.has_header {
-            let hdrs = rdr.headers()?;
-            Ok(hdrs.iter().map(String::from).collect())
-        } else {
-            let mut iter = rdr.records();
-            if let Some(r) = iter.next() {
-                let rec = r?;
-                Ok((0..rec.len()).map(|i| format!("col{}", i + 1)).collect())
-            } else {
-                Ok(Vec::new())
-            }
-        }
+        Ok(self.parse()?.headers)
+    }
+}
+
+pub(crate) fn preview_csv(config_json: &str) -> Result<CsvPreview> {
+    let connector: CsvConnector = serde_json::from_str(config_json)?;
+    let parsed = connector.parse()?;
+    let total_rows = parsed.rows.len();
+    let top_len = total_rows.min(10);
+    let bottom_start = total_rows.saturating_sub(10).max(top_len);
+    Ok(CsvPreview {
+        columns: parsed.headers,
+        top_rows: parsed.rows[..top_len].to_vec(),
+        bottom_rows: parsed.rows[bottom_start..].to_vec(),
+        total_rows,
+        encoding: parsed.encoding,
+        line_ending: parsed.line_ending,
+        delimiter: parsed.delimiter,
+    })
+}
+
+#[cfg(test)]
+mod csv_tests {
+    use super::preview_csv;
+
+    fn preview_for(name: &str, bytes: &[u8], config: serde_json::Value) -> super::CsvPreview {
+        let path = std::env::temp_dir().join(format!("everydb-{name}-{}.csv", std::process::id()));
+        std::fs::write(&path, bytes).unwrap();
+        let mut config = config.as_object().unwrap().clone();
+        config.insert(
+            "path".into(),
+            serde_json::Value::String(path.to_string_lossy().into_owned()),
+        );
+        let result = preview_csv(&serde_json::Value::Object(config).to_string()).unwrap();
+        let _ = std::fs::remove_file(path);
+        result
+    }
+
+    #[test]
+    fn csv_preview_applies_crlf_semicolon_header_and_edge_skips() {
+        let bytes = b"report\r\nname;value\r\nA;1\r\nB;2\r\nfooter\r\n";
+        let preview = preview_for(
+            "utf8-semicolon",
+            bytes,
+            serde_json::json!({
+                "encoding": "utf8",
+                "line_ending": "crlf",
+                "delimiter": ";",
+                "skip_rows_top": 1,
+                "skip_rows_bottom": 1,
+                "has_header": true
+            }),
+        );
+        assert_eq!(preview.columns, vec!["name", "value"]);
+        assert_eq!(preview.total_rows, 2);
+        assert_eq!(preview.top_rows[0].row_number, 3);
+        assert_eq!(preview.top_rows[1].values, vec!["B", "2"]);
+        assert!(preview.bottom_rows.is_empty());
+        assert_eq!(preview.encoding, "UTF-8");
+        assert_eq!(preview.line_ending, "CRLF");
+        assert_eq!(preview.delimiter, ";");
+    }
+
+    #[test]
+    fn csv_preview_decodes_shift_jis_cr_and_avoids_duplicate_edge_rows() {
+        let text = format!(
+            "名前|値\r{}",
+            (1..=15)
+                .map(|i| format!("項目{i}|{i}\r"))
+                .collect::<String>()
+        );
+        let (encoded, _, had_errors) = encoding_rs::SHIFT_JIS.encode(&text);
+        assert!(!had_errors);
+        let preview = preview_for(
+            "shift-jis-pipe",
+            &encoded,
+            serde_json::json!({
+                "encoding": "shift_jis",
+                "line_ending": "cr",
+                "delimiter": "|",
+                "has_header": true
+            }),
+        );
+        assert_eq!(preview.columns, vec!["名前", "値"]);
+        assert_eq!(preview.total_rows, 15);
+        assert_eq!(preview.top_rows.len(), 10);
+        assert_eq!(preview.bottom_rows.len(), 5);
+        assert_eq!(preview.bottom_rows[0].values[0], "項目11");
+        assert_eq!(preview.encoding, "Shift_JIS");
+        assert_eq!(preview.line_ending, "CR");
     }
 }
 

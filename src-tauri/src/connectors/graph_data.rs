@@ -14,7 +14,33 @@ use crate::model::Record;
 struct GraphAuth {
     tenant_id: String,
     client_id: String,
+    #[serde(default)]
     client_secret: String,
+    #[serde(default)]
+    access_token: String,
+    #[serde(default = "default_graph_auth_method")]
+    auth_method: String,
+}
+
+fn default_graph_auth_method() -> String {
+    "app_only".to_string()
+}
+
+impl GraphAuth {
+    fn uses_delegated_oauth(&self) -> bool {
+        self.auth_method == "delegated"
+    }
+
+    fn client(&self) -> Result<GraphClient> {
+        if self.uses_delegated_oauth() {
+            if self.access_token.is_empty() {
+                return Err(anyhow!("委任 OAuth のアクセストークンがありません"));
+            }
+            Ok(GraphClient::new_with_token(&self.access_token))
+        } else {
+            GraphClient::new(&self.tenant_id, &self.client_id, &self.client_secret)
+        }
+    }
 }
 
 /// Graph の JSON スカラー値（$select したフィールド）を表示用文字列へ。
@@ -81,11 +107,7 @@ pub(crate) struct GraphUsersConnector {
 }
 impl Connector for GraphUsersConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let url = "https://graph.microsoft.com/v1.0/users?$select=displayName,userPrincipalName,mail,jobTitle,department,officeLocation,mobilePhone,id&$top=999";
         let fields = [
             "displayName",
@@ -126,11 +148,7 @@ pub(crate) struct GraphGroupsConnector {
 }
 impl Connector for GraphGroupsConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let url = "https://graph.microsoft.com/v1.0/groups?$select=displayName,mail,description,visibility,id&$top=999";
         let fields = ["displayName", "mail", "description", "visibility"];
         Ok(client
@@ -155,11 +173,7 @@ pub(crate) struct GraphTeamsConnector {
 }
 impl Connector for GraphTeamsConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let url = "https://graph.microsoft.com/v1.0/groups?$filter=resourceProvisioningOptions/Any(x:x eq 'Team')&$select=displayName,mail,description,id&$top=999";
         let fields = ["displayName", "mail", "description"];
         Ok(client
@@ -233,11 +247,7 @@ impl GraphSharePointListConnector {
 
 impl Connector for GraphSharePointListConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let sid = graph_site_id(&client, &self.site_url)?;
         let lid = self.resolve_list_id(&client, &sid)?;
 
@@ -271,11 +281,7 @@ impl Connector for GraphSharePointListConnector {
     }
 
     fn field_names(&self) -> Result<Vec<String>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let sid = graph_site_id(&client, &self.site_url)?;
         let lid = self.resolve_list_id(&client, &sid)?;
         let cols = client.get(&format!(
@@ -319,11 +325,7 @@ pub(crate) struct GraphSharePointLibraryConnector {
 }
 impl Connector for GraphSharePointLibraryConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let sid = graph_site_id(&client, &self.site_url)?;
         // ライブラリ名指定があれば drives から一致検索、無ければ既定ライブラリ /drive。
         let did = match self.library_name.as_deref().filter(|s| !s.is_empty()) {
@@ -443,11 +445,7 @@ pub(crate) struct GraphDevicesConnector {
 }
 impl Connector for GraphDevicesConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let url = "https://graph.microsoft.com/v1.0/devices?$select=displayName,operatingSystem,operatingSystemVersion,isCompliant,trustType,approximateLastSignInDateTime&$top=999";
         let fields = [
             "displayName",
@@ -486,11 +484,7 @@ pub(crate) struct GraphIntuneDevicesConnector {
 }
 impl Connector for GraphIntuneDevicesConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let url = "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$select=deviceName,operatingSystem,osVersion,complianceState,userPrincipalName,lastSyncDateTime&$top=999";
         let fields = [
             "deviceName",
@@ -529,11 +523,7 @@ pub(crate) struct GraphLicensesConnector {
 }
 impl Connector for GraphLicensesConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let url = "https://graph.microsoft.com/v1.0/subscribedSkus?$select=skuPartNumber,skuId,consumedUnits,prepaidUnits,capabilityStatus";
         let mut out = Vec::new();
         for sku in client.get_all(url)? {
@@ -599,15 +589,8 @@ pub(crate) struct GraphCalendarConnector {
 }
 impl Connector for GraphCalendarConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
-        let user = urlencoding_light(&self.user);
-        let url = format!(
-            "https://graph.microsoft.com/v1.0/users/{user}/events?$select=subject,start,end,location,organizer,attendees,webLink&$top=250&$orderby=start/dateTime desc"
-        );
+        let client = self.auth.client()?;
+        let url = calendar_events_url(&self.auth, &self.user)?;
         let mut out = Vec::new();
         for ev in client.get_all(&url)? {
             let subject = ev
@@ -676,6 +659,24 @@ impl Connector for GraphCalendarConnector {
     }
 }
 
+fn calendar_events_url(auth: &GraphAuth, user: &str) -> Result<String> {
+    const QUERY: &str = "events?$select=subject,start,end,location,organizer,attendees,webLink&$top=250&$orderby=start/dateTime desc";
+    if auth.uses_delegated_oauth() {
+        Ok(format!("https://graph.microsoft.com/v1.0/me/{QUERY}"))
+    } else {
+        let user = user.trim();
+        if user.is_empty() {
+            return Err(anyhow!(
+                "アプリケーション認証では対象ユーザー(UPN/メール)が必要です"
+            ));
+        }
+        Ok(format!(
+            "https://graph.microsoft.com/v1.0/users/{}/{QUERY}",
+            urlencoding_light(user)
+        ))
+    }
+}
+
 // ---- OneDrive（対象ユーザーの UPN を指定。既存 walk_drive を再利用）----
 #[derive(Deserialize)]
 pub(crate) struct GraphOneDriveConnector {
@@ -688,16 +689,38 @@ pub(crate) struct GraphOneDriveConnector {
 }
 impl Connector for GraphOneDriveConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
-        let user = urlencoding_light(&self.user);
+        let client = self.auth.client()?;
+        let drive_base = one_drive_base(&self.auth, &self.user)?;
+        let mut out = Vec::new();
+        walk_drive(&client, &drive_base, "root", &self.common, &mut out)?;
+        Ok(out)
+    }
+
+    fn field_names(&self) -> Result<Vec<String>> {
+        static_field_names(DRIVE_ITEM_FIELD_NAMES)
+    }
+}
+
+// ---- OneDrive（個人 Microsoft アカウント本人）----
+#[derive(Deserialize)]
+pub(crate) struct MicrosoftAccountOneDriveConnector {
+    access_token: String,
+    #[serde(flatten)]
+    common: CommonCfg,
+}
+impl Connector for MicrosoftAccountOneDriveConnector {
+    fn fetch(&self) -> Result<Vec<Record>> {
+        let access_token = self.access_token.trim();
+        if access_token.is_empty() {
+            return Err(anyhow!(
+                "Microsoft アカウント（個人）の認可が完了していません"
+            ));
+        }
+        let client = GraphClient::new_with_token(access_token);
         let mut out = Vec::new();
         walk_drive(
             &client,
-            &format!("users/{user}/drive"),
+            personal_onedrive_base(),
             "root",
             &self.common,
             &mut out,
@@ -708,6 +731,10 @@ impl Connector for GraphOneDriveConnector {
     fn field_names(&self) -> Result<Vec<String>> {
         static_field_names(DRIVE_ITEM_FIELD_NAMES)
     }
+}
+
+fn personal_onedrive_base() -> &'static str {
+    "me/drive"
 }
 
 // ---- Teams タスク & Planner（グループ ID 単位で配下の全プランのタスクを集約）----
@@ -722,11 +749,7 @@ pub(crate) struct GraphPlannerConnector {
 }
 impl Connector for GraphPlannerConnector {
     fn fetch(&self) -> Result<Vec<Record>> {
-        let client = GraphClient::new(
-            &self.auth.tenant_id,
-            &self.auth.client_id,
-            &self.auth.client_secret,
-        )?;
+        let client = self.auth.client()?;
         let plans = client.get(&format!(
             "https://graph.microsoft.com/v1.0/groups/{}/planner/plans?$select=id,title",
             self.group_id
@@ -910,5 +933,86 @@ mod graph_live_tests {
             println!("sharepoint library = {}", lib.len());
             assert!(!lib.is_empty());
         }
+    }
+}
+
+fn one_drive_base(auth: &GraphAuth, user: &str) -> Result<String> {
+    if auth.uses_delegated_oauth() {
+        Ok("me/drive".to_string())
+    } else {
+        let user = user.trim();
+        if user.is_empty() {
+            return Err(anyhow!(
+                "アプリケーション認証では対象ユーザー(UPN/メール)が必要です"
+            ));
+        }
+        Ok(format!("users/{}/drive", urlencoding_light(user)))
+    }
+}
+
+#[cfg(test)]
+mod graph_delegated_endpoint_tests {
+    use super::*;
+
+    fn auth(method: &str) -> GraphAuth {
+        GraphAuth {
+            tenant_id: "tenant".to_string(),
+            client_id: "client".to_string(),
+            client_secret: if method == "app_only" { "secret" } else { "" }.to_string(),
+            access_token: if method == "delegated" { "token" } else { "" }.to_string(),
+            auth_method: method.to_string(),
+        }
+    }
+
+    #[test]
+    fn delegated_calendar_uses_signed_in_users_me_endpoint() {
+        let url = calendar_events_url(&auth("delegated"), "ignored@example.com").unwrap();
+        assert!(url.starts_with("https://graph.microsoft.com/v1.0/me/events?"));
+        assert!(!url.contains("ignored@example.com"));
+    }
+
+    #[test]
+    fn app_only_calendar_keeps_upn_endpoint_and_encoding() {
+        let url = calendar_events_url(&auth("app_only"), "user+calendar@example.com").unwrap();
+        assert!(url.starts_with(
+            "https://graph.microsoft.com/v1.0/users/user%2Bcalendar@example.com/events?"
+        ));
+    }
+
+    #[test]
+    fn app_only_calendar_requires_upn_before_network_access() {
+        let error = calendar_events_url(&auth("app_only"), " ")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("UPN"));
+    }
+
+    #[test]
+    fn delegated_onedrive_uses_signed_in_users_drive() {
+        assert_eq!(
+            one_drive_base(&auth("delegated"), "ignored@example.com").unwrap(),
+            "me/drive"
+        );
+    }
+
+    #[test]
+    fn personal_onedrive_has_its_own_signed_in_user_base() {
+        assert_eq!(personal_onedrive_base(), "me/drive");
+    }
+
+    #[test]
+    fn app_only_onedrive_keeps_upn_drive_and_encoding() {
+        assert_eq!(
+            one_drive_base(&auth("app_only"), "user+drive@example.com").unwrap(),
+            "users/user%2Bdrive@example.com/drive"
+        );
+    }
+
+    #[test]
+    fn app_only_onedrive_requires_upn_before_network_access() {
+        let error = one_drive_base(&auth("app_only"), " ")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("UPN"));
     }
 }

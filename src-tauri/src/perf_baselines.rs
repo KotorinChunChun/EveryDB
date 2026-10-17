@@ -21,10 +21,10 @@ mod tests {
             fields: serde_json::from_value(json!({
                 "name": name,
                 "department": "営業部",
-                "city": "東京",
+                "city": "東京都",
             }))
             .unwrap(),
-            search_text: format!("{name} 営業部 東京"),
+            search_text: format!("{name} 営業部 東京都"),
         }
     }
 
@@ -64,10 +64,19 @@ mod tests {
 
     #[test]
     fn baseline_search_100k_rows() {
-        let elapsed = run_search_baseline("search_100k", 100_000);
+        let mut conn = Connection::open_in_memory().unwrap();
+        db::init_schema(&conn).unwrap();
+        let sid = seed_source(&mut conn, 100_000);
+        let started = Instant::now();
+        let (found, truncated) =
+            db::search(&conn, "user00042 営業部 東京都", &[sid], 10_000).unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(found.len(), 1);
+        assert!(!truncated);
+        eprintln!("v0.1.0 search_100k_three_terms: search took {elapsed:?}");
         assert!(
-            elapsed < Duration::from_secs(15),
-            "100k search baseline exceeded 15s: {elapsed:?}"
+            elapsed < Duration::from_millis(500),
+            "100k three-term search baseline exceeded 500ms: {elapsed:?}"
         );
     }
 
@@ -76,10 +85,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         db::init_schema(&conn).unwrap();
         let state = AppState::new(conn);
-        let samples = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("samples")
-            .join("customers.csv");
+        let samples = crate::test_fixtures::sample("customers.csv");
         let cfg = json!({ "path": samples.to_string_lossy() }).to_string();
         let mut ids = Vec::with_capacity(100);
         for i in 0..100 {

@@ -18,6 +18,8 @@ EveryDB は、複数のデータソースをローカルの SQLite キャッシ�
 
 初回登録時に外部サービスへ送信される情報は、選んだデータソースとその接続設定だけです。認証方法や注意点は [プライバシーとセキュリティ](docs/security.md) を確認してください。
 
+v0.1.0 の配布物にはコード署名がありません。Windows Defender SmartScreen の警告が表示される場合は、配布元と [GitHub Releases](https://github.com/KotorinChunChun/EveryDB/releases) に配布物と一緒に掲載するSHA-256を確認したうえで実行してください。コード署名は今後のリリースで対応予定です。
+
 ## アンインストール
 
 Windows の「設定」→「アプリ」から EveryDB をアンインストールできます。
@@ -36,7 +38,7 @@ Windows の「設定」→「アプリ」から EveryDB をアンインストー
 
 ## 対応データソース
 
-現在は34種類をサポートしています。
+現在は35種類をサポートしています。
 
 - ローカル: CSV、SQLite、Access、Excel（テーブル／範囲／シート一覧）、フォルダ、IME辞書、ブラウザ履歴・ブックマーク・ダウンロード履歴
 - Microsoft 365: Entra ID、Teams、SharePoint、Intune、ライセンス、Outlook予定表、OneDrive、Planner
@@ -58,6 +60,8 @@ Windows の「設定」→「アプリ」から EveryDB をアンインストー
 
 本ツールはフリーウェアです。無制限にご利用頂けます。
 
+ソースコードの公開範囲と利用条件は [利用条件](LICENSE.md) を確認してください。
+
 クラウドサービスを使用したことによる情報流出や、その後の利用に関する制限は、利用者の責任において管理されるものとします。
 
 本ツールを使用したことにより発生したいかなる損害も作者は責任を負いません。
@@ -70,7 +74,10 @@ Windows の「設定」→「アプリ」から EveryDB をアンインストー
 
 ## 開発者向け文書
 
+- [開発者ガイド](docs/DEVELOPERS_GUIDE.md)
 - [ビルド方法](docs/development/building.md)
+- [開発用秘密情報の保管](docs/development/secrets.md)
+- [KotorinToysとの連携](docs/kotorintoys-integration.md)
 - [テスト方法](docs/development/testing.md)
 - [アーキテクチャ](docs/development/architecture.md)
 - [データソース追加手順](docs/development/adding-a-data-source.md)

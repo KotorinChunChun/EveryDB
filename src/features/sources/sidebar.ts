@@ -187,7 +187,7 @@ export function mountSourcesSidebar(
   async function reloadOne(id: number): Promise<void> {
     actions.setResultInfo("リロード中…");
     try {
-      const summary = await invoke<ReloadSummary>("reload_sources", { sourceIds: [id] });
+      const summary = await invoke("reload_sources", { sourceIds: [id] });
       actions.setResultInfo(reloadSummaryMessage(summary));
     } catch (e) {
       actions.setResultInfo("リロード失敗: " + String(e));
@@ -413,7 +413,7 @@ export function mountSourcesSidebar(
         ev.stopPropagation();
         actions.setResultInfo("リロード中…");
         try {
-          const summary = await invoke<ReloadSummary>("reload_sources", { sourceIds: children.map((c) => c.id) });
+          const summary = await invoke("reload_sources", { sourceIds: children.map((c) => c.id) });
           actions.setResultInfo(reloadSummaryMessage(summary));
         } catch (e) {
           actions.setResultInfo("リロード失敗: " + String(e));
@@ -464,7 +464,7 @@ export function mountSourcesSidebar(
           makeManageButton("⟳", "配下のテーブルをすべて再読込", async () => {
             actions.setResultInfo("リロード中…");
             try {
-              const summary = await invoke<ReloadSummary>("reload_sources", { sourceIds: children.map((c) => c.id) });
+              const summary = await invoke("reload_sources", { sourceIds: children.map((c) => c.id) });
               actions.setResultInfo(reloadSummaryMessage(summary));
             } catch (e) {
               actions.setResultInfo("リロード失敗: " + String(e));

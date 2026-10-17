@@ -23,7 +23,7 @@
           <div class="sidebar-title-row">
             <div class="sidebar-title">データソース(接続先 > テーブル)</div>
             <button id="add" class="title-row-btn" type="button"
-                    title="テーブルを追加（新しい接続先の場合は接続情報もあわせて入力）">＋追加</button>
+                    title="接続先を追加（Microsoft 365 / SharePoint / Notion 等）">＋接続先</button>
             <button id="manage-toggle" class="title-row-btn manage-toggle" type="button" aria-pressed="false"
                     title="管理モード: 幅を広げて更新間隔・最終更新日時・更新/編集/削除ボタンを表示します">管理</button>
             <button id="source-guide-btn" class="title-row-btn square-btn" type="button"
@@ -57,6 +57,18 @@
         <div id="sidebar-resizer" class="sidebar-resizer" title="ドラッグして幅を変更"></div>
 
         <main class="content">
+          <section id="empty-state" class="empty-state" aria-labelledby="empty-state-title" hidden>
+            <div class="empty-state-card">
+              <p class="empty-state-eyebrow">EveryDBへようこそ</p>
+              <h1 id="empty-state-title">手元のデータを、ひとつの画面から検索できます</h1>
+              <p>まずは同梱の顧客名簿サンプルを取り込むか、お使いの接続先を追加してください。</p>
+              <div class="empty-state-actions">
+                <button id="empty-state-sample" class="btn primary" type="button">サンプルで試す</button>
+                <button id="empty-state-add" class="btn" type="button">接続先を追加</button>
+              </div>
+              <p id="empty-state-error" class="empty-state-error" role="alert" hidden></p>
+            </div>
+          </section>
           <div id="grid" class="grid" tabindex="0">
             <div id="grid-head" class="grid-head"></div>
             <div id="grid-viewport" class="grid-viewport">
@@ -100,6 +112,19 @@
       <button data-action="export">エクスポート（配下の全テーブル）</button>
       <button data-action="delete" class="danger">削除（配下の全テーブル）</button>
     </div>
+
+    <!-- 接続先種別の選択（＋接続先 ボタン） -->
+    <dialog id="connection-chooser" class="dialog wide stable-picker-dialog connection-chooser-dialog" aria-labelledby="connection-chooser-title">
+      <h3 id="connection-chooser-title">接続先・テーブルを追加</h3>
+      <div class="source-filter-wrap connection-chooser-filter-wrap">
+        <input id="connection-chooser-filter" class="source-filter" type="search" placeholder="接続先・テーブルを検索…" autocomplete="off" spellcheck="false" />
+        <button id="connection-chooser-filter-clear" class="source-filter-clear" type="button" title="検索を消す" aria-label="検索を消す" hidden>×</button>
+      </div>
+      <div id="connection-chooser-list" class="picker-list"></div>
+      <div class="dialog-actions">
+        <button id="connection-chooser-cancel" class="btn" type="button">キャンセル</button>
+      </div>
+    </dialog>
 
     <!-- テーブル追加/編集ダイアログ（種別ごとの動的フィールド + フィールド役割編集。新規の接続先の場合は接続情報もここで入力） -->
     <dialog id="add-dialog" class="dialog wide" aria-labelledby="add-dialog-title">
@@ -154,7 +179,7 @@
 
     <!-- 単純 picker ダイアログ共通テンプレート（RF-30-62: mountSimplePickerDialogs で展開） -->
     <template id="simple-picker-dialog-template">
-      <dialog class="dialog simple-picker-dialog">
+      <dialog class="dialog stable-picker-dialog simple-picker-dialog">
         <h3></h3>
         <div class="picker-list"></div>
         <div class="dialog-actions">
@@ -164,7 +189,7 @@
     </template>
 
     <!-- Excel セル範囲ピッカー (10x10グリッド) -->
-    <dialog id="cell-picker" class="dialog wide" aria-labelledby="cell-picker-title">
+    <dialog id="cell-picker" class="dialog wide stable-picker-dialog" aria-labelledby="cell-picker-title">
       <h3 id="cell-picker-title">セルを選択</h3>
       <div id="cell-picker-hint" class="roles-hint" style="margin-bottom: 8px;">💡 Ctrlキーで複数選択、ドラッグで範囲選択ができます</div>
       <div id="cell-picker-grid-wrap" class="cell-picker-grid-wrap"></div>
@@ -178,7 +203,7 @@
     </dialog>
 
     <!-- Excel/SQLite/Access テーブル一括選択ダイアログ -->
-    <dialog id="table-picker" class="dialog wide" aria-labelledby="table-picker-title">
+    <dialog id="table-picker" class="dialog wide stable-picker-dialog" aria-labelledby="table-picker-title">
       <h3 id="table-picker-title">テーブル一覧</h3>
       <div class="picker-toolbar">
         <button type="button" id="table-picker-all" class="link-btn">全選択</button>
@@ -194,7 +219,7 @@
     </dialog>
 
     <!-- SharePoint サイト/チーム → リスト・ライブラリ ピッカー -->
-    <dialog id="sp-picker" class="dialog wide" aria-labelledby="sp-picker-title">
+    <dialog id="sp-picker" class="dialog wide stable-picker-dialog" aria-labelledby="sp-picker-title">
       <h3 id="sp-picker-title">SharePoint から選択</h3>
       <div id="sp-step-source" class="sp-step">
         <div class="sp-tabs">
@@ -202,7 +227,7 @@
           <button type="button" id="sp-tab-teams" class="sp-tab">Teams チーム</button>
         </div>
         <input id="sp-filter" class="search" type="text" placeholder="絞り込み…" />
-        <div id="sp-source-list" class="picker-list"></div>
+        <div id="sp-source-list" class="picker-table-wrap"></div>
       </div>
       <div id="sp-step-resources" class="sp-step" hidden>
         <div class="sp-selected-site"></div>
@@ -281,13 +306,14 @@
           <option value="night">ナイト（高コントラスト）</option>
         </select>
       </label>
-      <label>起動ショートカットキー
+      <div class="field">
+        <label for="s-hotkey">起動ショートカットキー</label>
         <div class="zoom-row">
           <input id="s-hotkey" type="text" class="row-limit" style="width: 170px; text-align: center; cursor: pointer;" value="Alt+Ctrl+D" readonly placeholder="キーを押して設定" title="ここをクリックしてから、設定したいキーボードの組み合わせ（Alt, Ctrl, Shift 等 + キー）を押してください" />
           <button type="button" id="s-hotkey-reset" class="btn" title="既定の Alt+Ctrl+D に戻す">既定に戻す</button>
         </div>
         <span id="s-hotkey-hint" class="roles-hint">入力欄をクリックし、設定したいキーを押してください（例: Alt+Ctrl+D）</span>
-      </label>
+      </div>
       <!-- ボタン群の見出しに <label> を使うと、最初のボタンが「関連コントロール」になり、
            ラベルの余白をホバーしただけでボタンが反応し、クリックすると発火してしまう。
            単なる見出しなので div にする。 -->
@@ -300,9 +326,10 @@
         </div>
         <span class="roles-hint">Ctrl++ / Ctrl+- / Ctrl+0 でも変更できます</span>
       </div>
-      <label class="limit-label-row" title="検索結果の最大行数">検索結果の上限件数
+      <div class="field" title="検索結果の最大行数">
+        <label for="row-limit">検索結果の上限件数</label>
         <input id="row-limit" class="row-limit" type="number" min="1" max="1000000" value="10000" />
-      </label>
+      </div>
       <div class="field">データ更新
         <div class="zoom-row">
           <button type="button" id="s-reload" class="btn">今すぐ全ソースを更新</button>
@@ -315,6 +342,13 @@
           <button type="button" id="s-credential-manager" class="btn">🔑 保存済みトークンの管理…</button>
         </div>
         <span class="roles-hint">Notion/Airtable/Microsoft 365/Box/PostgreSQL/MySQL のトークン・パスワードを名前を付けて保存し、複数のデータソースで使い回せます</span>
+      </div>
+      <div class="field">バックアップと復元
+        <div class="zoom-row">
+          <button type="button" id="s-backup" class="btn">バックアップを保存</button>
+          <button type="button" id="s-restore" class="btn">バックアップから復元</button>
+        </div>
+        <span id="s-backup-status" class="roles-hint">秘密値はDPAPI暗号文のまま含まれます。他のPCやWindowsユーザーでは再認可が必要になる場合があります。</span>
       </div>
       <div class="dialog-actions">
         <button id="settings-close" class="btn">閉じる</button>
@@ -330,7 +364,8 @@
           <select id="cm-scope">
             <option value="notion">Notion</option>
             <option value="airtable">Airtable</option>
-            <option value="graph">Microsoft 365 (Graph)</option>
+            <option value="graph">Microsoft Entra ID（組織）</option>
+            <option value="microsoft_account">Microsoft アカウント（個人）</option>
             <option value="box">Box</option>
             <option value="postgres">PostgreSQL</option>
             <option value="mysql">MySQL</option>
@@ -362,7 +397,7 @@
     </dialog>
 
     <!-- 保存済みトークンの選択（各フィールドの「選択…／変更…」から開く） -->
-    <dialog id="credential-select-picker" class="dialog" aria-labelledby="credential-select-picker-title">
+    <dialog id="credential-select-picker" class="dialog stable-picker-dialog" aria-labelledby="credential-select-picker-title">
       <h3 id="credential-select-picker-title">保存済みトークンを選択</h3>
       <div id="credential-select-picker-list" class="picker-list"></div>
       <div class="dialog-actions">
@@ -378,6 +413,17 @@
       <div id="guide-body" class="guide-body"></div>
       <div class="dialog-actions">
         <button id="guide-close" class="btn primary" type="button">閉じる</button>
+      </div>
+    </dialog>
+
+    <!-- URL から接続フィールドを自動入力 -->
+    <dialog id="url-auto-input-dialog" class="dialog" aria-labelledby="url-auto-input-dialog-title">
+      <h3 id="url-auto-input-dialog-title">URLから自動入力</h3>
+      <p id="url-auto-input-dialog-hint" class="dialog-note">URL を貼り付けまたは入力してください</p>
+      <input id="url-auto-input-dialog-input" type="text" autocomplete="off" spellcheck="false" />
+      <div class="dialog-actions">
+        <button id="url-auto-input-dialog-cancel" class="btn" type="button">キャンセル</button>
+        <button id="url-auto-input-dialog-ok" class="btn primary" type="button">OK（自動入力）</button>
       </div>
     </dialog>
 

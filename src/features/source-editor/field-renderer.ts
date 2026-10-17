@@ -9,6 +9,7 @@ export interface FieldRendererActions {
     idPrefix: string,
     row: HTMLElement,
     label: HTMLElement,
+    sourceType: string,
   ) => void;
   openAirtableBasePicker: (input: HTMLInputElement) => void;
   openAirtableTablePicker: (input: HTMLInputElement) => void;
@@ -21,6 +22,7 @@ export function renderFieldsInto(
   idPrefix: string,
   fields: FieldDef[],
   actions: FieldRendererActions,
+  sourceType: string,
   prefill?: Record<string, unknown>,
 ): void {
   container.innerHTML = "";
@@ -81,7 +83,7 @@ export function renderFieldsInto(
         };
         row.appendChild(browseBtn);
       }
-      if (isCredOwner) actions.wireCredentialSelector(input, field, idPrefix, row, label);
+      if (isCredOwner) actions.wireCredentialSelector(input, field, idPrefix, row, label, sourceType);
       if (field.browseAirtableBase) {
         const pickBtn = document.createElement("button");
         pickBtn.type = "button";

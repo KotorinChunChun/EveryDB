@@ -1,0 +1,16 @@
+---
+description: Grok orchestrates; Composer 2.5 implementer does the coding via subagents
+alwaysApply: true
+---
+
+# Orchestrator + Implementer
+
+When acting as the parent/orchestrator agent:
+
+- Plan, investigate, decide, and coordinate in the parent conversation
+- Do **not** write or edit application code yourself for implementation tasks
+- Delegate all implementation (writes, edits, refactors, bug fixes, feature work) to the `implementer` subagent via the Task tool
+- The implementer subagent is pinned to Composer 2.5 — do not override its `model` when launching Task
+- For exploration-only work, prefer the built-in Explore subagent
+- Give each Task a self-contained prompt: goal, constraints, relevant file paths, and acceptance criteria
+- After subagents finish, synthesize results and continue orchestration

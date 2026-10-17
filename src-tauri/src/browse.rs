@@ -8,15 +8,35 @@ use serde_json::Value;
 use crate::graph::GraphClient;
 
 /// Graph 系ピッカーで共通の認証情報。
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct GraphAuthArgs {
     pub tenant_id: String,
     pub client_id: String,
+    #[serde(default)]
     pub client_secret: String,
+    #[serde(default)]
+    pub access_token: String,
+    #[serde(default = "default_graph_auth_method")]
+    pub auth_method: String,
+}
+fn default_graph_auth_method() -> String {
+    "app_only".to_string()
+}
+impl GraphAuthArgs {
+    fn uses_delegated_oauth(&self) -> bool {
+        self.auth_method == "delegated"
+    }
 }
 
 fn graph_client(auth: &GraphAuthArgs) -> Result<GraphClient> {
-    GraphClient::new(&auth.tenant_id, &auth.client_id, &auth.client_secret)
+    if auth.uses_delegated_oauth() {
+        if auth.access_token.is_empty() {
+            return Err(anyhow!("委任 OAuth のアクセストークンがありません"));
+        }
+        Ok(GraphClient::new_with_token(&auth.access_token))
+    } else {
+        GraphClient::new(&auth.tenant_id, &auth.client_id, &auth.client_secret)
+    }
 }
 
 // ---- Notion: アクセス可能なデータベース一覧 ----
@@ -24,6 +44,57 @@ fn graph_client(auth: &GraphAuthArgs) -> Result<GraphClient> {
 pub struct NotionDbEntry {
     pub id: String,
     pub title: String,
+}
+
+fn notion_database_entry(value: &Value) -> NotionDbEntry {
+    let id = value
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let title = value
+        .get("title")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.get("plain_text").and_then(|v| v.as_str()))
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "(無題)".to_string());
+    NotionDbEntry { id, title }
+}
+
+pub fn notion_get_database(token: &str, database_id: &str) -> Result<NotionDbEntry> {
+    let database_id = database_id.trim();
+    let compact = database_id.replace('-', "");
+    if compact.len() != 32 || !compact.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(anyhow!(
+            "Notion データベースIDは32桁の16進数で指定してください"
+        ));
+    }
+    let resp = ureq::get(&format!(
+        "https://api.notion.com/v1/databases/{database_id}"
+    ))
+    .set("Authorization", &format!("Bearer {token}"))
+    .set("Notion-Version", "2022-06-28")
+    .call();
+    let value: Value = match resp {
+        Ok(response) => response.into_json()?,
+        Err(ureq::Error::Status(code, response)) => {
+            return Err(anyhow!(
+                "Notion API エラー {code}: {}",
+                response.into_string().unwrap_or_default()
+            ))
+        }
+        Err(error) => return Err(anyhow!("Notion への接続に失敗: {error}")),
+    };
+    let mut entry = notion_database_entry(&value);
+    if entry.id.is_empty() {
+        entry.id = database_id.to_string();
+    }
+    Ok(entry)
 }
 
 pub fn notion_list_databases(token: &str) -> Result<Vec<NotionDbEntry>> {
@@ -54,23 +125,7 @@ pub fn notion_list_databases(token: &str) -> Result<Vec<NotionDbEntry>> {
         };
         if let Some(results) = value.get("results").and_then(|v| v.as_array()) {
             for db in results {
-                let id = db
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let title = db
-                    .get("title")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|x| x.get("plain_text").and_then(|v| v.as_str()))
-                            .collect::<Vec<_>>()
-                            .join("")
-                    })
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "(無題)".to_string());
-                out.push(NotionDbEntry { id, title });
+                out.push(notion_database_entry(db));
             }
         }
         let has_more = value
@@ -250,27 +305,34 @@ pub fn airtable_list_tables(token: &str, base_id: &str) -> Result<Vec<AirtableTa
 // ---- SharePoint: サイト一覧 ----
 #[derive(Serialize)]
 pub struct SiteEntry {
-    pub web_url: String,
+    pub id: String,
     pub display_name: String,
+    pub web_url: String,
+    pub description: String,
+    pub created_date_time: String,
+}
+
+fn graph_str(v: &Value, key: &str) -> String {
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 pub fn graph_list_sites(auth: &GraphAuthArgs) -> Result<Vec<SiteEntry>> {
     let client = graph_client(auth)?;
-    let url =
-        "https://graph.microsoft.com/v1.0/sites?search=*&$select=id,displayName,webUrl&$top=200";
+    let url = "https://graph.microsoft.com/v1.0/sites?search=*&$select=id,displayName,webUrl,description,createdDateTime&$top=200";
     Ok(client
         .get_all(url)?
         .iter()
         .filter_map(|s| {
             let web_url = s.get("webUrl").and_then(|v| v.as_str())?.to_string();
-            let display_name = s
-                .get("displayName")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
             Some(SiteEntry {
+                id: graph_str(s, "id"),
+                display_name: graph_str(s, "displayName"),
                 web_url,
-                display_name,
+                description: graph_str(s, "description"),
+                created_date_time: graph_str(s, "createdDateTime"),
             })
         })
         .collect())
@@ -279,29 +341,38 @@ pub fn graph_list_sites(auth: &GraphAuthArgs) -> Result<Vec<SiteEntry>> {
 // ---- Teams: チーム一覧(ピッカー用の軽量版) ----
 #[derive(Serialize)]
 pub struct TeamEntry {
-    pub group_id: String,
+    pub id: String,
     pub display_name: String,
+    pub description: String,
+    pub created_date_time: String,
 }
 
 pub fn graph_list_teams(auth: &GraphAuthArgs) -> Result<Vec<TeamEntry>> {
     let client = graph_client(auth)?;
-    let url = "https://graph.microsoft.com/v1.0/groups?$filter=resourceProvisioningOptions/Any(x:x%20eq%20'Team')&$select=id,displayName&$top=999";
+    let url = graph_teams_url(auth);
     Ok(client
         .get_all(url)?
         .iter()
         .filter_map(|t| {
-            let group_id = t.get("id").and_then(|v| v.as_str())?.to_string();
-            let display_name = t
-                .get("displayName")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            let id = t.get("id").and_then(|v| v.as_str())?.to_string();
             Some(TeamEntry {
-                group_id,
-                display_name,
+                id,
+                display_name: graph_str(t, "displayName"),
+                description: graph_str(t, "description"),
+                created_date_time: graph_str(t, "createdDateTime"),
             })
         })
         .collect())
+}
+
+/// 委任 OAuth ではサインインユーザー本人が直接参加している Teams のみを取得する。
+/// `/groups` はテナント全体を対象にするため、従来の app-only 認証でだけ使用する。
+fn graph_teams_url(auth: &GraphAuthArgs) -> &'static str {
+    if auth.uses_delegated_oauth() {
+        "https://graph.microsoft.com/v1.0/me/joinedTeams"
+    } else {
+        "https://graph.microsoft.com/v1.0/groups?$filter=resourceProvisioningOptions/Any(x:x%20eq%20'Team')&$select=id,displayName,description,createdDateTime&$top=999"
+    }
 }
 
 /// Teams チームの裏側にある SharePoint サイトの URL を解決する。
@@ -712,15 +783,58 @@ fn firefox_profiles() -> Result<Vec<BrowserProfileEntry>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     fn sample(name: &str) -> String {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("samples")
-            .join(name)
+        crate::test_fixtures::sample(name)
             .to_string_lossy()
             .into_owned()
+    }
+
+    #[test]
+    fn notion_database_entry_combines_plain_text_title_parts() {
+        let value = serde_json::json!({
+            "id": "01234567-89ab-cdef-0123-456789abcdef",
+            "title": [{"plain_text": "案件"}, {"plain_text": "管理"}]
+        });
+        let entry = notion_database_entry(&value);
+        assert_eq!(entry.id, "01234567-89ab-cdef-0123-456789abcdef");
+        assert_eq!(entry.title, "案件管理");
+        assert_eq!(
+            notion_database_entry(&serde_json::json!({"id":"x"})).title,
+            "(無題)"
+        );
+        assert!(notion_get_database("not-used", "invalid-id")
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("32桁"));
+    }
+
+    #[test]
+    fn graph_team_picker_uses_user_context_for_delegated_oauth() {
+        let delegated = GraphAuthArgs {
+            tenant_id: "tenant".to_string(),
+            client_id: "client".to_string(),
+            client_secret: String::new(),
+            access_token: "delegated-token".to_string(),
+            auth_method: "delegated".to_string(),
+        };
+        assert_eq!(
+            graph_teams_url(&delegated),
+            "https://graph.microsoft.com/v1.0/me/joinedTeams"
+        );
+    }
+
+    #[test]
+    fn graph_team_picker_keeps_tenant_query_for_app_only_auth() {
+        let app_only = GraphAuthArgs {
+            tenant_id: "tenant".to_string(),
+            client_id: "client".to_string(),
+            client_secret: "secret".to_string(),
+            access_token: String::new(),
+            auth_method: "app_only".to_string(),
+        };
+        assert!(graph_teams_url(&app_only).contains("/groups?"));
     }
 
     #[test]
@@ -790,6 +904,8 @@ mod tests {
             tenant_id: env("EVERYDB_GRAPH_TENANT").expect("EVERYDB_GRAPH_TENANT"),
             client_id: env("EVERYDB_GRAPH_CLIENT").expect("EVERYDB_GRAPH_CLIENT"),
             client_secret: env("EVERYDB_GRAPH_SECRET").expect("EVERYDB_GRAPH_SECRET"),
+            access_token: String::new(),
+            auth_method: "app_only".to_string(),
         };
         let sites = graph_list_sites(&auth).unwrap();
         println!("sites = {}", sites.len());
@@ -799,7 +915,7 @@ mod tests {
         println!("teams = {}", teams.len());
         assert!(!teams.is_empty());
 
-        let team_site = graph_team_site_url(&auth, &teams[0].group_id).unwrap();
+        let team_site = graph_team_site_url(&auth, &teams[0].id).unwrap();
         println!("team[0] site url = {team_site}");
         assert!(team_site.starts_with("http"));
 

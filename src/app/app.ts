@@ -1,4 +1,5 @@
 import { invoke } from "./ipc";
+import { resolveResource } from "@tauri-apps/api/path";
 import { $ } from "./dom";
 import { mountDialogAccessibility } from "./dialog-a11y";
 import { mountSimplePickerDialogs } from "./simple-picker-dialogs";
@@ -15,6 +16,7 @@ import {
 } from "../shared/storage";
 import { getCellUrl } from "../shared/urls";
 import { mountRoleEditor } from "../features/source-editor/role-editor";
+import { mountConnectionChooser } from "../features/source-editor/connection-chooser";
 import { mountSourceEditorDialogFromDom, type SourceEditorDialogController } from "../features/source-editor/dialog";
 import { mountParentSettingsDialogFromDom, type ParentSettingsDialogController } from "../features/source-editor/parent-dialog";
 import { sharedKeysFor } from "../features/source-editor/shared-config";
@@ -22,7 +24,7 @@ import { mountCredentials } from "../features/credentials";
 import { mountExportDialog } from "../features/export/dialog";
 import { mountGuideViewer } from "../features/guide";
 import { mountSettings } from "../features/settings";
-import type { ReloadSummary, Row, SourceInfo } from "../shared/types";
+import type { ReloadSummary, Row } from "../shared/types";
 import { parentKindForType } from "../source-types/registry";
 import type { ParentKind } from "../source-types/registry";
 import { mountGridView } from "../features/grid/view";
@@ -34,6 +36,7 @@ import { mountSourcesSidebar } from "../features/sources/sidebar";
 import { mountSearchControllerFromDom } from "../features/search/controller";
 import { gridColumnWidth } from "../features/grid/data";
 import { mountSourcePickers } from "../features/pickers";
+import { mountEmptyState } from "../features/onboarding/empty-state";
 
 mountSimplePickerDialogs();
 mountDialogAccessibility();
@@ -89,6 +92,7 @@ let openEditDialog: (id: number) => Promise<void>;
 let openParentSettingsDialog: (parentKey: string) => Promise<void>;
 let sourceEditor: SourceEditorDialogController;
 let parentSettings: ParentSettingsDialogController;
+let emptyState: ReturnType<typeof mountEmptyState>;
 
 function totalGridWidth(): number {
   return appState.columns.reduce(
@@ -112,7 +116,7 @@ const gridView = mountGridView({
 renderRows = gridView.renderRows;
 cellText = gridView.cellText;
 
-const { guideTextFor, openGuide } = mountGuideViewer();
+const { guideTextFor, openGuide, openGuideDoc } = mountGuideViewer();
 
 const { openExportDialog } = mountExportDialog({
   getRowCount: () => appState.rows.length,
@@ -129,7 +133,6 @@ const contextMenus = mountContextMenus({
   parentMenu: $<HTMLDivElement>("parent-ctx-menu"),
 }, {
   parentLabel,
-  parentKindOf,
   reloadSummaryMessage,
   cellText: (row, col) => cellText(row, col),
   getCellUrl,
@@ -212,15 +215,16 @@ reloadOne = sourcesSidebar.reloadOne;
 // データソース一覧（サイドバー）
 // ============================================================
 export async function loadSources() {
-  const list = await invoke<SourceInfo[]>("list_sources");
+  const list = await invoke("list_sources");
   replaceSourcesList(list);
   saveSelectedSourcesState();
+  emptyState.render(list.length > 0);
   renderSources();
-  runSearch();
+  await runSearch();
 }
 
 export async function refreshSidebar() {
-  refreshSourcesList(await invoke<SourceInfo[]>("list_sources"));
+  refreshSourcesList(await invoke("list_sources"));
   renderSources();
 }
 
@@ -264,7 +268,7 @@ function handleVerticalDragOver(ev: DragEvent, el: HTMLElement): boolean {
 /** 接続先（ツリーの親）ノードのユーザー設定表示名（parentKey -> ラベル）。未設定なら自動導出する。 */
 export async function loadParentLabels() {
   try {
-    const entries = await invoke<[string, string][]>("list_parent_labels");
+    const entries = await invoke("list_parent_labels");
     appState.parentLabelOverrides = new Map(entries);
   } catch { /* noop */ }
 }
@@ -360,6 +364,7 @@ const pickers = mountSourcePickers({
 const credentials = mountCredentials({
   getSourceEditor: () => sourceEditor,
   openGuide,
+  openGuideDoc,
 });
 export async function refreshWinAuthStatus() {
   await credentials.refreshWinAuthStatus();
@@ -372,6 +377,7 @@ sourceEditor = mountSourceEditorDialogFromDom({
   sharedKeysFor,
   tableOpenUrl,
   loadSources,
+  openParentSettingsDialog: (key) => openParentSettingsDialog(key),
   ensureUnlocked,
   guideTextFor,
   openGuide,
@@ -403,6 +409,40 @@ parentSettings = mountParentSettingsDialogFromDom({
 });
 
 openParentSettingsDialog = parentSettings.openParentSettingsDialog;
+
+mountConnectionChooser({
+  openAddDialog: (opts) => sourceEditor.openAddDialog(opts),
+  openParentSettingsDialog: (key) => openParentSettingsDialog(key),
+});
+
+const SAMPLE_SOURCE_NAME = "サンプル（顧客名簿）";
+emptyState = mountEmptyState({
+  root: $<HTMLElement>("empty-state"),
+  grid: $<HTMLElement>("grid"),
+  sampleButton: $<HTMLButtonElement>("empty-state-sample"),
+  addButton: $<HTMLButtonElement>("empty-state-add"),
+  error: $<HTMLElement>("empty-state-error"),
+}, {
+  openConnectionChooser: () => $<HTMLButtonElement>("add").click(),
+  addSample: async () => {
+    let sample = appState.sources.find((source) => source.name === SAMPLE_SOURCE_NAME);
+    if (sample) {
+      await invoke("reload_sources", { sourceIds: [sample.id] });
+    } else {
+      const path = await resolveResource("samples/customers.csv");
+      await invoke("add_source", {
+        type: "csv",
+        name: SAMPLE_SOURCE_NAME,
+        configJson: JSON.stringify({ path }),
+      });
+    }
+    await loadSources();
+    sample = appState.sources.find((source) => source.name === SAMPLE_SOURCE_NAME);
+    if (!sample || sample.status === "error") {
+      throw new Error(sample?.last_error ?? "サンプルの状態を確認できませんでした");
+    }
+  },
+});
 
 const settings = mountSettings({
   searchInput,

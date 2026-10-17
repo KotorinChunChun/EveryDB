@@ -14,8 +14,8 @@ use crate::db;
 use crate::secret;
 use crate::service_error::{lock_db, ServiceError, ServiceResult};
 
-fn resolve_and_decrypt(conn: &Connection, config_json: &str) -> ServiceResult<String> {
-    let resolved = credentials::resolve_credentials(conn, config_json)
+fn resolve_and_decrypt(conn: &Connection, type_: &str, config_json: &str) -> ServiceResult<String> {
+    let resolved = credentials::resolve_credentials_for_source_type(conn, type_, config_json)
         .map_err(|e| ServiceError::external("接続情報の解決に失敗しました", e))?;
     secret::unprotect_config(&resolved)
         .map_err(|e| ServiceError::external("接続情報の復号に失敗しました", e))
@@ -45,13 +45,17 @@ pub fn effective_config(
     id: i64,
     overrides_json: &str,
 ) -> ServiceResult<Map<String, serde_json::Value>> {
-    let (_, config_json) = db::get_source_config(conn, id)
+    let (type_, config_json) = db::get_source_config(conn, id)
         .map_err(|e| ServiceError::external("ソース設定の取得に失敗しました", e))?;
-    let decrypted = resolve_and_decrypt(conn, &config_json)?;
+    credentials::validate_source_credential_compatibility(conn, &type_, &config_json)
+        .map_err(|error| ServiceError::validation(error.to_string()))?;
+    let decrypted = resolve_and_decrypt(conn, &type_, &config_json)?;
     let merged = merge_overrides(&decrypted, overrides_json)?;
     let merged_json = serde_json::to_string(&merged)
         .map_err(|e| ServiceError::internal("設定の合成に失敗しました", e))?;
-    let merged_decrypted = resolve_and_decrypt(conn, &merged_json)?;
+    credentials::validate_source_credential_compatibility(conn, &type_, &merged_json)
+        .map_err(|error| ServiceError::validation(error.to_string()))?;
+    let merged_decrypted = resolve_and_decrypt(conn, &type_, &merged_json)?;
     serde_json::from_str(&merged_decrypted)
         .map_err(|e| ServiceError::external("設定 JSON の解析に失敗しました", e))
 }
@@ -62,10 +66,52 @@ fn cfg_str(cfg: &Map<String, serde_json::Value>, key: &str) -> String {
         .unwrap_or_default()
         .to_string()
 }
+fn credential_fields(
+    state: &AppState,
+    credential_id: i64,
+    expected_scope: &str,
+) -> ServiceResult<Map<String, serde_json::Value>> {
+    let conn = lock_db(state)?;
+    let (scope, protected_fields): (String, String) = conn
+        .query_row(
+            "SELECT scope, fields_json FROM credentials WHERE id = ?1",
+            [credential_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| ServiceError::external("保存済みトークンの取得に失敗しました", e))?;
+    drop(conn);
+    if scope != expected_scope {
+        return Err(ServiceError::validation(format!(
+            "保存済みトークンの種別が一致しません（期待: {expected_scope}、実際: {scope}）"
+        )));
+    }
+    let decrypted = secret::unprotect_config(&protected_fields)
+        .map_err(|e| ServiceError::external("保存済みトークンの復号に失敗しました", e))?;
+    serde_json::from_str(&decrypted)
+        .map_err(|e| ServiceError::external("保存済みトークン JSON が不正です", e))
+}
 
 pub fn browse_notion_databases(token: &str) -> ServiceResult<Vec<NotionDbEntry>> {
     browse::notion_list_databases(token)
         .map_err(|e| ServiceError::external("Notion データベース一覧の取得に失敗しました", e))
+}
+
+pub fn preview_csv(config_json: &str) -> ServiceResult<connectors::CsvPreview> {
+    connectors::preview_csv(config_json)
+        .map_err(|e| ServiceError::external("CSVプレビューの作成に失敗しました", e))
+}
+pub fn browse_notion_databases_for_credential(
+    state: &AppState,
+    credential_id: i64,
+) -> ServiceResult<Vec<NotionDbEntry>> {
+    let cfg = credential_fields(state, credential_id, "notion")?;
+    let token = cfg_str(&cfg, "token");
+    if token.is_empty() {
+        return Err(ServiceError::validation(
+            "インテグレーショントークンが設定されていません",
+        ));
+    }
+    browse_notion_databases(&token)
 }
 
 pub fn browse_notion_databases_for_source(
@@ -85,9 +131,57 @@ pub fn browse_notion_databases_for_source(
     browse_notion_databases(&token)
 }
 
+pub fn browse_notion_database_for_credential(
+    state: &AppState,
+    credential_id: i64,
+    database_id: &str,
+) -> ServiceResult<NotionDbEntry> {
+    let cfg = credential_fields(state, credential_id, "notion")?;
+    let token = cfg_str(&cfg, "token");
+    if token.is_empty() {
+        return Err(ServiceError::validation(
+            "インテグレーショントークンが設定されていません",
+        ));
+    }
+    browse::notion_get_database(&token, database_id)
+        .map_err(|e| ServiceError::external("Notion データベース名の取得に失敗しました", e))
+}
+
+pub fn browse_notion_database_for_source(
+    state: &AppState,
+    id: i64,
+    overrides_json: &str,
+    database_id: &str,
+) -> ServiceResult<NotionDbEntry> {
+    let conn = lock_db(state)?;
+    let cfg = effective_config(&conn, id, overrides_json)?;
+    drop(conn);
+    let token = cfg_str(&cfg, "token");
+    if token.is_empty() {
+        return Err(ServiceError::validation(
+            "インテグレーショントークンが設定されていません",
+        ));
+    }
+    browse::notion_get_database(&token, database_id)
+        .map_err(|e| ServiceError::external("Notion データベース名の取得に失敗しました", e))
+}
+
 pub fn browse_airtable_bases(token: &str) -> ServiceResult<Vec<AirtableBaseEntry>> {
     browse::airtable_list_bases(token)
         .map_err(|e| ServiceError::external("Airtable Base 一覧の取得に失敗しました", e))
+}
+pub fn browse_airtable_bases_for_credential(
+    state: &AppState,
+    credential_id: i64,
+) -> ServiceResult<Vec<AirtableBaseEntry>> {
+    let cfg = credential_fields(state, credential_id, "airtable")?;
+    let token = cfg_str(&cfg, "token");
+    if token.is_empty() {
+        return Err(ServiceError::validation(
+            "Personal Access Token が設定されていません",
+        ));
+    }
+    browse_airtable_bases(&token)
 }
 
 pub fn browse_airtable_bases_for_source(
@@ -113,6 +207,23 @@ pub fn browse_airtable_tables(
 ) -> ServiceResult<Vec<AirtableTableEntry>> {
     browse::airtable_list_tables(token, base_id)
         .map_err(|e| ServiceError::external("Airtable テーブル一覧の取得に失敗しました", e))
+}
+pub fn browse_airtable_tables_for_credential(
+    state: &AppState,
+    credential_id: i64,
+    base_id: &str,
+) -> ServiceResult<Vec<AirtableTableEntry>> {
+    let cfg = credential_fields(state, credential_id, "airtable")?;
+    let token = cfg_str(&cfg, "token");
+    if token.is_empty() {
+        return Err(ServiceError::validation(
+            "Personal Access Token が設定されていません",
+        ));
+    }
+    if base_id.is_empty() {
+        return Err(ServiceError::validation("Base ID が指定されていません"));
+    }
+    browse_airtable_tables(&token, base_id)
 }
 
 pub fn browse_airtable_tables_for_source(
@@ -152,6 +263,15 @@ pub fn browse_graph_site_resources_for_source(
         tenant_id: cfg_str(&cfg, "tenant_id"),
         client_id: cfg_str(&cfg, "client_id"),
         client_secret: cfg_str(&cfg, "client_secret"),
+        access_token: cfg_str(&cfg, "access_token"),
+        auth_method: {
+            let method = cfg_str(&cfg, "auth_method");
+            if method.is_empty() {
+                "app_only".to_string()
+            } else {
+                method
+            }
+        },
     };
     let site_url = cfg_str(&cfg, "site_url");
     if site_url.is_empty() {
@@ -160,6 +280,49 @@ pub fn browse_graph_site_resources_for_source(
     browse_graph_site_resources(&auth, &site_url)
 }
 
+fn graph_auth_for_credential(state: &AppState, credential_id: i64) -> ServiceResult<GraphAuthArgs> {
+    let conn = lock_db(state)?;
+    credentials::resolve_graph_auth_args(
+        &conn,
+        credential_id,
+        credentials::GRAPH_CAPABILITY_SHAREPOINT,
+    )
+    .map_err(|e| ServiceError::external("Graph 認証情報の解決に失敗しました", e))
+}
+
+pub fn browse_graph_sites_for_credential(
+    state: &AppState,
+    credential_id: i64,
+) -> ServiceResult<Vec<SiteEntry>> {
+    let auth = graph_auth_for_credential(state, credential_id)?;
+    browse_graph_sites(&auth)
+}
+
+pub fn browse_graph_teams_for_credential(
+    state: &AppState,
+    credential_id: i64,
+) -> ServiceResult<Vec<TeamEntry>> {
+    let auth = graph_auth_for_credential(state, credential_id)?;
+    browse_graph_teams(&auth)
+}
+
+pub fn browse_graph_team_site_url_for_credential(
+    state: &AppState,
+    credential_id: i64,
+    team_group_id: &str,
+) -> ServiceResult<String> {
+    let auth = graph_auth_for_credential(state, credential_id)?;
+    browse_graph_team_site_url(&auth, team_group_id)
+}
+
+pub fn browse_graph_site_resources_for_credential(
+    state: &AppState,
+    credential_id: i64,
+    site_url: &str,
+) -> ServiceResult<Vec<SiteResourceEntry>> {
+    let auth = graph_auth_for_credential(state, credential_id)?;
+    browse_graph_site_resources(&auth, site_url)
+}
 pub fn browse_graph_sites(auth: &GraphAuthArgs) -> ServiceResult<Vec<SiteEntry>> {
     browse::graph_list_sites(auth)
         .map_err(|e| ServiceError::external("SharePoint サイト一覧の取得に失敗しました", e))
@@ -234,9 +397,31 @@ pub fn browse_browser_profiles(
 
 #[cfg(test)]
 mod parent_dialog_tests {
-    use super::{effective_config, merge_overrides};
+    use super::{credential_fields, effective_config, merge_overrides};
     use crate::secret::SECRET_PLACEHOLDER;
 
+    #[test]
+    fn credential_fields_resolves_only_the_expected_scope_inside_rust() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::init_schema(&conn).unwrap();
+        let credential_id = crate::credentials::add_credential(
+            &conn,
+            "notion",
+            "個人",
+            r#"{"token":"ntn_secret"}"#,
+        )
+        .unwrap();
+        let state = crate::app_state::AppState::new(conn);
+
+        let fields = credential_fields(&state, credential_id, "notion").unwrap();
+        assert_eq!(fields["token"], "ntn_secret");
+
+        let error = credential_fields(&state, credential_id, "airtable")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("種別が一致"));
+        assert!(!error.contains("ntn_secret"));
+    }
     #[test]
     fn merge_overrides_ignores_masked_and_empty_values() {
         let saved = r#"{"token":"ntn_real","database_id":"db1"}"#;

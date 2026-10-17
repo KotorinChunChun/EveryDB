@@ -2,10 +2,20 @@ import { $, setPickerMessage } from "../../app/dom";
 import { invoke } from "../../app/ipc";
 import type { CredentialScope, CredentialSummary } from "../../shared/types";
 import type { FieldDef } from "../../source-types/forms";
+import {
+  graphCredentialRequirementsFor,
+  isGraphCapability,
+  type GraphAuthMethod,
+  type GraphCapability,
+} from "../../source-types/registry";
 import { SECRET_PLACEHOLDER } from "../source-editor/constants";
 import { getLinkedCredentials } from "../source-editor/linked-credentials";
 import type { SourceEditorDialogController } from "../source-editor/dialog";
 import type { CredentialManagerController } from "./manager";
+import {
+  populateCredentialPermissionStatus,
+  supportsCredentialPermissionInspection,
+} from "./permissions";
 
 export interface CredentialSelectorDeps {
   getSourceEditor: () => SourceEditorDialogController;
@@ -19,14 +29,96 @@ export interface CredentialSelectorController {
     idPrefix: string,
     row: HTMLElement,
     label: HTMLElement,
+    sourceType: string,
   ) => void;
+}
+
+export interface GraphCredentialCompatibility {
+  compatible: boolean;
+  authMethod: GraphAuthMethod | "unknown";
+  capabilities: GraphCapability[];
+  reason: string | null;
+}
+
+export function graphUsesSignedInUser(
+  sourceType: string,
+  fields: Record<string, unknown>,
+): boolean {
+  return (sourceType === "graph_calendar" || sourceType === "graph_onedrive")
+    && fields.auth_method === "delegated";
+}
+
+export function updateGraphSelfSubjectUi(
+  sourceType: string,
+  idPrefix: string,
+  fields: Record<string, unknown>,
+): void {
+  if (sourceType !== "graph_calendar" && sourceType !== "graph_onedrive") return;
+  const input = document.getElementById(`${idPrefix}user`) as HTMLInputElement | null;
+  if (!input) return;
+  const delegated = graphUsesSignedInUser(sourceType, fields);
+  input.disabled = delegated;
+  let hint = document.getElementById(`${idPrefix}graph-self-subject-hint`);
+  if (!hint) {
+    hint = document.createElement("small");
+    hint.id = `${idPrefix}graph-self-subject-hint`;
+    hint.className = "roles-hint graph-self-subject-hint";
+    input.closest("label")?.appendChild(hint);
+  }
+  hint.textContent = delegated ? "委任 OAuth: サインインした本人を取得します" : "";
+  hint.hidden = !delegated;
+  if (delegated) input.setAttribute("aria-describedby", hint.id);
+  else input.removeAttribute("aria-describedby");
+}
+
+export function graphCredentialCompatibility(
+  sourceType: string,
+  fields: Record<string, unknown>,
+): GraphCredentialCompatibility {
+  const requirements = graphCredentialRequirementsFor(sourceType);
+  const rawMethod = fields.auth_method;
+  const authMethod: GraphAuthMethod | "unknown" = rawMethod === undefined || rawMethod === null || rawMethod === "app_only"
+    ? "app_only"
+    : rawMethod === "delegated"
+      ? "delegated"
+      : "unknown";
+  const capabilities = Array.isArray(fields.capabilities)
+    ? fields.capabilities.filter(isGraphCapability)
+    : authMethod === "delegated"
+      ? ["sharepoint" as const]
+      : [];
+
+  if (!requirements) return { compatible: true, authMethod, capabilities, reason: null };
+  if (authMethod === "unknown" || !requirements.authMethods.includes(authMethod)) {
+    return {
+      compatible: false,
+      authMethod,
+      capabilities,
+      reason: authMethod === "delegated"
+        ? "このデータソースは委任 OAuth に対応していません。アプリケーション認証を選択してください。"
+        : "この資格情報の認証方式には対応していません。",
+    };
+  }
+  if (authMethod === "delegated") {
+    const missing = requirements.capabilities.filter((capability) => !capabilities.includes(capability));
+    if (missing.length > 0) {
+      return {
+        compatible: false,
+        authMethod,
+        capabilities,
+        reason: `必要な capability: ${missing.join(", ")}。トークン管理画面で追加して再認可してください。`,
+      };
+    }
+  }
+  return { compatible: true, authMethod, capabilities, reason: null };
 }
 
 function credentialScopeLabel(scope: CredentialScope): string {
   switch (scope) {
     case "notion": return "Notion";
     case "airtable": return "Airtable";
-    case "graph": return "Microsoft 365 (Graph)";
+    case "graph": return "Microsoft Entra ID（組織）";
+    case "microsoft_account": return "Microsoft アカウント（個人）";
     case "box": return "Box";
     case "postgres": return "PostgreSQL";
     case "mysql": return "MySQL";
@@ -39,8 +131,9 @@ export function mountCredentialSelector(deps: CredentialSelectorDeps): Credentia
 
   let lastPickerScope: CredentialScope | null = null;
 
-  function renderCredentialPickerList(
+  async function renderCredentialPickerList(
     items: CredentialSummary[],
+    sourceType: string,
     onPick: (id: number, label: string, fields: Record<string, unknown>) => void,
   ) {
     const listEl = $<HTMLDivElement>("credential-select-picker-list");
@@ -49,18 +142,50 @@ export function mountCredentialSelector(deps: CredentialSelectorDeps): Credentia
       listEl.innerHTML = "<div class='picker-empty'>該当する保存済みトークンがありません。下の「🔑 管理画面を開く…」から追加できます</div>";
       return;
     }
-    for (const c of items) {
-      const item = document.createElement("div");
-      item.className = "picker-item";
-      item.textContent = `${c.label}（作成: ${c.created_at}）`;
-      item.onclick = async () => {
-        try {
-          const res = await invoke<{ label: string; fields: Record<string, unknown> }>("credential_public_fields", { id: c.id });
-          onPick(c.id, res.label, res.fields);
-          $<HTMLDialogElement>("credential-select-picker").close();
-        } catch (e) {
-          alert("取得に失敗しました: " + String(e));
-        }
+    const entries = await Promise.all(items.map(async (summary) => {
+      try {
+        return { summary, details: await invoke("credential_public_fields", { id: summary.id }), error: null };
+      } catch (error) {
+        return { summary, details: null, error: String(error) };
+      }
+    }));
+    for (const { summary: c, details, error } of entries) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "picker-item credential-picker-item";
+      const title = document.createElement("span");
+      title.textContent = `${c.label}（作成: ${c.created_at}）`;
+      item.appendChild(title);
+
+      const compatibility = details && c.scope === "graph"
+        ? graphCredentialCompatibility(sourceType, details.fields)
+        : null;
+      const reason = error ? `詳細を取得できません: ${error}` : compatibility?.reason ?? null;
+      if (reason) {
+        item.disabled = true;
+        item.title = reason;
+        const hint = document.createElement("small");
+        hint.className = "credential-compatibility-reason";
+        hint.textContent = reason;
+        item.appendChild(hint);
+      } else if (compatibility) {
+        const hint = document.createElement("small");
+        hint.className = "credential-compatibility-summary";
+        hint.textContent = compatibility.authMethod === "delegated"
+          ? `委任 OAuth / ${compatibility.capabilities.join(", ")}`
+          : "アプリケーション認証";
+        item.appendChild(hint);
+      }
+      if (supportsCredentialPermissionInspection(c.scope)) {
+        const permissionStatus = document.createElement("small");
+        permissionStatus.className = "credential-permission-status";
+        item.appendChild(permissionStatus);
+        void populateCredentialPermissionStatus(c.id, permissionStatus);
+      }
+      item.onclick = () => {
+        if (!details || item.disabled) return;
+        onPick(c.id, details.label, details.fields);
+        $<HTMLDialogElement>("credential-select-picker").close();
       };
       listEl.appendChild(item);
     }
@@ -68,6 +193,7 @@ export function mountCredentialSelector(deps: CredentialSelectorDeps): Credentia
 
   async function openCredentialSelectPicker(
     scope: CredentialScope,
+    sourceType: string,
     onPick: (id: number, label: string, fields: Record<string, unknown>) => void,
   ) {
     lastPickerScope = scope;
@@ -79,8 +205,8 @@ export function mountCredentialSelector(deps: CredentialSelectorDeps): Credentia
 
     dlg.showModal();
     try {
-      const items = await invoke<CredentialSummary[]>("list_credentials", { scope });
-      renderCredentialPickerList(items, onPick);
+      const items = await invoke("list_credentials", { scope });
+      await renderCredentialPickerList(items, sourceType, onPick);
     } catch (e) {
       setPickerMessage(listEl, `取得失敗: ${String(e)}`);
     }
@@ -98,6 +224,7 @@ export function mountCredentialSelector(deps: CredentialSelectorDeps): Credentia
     idPrefix: string,
     row: HTMLElement,
     label: HTMLElement,
+    sourceType: string,
   ) {
     const scope = f.credentialScope!;
     const bundleFields = f.credentialBundleFields ?? [];
@@ -135,6 +262,7 @@ export function mountCredentialSelector(deps: CredentialSelectorDeps): Credentia
         const v = fields[bf];
         if (bfEl && v !== undefined) bfEl.value = String(v);
       }
+      updateGraphSelfSubjectUi(sourceType, idPrefix, fields);
       renderState();
       const sourceEditor = getSourceEditor();
       if (f.key === "token" && idPrefix === "fd-" && $<HTMLSelectElement>("f-type").value === "airtable") {
@@ -155,7 +283,7 @@ export function mountCredentialSelector(deps: CredentialSelectorDeps): Credentia
         chip.textContent = `🔑 ${lbl}`;
         chip.classList.remove("unset");
         pickBtn.textContent = "変更…";
-        copyBtn.hidden = false;
+        copyBtn.hidden = scope === "microsoft_account";
       } else {
         chip.textContent = "未選択";
         chip.classList.add("unset");
@@ -164,7 +292,7 @@ export function mountCredentialSelector(deps: CredentialSelectorDeps): Credentia
       }
     }
 
-    pickBtn.onclick = () => openCredentialSelectPicker(scope, applyPick);
+    pickBtn.onclick = () => openCredentialSelectPicker(scope, sourceType, applyPick);
     copyBtn.onclick = () => {
       const id = currentCredentialId();
       if (id === null) return;
@@ -178,6 +306,14 @@ export function mountCredentialSelector(deps: CredentialSelectorDeps): Credentia
     const known = getLinkedCredentials()[f.key];
     if (known) input.dataset.credLabel = known.label;
     renderState();
+    const knownId = currentCredentialId();
+    if (scope === "graph" && knownId !== null) {
+      void invoke("credential_public_fields", { id: knownId }).then((details) => {
+        if (currentCredentialId() === knownId) {
+          updateGraphSelfSubjectUi(sourceType, idPrefix, details.fields);
+        }
+      }).catch(() => {});
+    }
   }
 
   return { wireCredentialSelector };

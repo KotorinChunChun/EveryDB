@@ -9,6 +9,7 @@ export function basenameOf(path: string): string {
   const parts = normalized.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] || normalized;
 }
+
 /** データソース種別と接続設定値から、推奨される表示名を導出する。 */
 export function deriveDefaultName(type_: string, config: Record<string, unknown>): string {
   const str = (key: string): string => String(config[key] ?? "").trim();
@@ -70,11 +71,15 @@ export function deriveDefaultName(type_: string, config: Record<string, unknown>
     case "graph_sharepoint_list": {
       const l = str("list_name");
       if (l) return l;
+      const site = str("site_display_name");
+      if (site) return site;
       break;
     }
     case "graph_sharepoint_library": {
       const l = str("library_name");
       if (l) return l;
+      const site = str("site_display_name");
+      if (site) return site;
       return "ドキュメントライブラリ";
     }
     case "postgres":
@@ -107,6 +112,8 @@ export function deriveDefaultName(type_: string, config: Record<string, unknown>
       break;
     }
     case "notion": {
+      const databaseName = str("database_name");
+      if (databaseName) return databaseName;
       const did = str("database_id");
       if (did) return `Notion DB (${did.slice(0, 8)}...)`;
       break;
