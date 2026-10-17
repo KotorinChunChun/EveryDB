@@ -58,12 +58,13 @@ fixture は `src-tauri/tests/fixtures/` にあり、個人情報・認証情報�
 
 ```powershell
 npm audit --omit=dev --audit-level=high
-cargo audit --manifest-path src-tauri\Cargo.toml
+cargo audit --file src-tauri\Cargo.lock
 ```
 
-- **npm（本番依存）**: 2026-08-02 時点で high 以上 0 件。
-- **Rust**: `cargo-audit` が必要（未導入の環境では `cargo install cargo-audit --locked`）。2026-08-02 実行結果:
-  - **要判断**: `quick-xml` 0.31.0 — RUSTSEC-2026-0194/0195（high、>=0.41.0 へ更新）。Tauri/GTK 経由の transitive 警告（unmaintained/unsound）は多数。major 更新は別タスクで判断。
+- **npm（本番依存）**: 2026-10-17 の監査で検出0件。
+- **Rust**: `cargo-audit` が必要（未導入の環境では `cargo install cargo-audit --locked`）。2026-10-17の公開前監査ではrustlsを0.23.46へ更新し、TLS関連4件を解消した。quick-xmlは0.41.0へ更新済み。
+  - ZIP 3アドバイザリ（RUSTSEC-2026-0367/0368/0369）が、ロック内3版に対し計9件残る。指摘対象はファイルシステムへの展開API。EveryDBはZIPエントリーをメモリーへ読むだけで、calamineも展開APIを呼ばないことをソースで確認した。2.4系はテスト用rust_xlsxwriter経由で、製品依存ではない。監査結果を0件とは扱わず、リリースノートと版別報告へ残す。
+  - unmaintained／unsoundとyankedの警告も残る。詳細な判定と生ログの所在は [v0.1.0実装報告](../../dev/history/v0.1.0/v0.1.0-imp.md) を参照する。
 - `check:all` には **cargo audit を含めない**（ネットワークと advisory DB 更新が必要なため）。リリース前の手動確認項目とする。
 
 ## ignored live テスト一覧（RF-80-07/08）
