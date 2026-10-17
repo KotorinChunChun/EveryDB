@@ -12,7 +12,7 @@ EveryDB は、複数のデータソースをローカルの SQLite キャッシ�
 
 ## インストール
 
-1. 配布された EveryDB のインストーラーを実行します。
+1. [GitHub Releases](https://github.com/KotorinChunChun/EveryDB/releases) から `.msi` または `-setup.exe` を取得し、実行します。
 2. 画面の案内に従ってインストールを完了します。
 3. EveryDB を起動し、サイドバーの「追加」からデータソースを登録します。
 

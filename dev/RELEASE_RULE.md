@@ -27,7 +27,7 @@ npm run check:all
 次のコマンドは Release ビルド後に MSI と NSIS インストーラーを生成します。外部公開は行いません。
 
 ```powershell
-npm run tauri build
+npm run tauri -- build -- --locked
 ```
 
 主な生成先は次のとおりです。
@@ -42,7 +42,11 @@ npm run tauri build
 
 公開先は [GitHub Releases](https://github.com/KotorinChunChun/EveryDB/releases) です。外部公開はユーザーが明示的に依頼した場合だけ行います。現時点では標準命名に準拠した `publish-release-EveryDB-*` スクリプトはありません。
 
-公開時は、確定したタグとリリースノートを確認し、検証済みの MSI／NSIS だけをアップロードします。既存リリースの置換、タグ作成、push、署名はそれぞれ明示された範囲で行います。パッケージ生成またはアップロードの一方が失敗した場合、公開成功として記録しません。
+公開時は、確定したタグとリリースノートを確認し、配布するバイナリを検証済みの MSI／NSIS に限定します。既存リリースの置換、タグ作成、push、署名はそれぞれ明示された範囲で行います。パッケージ生成またはアップロードの一方が失敗した場合、公開成功として記録しません。
+
+インストーラーとともに `SHA256SUMS.txt`、EveryDBの `LICENSE.md`、固定ロックファイルに対応する `THIRD_PARTY_NOTICES.txt` を添付します。チェックサムの対象はインストーラー2件と両ライセンス文書です。公開後は全添付を再取得し、ローカル候補およびGitHub asset digestと照合します。
+
+クリーンWindowsの導入・更新・アンインストール等が未受入の場合はPre-releaseとし、未署名・未検証範囲・監査の残存指摘と判断を日本語ノートへ記載します。履歴整理前の `EveryDB-private-archive` はPrivate・archivedを維持し、公開対象にしません。
 
 ## 4. 署名と未署名配布
 

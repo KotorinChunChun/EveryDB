@@ -2,6 +2,8 @@
 
 EveryDBは独立したGitリポジトリとして管理し、KotorinToysから開発版を起動できます。KotorinToysの配布用インストーラーやGitHub公開一覧には含めていません。
 
+EveryDB単体のインストーラーは [EveryDB Releases](https://github.com/KotorinChunChun/EveryDB/releases) で配布します。これはKotorinToys本体が管理するインストーラーや本体の再リリースとは別です。
+
 提供元は [EveryDB](https://github.com/KotorinChunChun/EveryDB) です。2026-10-17に公開前の履歴整理を行いました。それ以前のコピーをマージして戻さず、新規cloneまたは本体からのsubmodule取得を行ってください。
 
 開発用秘密情報の保存先は `C:\AI\env\EveryDB\` です。[外部保管と読込み](development/secrets.md)に従って準備してください。
