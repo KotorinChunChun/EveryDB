@@ -37,6 +37,8 @@ pub mod settings;
 pub mod settings_service;
 pub mod source_commands;
 pub mod source_service;
+#[cfg(test)]
+mod test_fixtures;
 pub mod winauth;
 
 use std::path::PathBuf;

@@ -85,10 +85,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         db::init_schema(&conn).unwrap();
         let state = AppState::new(conn);
-        let samples = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("samples")
-            .join("customers.csv");
+        let samples = crate::test_fixtures::sample("customers.csv");
         let cfg = json!({ "path": samples.to_string_lossy() }).to_string();
         let mut ids = Vec::with_capacity(100);
         for i in 0..100 {

@@ -497,10 +497,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         db::init_schema(&conn).unwrap();
         let state = AppState::new(conn);
-        let samples = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("samples")
-            .join("customers.csv");
+        let samples = crate::test_fixtures::sample("customers.csv");
         let id = db::insert_source(
             &state.db.lock().unwrap(),
             "csv",
@@ -533,11 +530,7 @@ mod tests {
             "csv",
             "sample",
             &serde_json::json!({
-                "path": std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("..")
-                    .join("samples")
-                    .join("customers.csv")
-                    .to_string_lossy()
+                "path": crate::test_fixtures::sample("customers.csv").to_string_lossy()
             })
             .to_string(),
         )

@@ -132,17 +132,9 @@ fn every_registered_source_type_has_a_factory_branch() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     fn sample(name: &str) -> String {
-        std::env::var_os("EVERYDB_TEST_SAMPLES_DIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("..")
-                    .join("samples")
-            })
-            .join(name)
+        crate::test_fixtures::sample(name)
             .to_string_lossy()
             .into_owned()
     }

@@ -783,13 +783,9 @@ fn firefox_profiles() -> Result<Vec<BrowserProfileEntry>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     fn sample(name: &str) -> String {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("samples")
-            .join(name)
+        crate::test_fixtures::sample(name)
             .to_string_lossy()
             .into_owned()
     }
