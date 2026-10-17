@@ -18,6 +18,8 @@ const categoryLabels = {
 function collectMarkdown(directory) {
   for (const entry of readdirSync(directory)) {
     const path = join(directory, entry);
+    // 版別の生成物・生ログは公開文書の検査対象にしない。
+    if (entry === "logs" && path.startsWith(`${join(devRoot, "history")}${sep}`)) continue;
     if (statSync(path).isDirectory()) collectMarkdown(path);
     else if (extname(path) === ".md") files.push(path);
   }
