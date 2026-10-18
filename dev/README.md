@@ -8,7 +8,7 @@
 - [将来案](roadmap/PLAN_IDEAS.md): 今後検討する機能
 - [不採用・保留案](roadmap/reject.md): 採用しなかった案と理由
 
-版別要求・計画・進捗・報告は、進行中・未来・完了済みを問わず `history/vX.Y.Z/` に置きます。現在はv0.1.0の公開準備を進めています。
+版別要求・計画・進捗・報告は、進行中・未来・完了済みを問わず `history/vX.Y.Z/` に置きます。現在はv0.1.1の共通インストーラー対応を進めています。
 
 ## 版別資料
 
@@ -19,6 +19,7 @@
 - [v0.0.5](history/v0.0.5/)
 - [v0.0.6](history/v0.0.6/)
 - [v0.1.0](history/v0.1.0/)
+- [v0.1.1](history/v0.1.1/)
 
 過去資料を確認するときは対象版だけを読み、後続版の完了記録とユーザー確認も照合してください。
 
@@ -30,6 +31,7 @@
 | `scripts/run-debug-EveryDB-all-sample.ps1` | ローカルサンプルを生成・登録して Debug 起動 |
 | `scripts/run-release-EveryDB-all.ps1` | バンドルを作らず Release 構成をビルドして起動 |
 | `scripts/run-exe-EveryDB-all.ps1` | 既存の Release 実行ファイルをビルドせず起動 |
+| `scripts/build-release-EveryDB-kotorintoys.ps1` | 共通配布用のネイティブReleaseをビルド（導入・公開なし） |
 | `scripts/build-debug-EveryDB-kotorintoys.ps1` | KotorinToys管理連携版を専用Debug出力先へビルド |
 | `scripts/generate-EveryDB-access-sample.ps1` | Access 用ローカル試験データを生成する補助処理 |
 | `scripts/import-EveryDB-development-environment.ps1` | C:\AI\env\EveryDB\development.env を値の評価・表示なしで読み込む |

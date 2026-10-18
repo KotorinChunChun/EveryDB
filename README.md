@@ -6,19 +6,19 @@ EveryDB は、複数のデータソースをローカルの SQLite キャッシ�
 
 ## 対応環境
 
-- Windows 10 / 11
+- 共通インストーラー: Windows 11 x64、Microsoft Edge WebView2 Runtime
 - ローカルファイル、Microsoft 365、各クラウドサービスなど、接続先に必要な権限・認証情報
 - 開発・ビルド時は Node.js、Rust、Visual Studio C++ ビルドツールが必要です。詳細は [ビルド方法](docs/development/building.md) を参照してください。
 
 ## インストール
 
-1. [GitHub Releases](https://github.com/KotorinChunChun/EveryDB/releases) から `.msi` または `-setup.exe` を取得し、実行します。
-2. 画面の案内に従ってインストールを完了します。
+1. [GitHub Releases](https://github.com/KotorinChunChun/EveryDB/releases) から `EveryDB-0.1.1-setup.exe` を取得し、実行します。
+2. 画面の案内に従ってインストールを完了します。KotorinToys 0.1.5以降の一覧からも導入・更新・削除できます。旧0.1.0のMSI／NSISは別の製品登録です。旧版を終了してWindowsのアプリ設定から削除し、共通版を導入してください。保存済みDBは共通で利用します。
 3. EveryDB を起動し、サイドバーの「追加」からデータソースを登録します。
 
 初回登録時に外部サービスへ送信される情報は、選んだデータソースとその接続設定だけです。認証方法や注意点は [プライバシーとセキュリティ](docs/security.md) を確認してください。
 
-v0.1.0 の配布物にはコード署名がありません。Windows Defender SmartScreen の警告が表示される場合は、配布元と [GitHub Releases](https://github.com/KotorinChunChun/EveryDB/releases) に配布物と一緒に掲載するSHA-256を確認したうえで実行してください。コード署名は今後のリリースで対応予定です。
+v0.1.1 の配布物にはコード署名がありません。Windows Defender SmartScreen の警告が表示される場合は、配布元と [GitHub Releases](https://github.com/KotorinChunChun/EveryDB/releases) に配布物と一緒に掲載するSHA-256を確認したうえで実行してください。コード署名は今後のリリースで対応予定です。
 
 ## アンインストール
 

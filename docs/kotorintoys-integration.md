@@ -1,6 +1,6 @@
 # KotorinToysとの連携
 
-EveryDBは独立したGitリポジトリとして管理し、KotorinToysから開発版を起動できます。KotorinToysの配布用インストーラーやGitHub公開一覧には含めていません。
+EveryDBは独立したGitリポジトリとして管理します。EveryDB 0.1.1から他の対応ツールと同じInno共通インストーラーを配布し、KotorinToys 0.1.5以降の一覧から公開版の照合・導入・更新・削除ができます。開発版の起動も継続します。
 
 EveryDB単体のインストーラーは [EveryDB Releases](https://github.com/KotorinChunChun/EveryDB/releases) で配布します。これはKotorinToys本体が管理するインストーラーや本体の再リリースとは別です。
 
@@ -10,7 +10,7 @@ EveryDB単体のインストーラーは [EveryDB Releases](https://github.com/K
 
 ## 開発版のビルド
 
-このビルドはフロントエンドを作成し、KotorinToys専用のRust出力先へ管理連携版を生成します。通常の `src-tauri/target/debug` と利用者用データは共有しません。
+このビルドはフロントエンドを作成し、KotorinToys専用のRust出力先へ管理連携版を生成します。通常の `src-tauri/target/debug` とはビルド出力を分けます。データ保存先は通常版と共通なので、試験起動では後述の隔離設定を指定してください。
 
 ```powershell
 cd C:\develop\KotorinToys\tools\EveryDB

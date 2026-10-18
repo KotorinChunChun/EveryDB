@@ -51,10 +51,10 @@ pwsh -File .\dev\scripts\run-exe-EveryDB-all.ps1
 ## 配布物のビルド
 
 ```powershell
-npm run tauri build
+pwsh -File .\dev\scripts\build-release-EveryDB-kotorintoys.ps1
 ```
 
-このコマンドは MSI／NSIS も生成しますが、外部公開は行いません。配布前は [EveryDB 配布手順](../../dev/RELEASE_RULE.md) を参照してください。
+この入口はネイティブReleaseのみを生成します。共通Innoの生成はKotorinToys側の配布工程で行います。配布前は [EveryDB 配布手順](../../dev/RELEASE_RULE.md) を参照してください。
 
 Rustだけを確認する場合は、リポジトリ直下から次を実行します。
 

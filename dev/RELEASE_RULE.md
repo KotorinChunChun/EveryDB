@@ -1,57 +1,24 @@
 # EveryDB 配布手順
 
-EveryDB の配布物生成と外部公開を区別するための正本です。PowerShell は `pwsh` を使用します。現在の v0.1.0 配布物はコード署名なしです。
+0.1.1からWindows 11 x64向けに他の対応ツールと同じInno共通形式で配布する。コード署名は未実施。旧0.1.0のMSI／NSISとassetは変更しない。
 
-## 前提条件
+## 候補の確認とビルド
 
-- Node.js と npm
-- Rust stable 1.77 以上
-- Visual Studio C++ ビルドツールと WebView2 Runtime
-- MSI 生成に必要な WiX、NSIS 生成に必要なツール（Tauri CLI が案内する構成）
-- 外部公開時のみ、認証済みの GitHub CLI `gh`
+Node.js/npm、Rust stable、Visual Studio C++ビルドツール、WebView2 Runtimeを用意する。PowerShellはpwshを使う。
 
-## 1. リリース候補の確認
+1. package.json、package-lock.json、Cargo.toml、Cargo.lock、tauri.conf.json、tool.jsonの製品版を一致させる。
+2. `npm ci`、`npm run check:all`、`pwsh -File dev/scripts/test-script-naming.ps1`を実行する。
+3. [テスト方法](../docs/development/testing.md)に従って依存監査と手動受入を確認し、未実施範囲を版別impへ残す。
+4. `pwsh -File dev/scripts/build-release-EveryDB-kotorintoys.ps1`でバンドルなしのReleaseを生成する。開発用秘密ファイルは読み込まない。
 
-1. `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json` の版番号が一致することを確認する。
-2. リポジトリ直下で品質ゲートを実行する。
+## 共通インストーラー
 
-```powershell
-npm ci
-npm run check:all
-```
+親KotorinToysが固定gitlinkから展開したソースに対し、`dev/scripts/publish-packages.ps1 -Products EveryDB`、`dev/scripts/build-installers.ps1`を実行する。前者がEveryDB.exe、サンプル、tool.json、文書、利用条件、[第三者表示](../licenses/README.md)、共通maintenanceとその.NET表示を収集し、後者が内容を照合する。任意のローカル作業中バイナリを差し込まない。
 
-3. [テスト方法](../docs/development/testing.md) のリリース前手動確認と依存関係監査を実施し、未実施項目は版別報告に理由を残す。
+配布形式は `EveryDB-<版>-setup.exe`、`EveryDB-packages.json`、`EveryDB-SHA256SUMS.txt`。本体0.1.5以降が固定リポジトリ・製品識別・版・サイズ・SHA-256を照合する。旧MSI／NSISの登録を自動削除しない。利用者データ `%APPDATA%\com.everydb.app` は導入先へ同梱せず、アンインストールでも保持する。
 
-## 2. 配布物のローカル生成
+## 公開
 
-次のコマンドは Release ビルド後に MSI と NSIS インストーラーを生成します。外部公開は行いません。
+ユーザーの明示指示があるときだけ、親のpublish-releases工程または同等の照合を通して[EveryDB Releases](https://github.com/KotorinChunChun/EveryDB/releases)へ公開する。候補の固定コミット・タグ、未署名状態、ファイル名・サイズ・SHA-256、監査の残存事項・未検証範囲を版別報告と日本語ノートへ記録する。未受入の範囲があればPre-releaseとする。LICENSE.mdとTHIRD_PARTY_NOTICES.txtも添付する。
 
-```powershell
-npm run tauri -- build -- --locked
-```
-
-主な生成先は次のとおりです。
-
-- 実行ファイル: `src-tauri/target/release/everydb.exe`
-- MSI: `src-tauri/target/release/bundle/msi/`
-- NSIS: `src-tauri/target/release/bundle/nsis/`
-
-配布候補だけを Git 対象外の `release/` へ収集し、ファイル名、サイズ、SHA-256、Authenticode 署名状態を版別実装報告へ記録します。秘密鍵付き証明書をリポジトリへ置いてはいけません。
-
-## 3. 外部公開
-
-公開先は [GitHub Releases](https://github.com/KotorinChunChun/EveryDB/releases) です。外部公開はユーザーが明示的に依頼した場合だけ行います。現時点では標準命名に準拠した `publish-release-EveryDB-*` スクリプトはありません。
-
-公開時は、確定したタグとリリースノートを確認し、配布するバイナリを検証済みの MSI／NSIS に限定します。既存リリースの置換、タグ作成、push、署名はそれぞれ明示された範囲で行います。パッケージ生成またはアップロードの一方が失敗した場合、公開成功として記録しません。
-
-インストーラーとともに `SHA256SUMS.txt`、EveryDBの `LICENSE.md`、固定ロックファイルに対応する `THIRD_PARTY_NOTICES.txt` を添付します。チェックサムの対象はインストーラー2件と両ライセンス文書です。公開後は全添付を再取得し、ローカル候補およびGitHub asset digestと照合します。
-
-クリーンWindowsの導入・更新・アンインストール等が未受入の場合はPre-releaseとし、未署名・未検証範囲・監査の残存指摘と判断を日本語ノートへ記載します。履歴整理前の `EveryDB-private-archive` はPrivate・archivedを維持し、公開対象にしません。
-
-## 4. 署名と未署名配布
-
-v0.1.0 は未署名です。未署名の配布物では README の SmartScreen 注意を維持し、利用者が配布元と SHA-256 を確認できるようにします。将来署名を導入する場合は、証明書の保管、Publisher、タイムスタンプ、検証コマンドを本書へ追記してから実行します。
-
-## 5. 資料の完了
-
-リリースだけを理由に版別資料を完了扱いにしません。要求、実装報告、タスクの完了記録と未完了事項の引き継ぎを確認し、進行中・未来・完了済みの資料を最初から `dev/history/vX.Y.Z/` へ置き、完了後も移動しません。
+公開後は匿名HTTPで全assetのサイズ・SHA-256を再照合する。既存assetやタグを上書きせず、履歴整理前のEveryDB-private-archiveはPrivate・archivedを維持する。秘密値と署名用秘密鍵はC:\AI\env\EveryDBへ置き、ソースやログへ出力しない。
