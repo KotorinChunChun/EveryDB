@@ -5,7 +5,6 @@ use csv::ReaderBuilder;
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::io::Read;
 
 use super::common::{make_record, make_record_with_row, CommonCfg};
 use super::default_true;
@@ -1265,6 +1264,9 @@ fn parse_a1_range(range: &str) -> Result<((u32, u32), (u32, u32))> {
 fn read_autofilter_ref(path: &str, sheet_name: &str) -> Option<((u32, u32), (u32, u32))> {
     let file = std::fs::File::open(path).ok()?;
     let mut zip = zip::ZipArchive::new(file).ok()?;
+    if zip.len() > super::limits::MAX_ARCHIVE_ENTRIES {
+        return None;
+    }
 
     // workbook.xml からシート名→sheetN.xml のマッピングを取得する。
     // まず xl/workbook.xml を読んでシート名と rId の対応を取得し、
@@ -1273,9 +1275,12 @@ fn read_autofilter_ref(path: &str, sheet_name: &str) -> Option<((u32, u32), (u32
 
     // workbook.xml から sheetId/rId を取得
     let mut rid: Option<String> = None;
-    if let Ok(mut wbf) = zip.by_name("xl/workbook.xml") {
-        let mut xml = String::new();
-        wbf.read_to_string(&mut xml).ok()?;
+    if let Ok(wbf) = zip.by_name("xl/workbook.xml") {
+        let xml = String::from_utf8(
+            super::limits::read_limited(wbf, super::limits::MAX_DATA_BYTES, "Excel workbook XML")
+                .ok()?,
+        )
+        .ok()?;
         // 簡易パース: <sheet name="Sheet1" sheetId="1" r:id="rId1"/>
         for line in xml.split('<') {
             let line = line.trim();
@@ -1293,9 +1298,16 @@ fn read_autofilter_ref(path: &str, sheet_name: &str) -> Option<((u32, u32), (u32
     let rid = rid?;
 
     // workbook.xml.rels から rId → Target のマッピング
-    if let Ok(mut relf) = zip.by_name("xl/_rels/workbook.xml.rels") {
-        let mut xml = String::new();
-        relf.read_to_string(&mut xml).ok()?;
+    if let Ok(relf) = zip.by_name("xl/_rels/workbook.xml.rels") {
+        let xml = String::from_utf8(
+            super::limits::read_limited(
+                relf,
+                super::limits::MAX_DATA_BYTES,
+                "Excel relationships XML",
+            )
+            .ok()?,
+        )
+        .ok()?;
         for line in xml.split('<') {
             let line = line.trim();
             if !line.starts_with("Relationship ") {
@@ -1321,9 +1333,12 @@ fn read_autofilter_ref(path: &str, sheet_name: &str) -> Option<((u32, u32), (u32
     let sheet_file = sheet_file?;
 
     // シートの XML から <autoFilter ref="A1:D100"/> を探す
-    if let Ok(mut sf) = zip.by_name(&sheet_file) {
-        let mut xml = String::new();
-        sf.read_to_string(&mut xml).ok()?;
+    if let Ok(sf) = zip.by_name(&sheet_file) {
+        let xml = String::from_utf8(
+            super::limits::read_limited(sf, super::limits::MAX_DATA_BYTES, "Excel sheet XML")
+                .ok()?,
+        )
+        .ok()?;
         for line in xml.split('<') {
             let line = line.trim();
             if line.starts_with("autoFilter ") || line.starts_with("autoFilter\t") {

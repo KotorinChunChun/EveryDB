@@ -1,6 +1,7 @@
 //! connector 共通の HTTP タイムアウト・ページサイズ・取得件数上限。
 
 use anyhow::{anyhow, Result};
+use std::io::Read;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -16,6 +17,26 @@ pub const API_PAGE_SIZE: u32 = 100;
 pub const GRAPH_PAGE_TOP: u32 = 999;
 /// SQL connector が 1 回で読む行数上限。
 pub const DB_FETCH_LIMIT: i64 = 20_000;
+/// 公開データの受信・ZIP内の単一CSVをメモリーへ読む上限。
+pub const MAX_DATA_BYTES: u64 = 256 * 1024 * 1024;
+pub const MAX_ARCHIVE_ENTRIES: usize = 4096;
+/// 郵便番号など10万行超の正規データを許容しつつ、無制限の行保持を防ぐ。
+pub const MAX_PUBLIC_CSV_ROWS: usize = 1_000_000;
+
+pub(crate) fn read_limited(
+    reader: impl std::io::Read,
+    maximum: u64,
+    context: &str,
+) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    std::io::Read::take(reader, maximum.saturating_add(1)).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > maximum {
+        return Err(anyhow!(
+            "{context}: 読取り容量の上限を超えました。対象を分割してください"
+        ));
+    }
+    Ok(bytes)
+}
 
 static HTTP_AGENT: OnceLock<ureq::Agent> = OnceLock::new();
 
@@ -30,11 +51,11 @@ pub fn http_agent() -> &'static ureq::Agent {
 
 fn map_http_error(method: &str, e: ureq::Error) -> anyhow::Error {
     match e {
-        ureq::Error::Status(code, r) => anyhow!(
-            "HTTP {method} {code}: {}",
-            r.into_string().unwrap_or_default()
-        ),
-        e => anyhow!("HTTP {method} への接続に失敗: {e}"),
+        // 応答本文やURLには資格情報が含まれ得る。エラー・ログへ転送しない。
+        ureq::Error::Status(code, _) => anyhow!("HTTP {method} {code}"),
+        ureq::Error::Transport(error) => {
+            anyhow!("HTTP {method} への接続に失敗: {:?}", error.kind())
+        }
     }
 }
 
@@ -107,6 +128,20 @@ pub(crate) fn static_field_names(names: &[&str]) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn response_body_is_never_in_error_messages() {
+        let response = ureq::Response::new(403, "Forbidden", "private-response-marker").unwrap();
+        let message = map_http_error("GET", ureq::Error::Status(403, response)).to_string();
+        assert_eq!(message, "HTTP GET 403");
+        assert!(!message.contains("private-response-marker"));
+    }
+
+    #[test]
+    fn byte_limit_checks_actual_read_and_allows_exact_boundary() {
+        assert_eq!(read_limited(&b"1234"[..], 4, "fixture").unwrap(), b"1234");
+        assert!(read_limited(&b"12345"[..], 4, "fixture").is_err());
+    }
 
     #[test]
     fn static_field_names_returns_copy() {

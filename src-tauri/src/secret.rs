@@ -146,7 +146,7 @@ fn to_hex(b: &[u8]) -> String {
 }
 
 fn from_hex(h: &str) -> Result<Vec<u8>> {
-    if h.len() % 2 != 0 {
+    if !h.len().is_multiple_of(2) {
         return Err(anyhow!("不正な hex 長"));
     }
     (0..h.len())

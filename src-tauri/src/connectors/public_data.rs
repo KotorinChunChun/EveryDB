@@ -4,7 +4,6 @@ use anyhow::{anyhow, Result};
 use csv::ReaderBuilder;
 use serde::Deserialize;
 use serde_json::Value;
-use std::io::Read;
 
 use super::common::{make_record, CommonCfg};
 use super::default_true;
@@ -166,23 +165,29 @@ query {
 // 2 経路を持つため、zip 展開と HTTP バイト取得の処理を共通化する。
 
 fn response_bytes(resp: ureq::Response) -> Result<Vec<u8>> {
-    let mut buf = Vec::new();
-    resp.into_reader().read_to_end(&mut buf)?;
-    Ok(buf)
+    limits::read_limited(resp.into_reader(), limits::MAX_DATA_BYTES, "公開データ受信")
 }
 
 /// zip バイト列から最初に見つかった `.csv` エントリを展開する（署名ファイル `.asc` 等は無視）。
 pub(crate) fn extract_first_csv_from_zip(bytes: &[u8]) -> Result<Vec<u8>> {
+    extract_csv_with_limit(bytes, limits::MAX_DATA_BYTES)
+}
+
+fn extract_csv_with_limit(bytes: &[u8], maximum: u64) -> Result<Vec<u8>> {
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
         .map_err(|e| anyhow!("zip の展開に失敗しました: {e}"))?;
+    if archive.len() > limits::MAX_ARCHIVE_ENTRIES {
+        return Err(anyhow!("zip内のエントリー数が上限を超えています"));
+    }
     for i in 0..archive.len() {
-        let mut file = archive
+        let file = archive
             .by_index(i)
             .map_err(|e| anyhow!("zip 展開エラー: {e}"))?;
-        if file.name().to_ascii_lowercase().ends_with(".csv") {
-            let mut buf = Vec::new();
-            file.read_to_end(&mut buf)?;
-            return Ok(buf);
+        if file.name()?.to_ascii_lowercase().ends_with(".csv") {
+            if file.is_symlink() || file.size() > maximum {
+                return Err(anyhow!("zip内のCSVがリンク、または容量上限を超えています"));
+            }
+            return limits::read_limited(file, maximum, "ZIP内のCSV");
         }
     }
     Err(anyhow!("zip 内に CSV ファイルが見つかりません"))
@@ -190,8 +195,9 @@ pub(crate) fn extract_first_csv_from_zip(bytes: &[u8]) -> Result<Vec<u8>> {
 
 /// `source=file` のとき、指定パスが `.zip` なら展開して中の CSV を、`.csv` ならそのまま読む。
 fn read_csv_bytes_from_path(path: &str) -> Result<Vec<u8>> {
-    let bytes =
-        std::fs::read(path).map_err(|e| anyhow!("ファイルの読み込みに失敗しました: {e}"))?;
+    let file =
+        std::fs::File::open(path).map_err(|e| anyhow!("ファイルの読み込みに失敗しました: {e}"))?;
+    let bytes = limits::read_limited(file, limits::MAX_DATA_BYTES, "公開データファイル")?;
     if path.to_ascii_lowercase().ends_with(".zip") {
         extract_first_csv_from_zip(&bytes)
     } else {
@@ -201,6 +207,10 @@ fn read_csv_bytes_from_path(path: &str) -> Result<Vec<u8>> {
 
 /// UTF-8 CSV（ヘッダーなし想定・政府公開データの生ファイル）を行の配列として読む。
 pub(crate) fn read_csv_rows(bytes: &[u8]) -> Result<Vec<csv::StringRecord>> {
+    read_csv_rows_with_limit(bytes, limits::MAX_PUBLIC_CSV_ROWS)
+}
+
+fn read_csv_rows_with_limit(bytes: &[u8], maximum: usize) -> Result<Vec<csv::StringRecord>> {
     let text = String::from_utf8(bytes.to_vec())
         .map_err(|_| anyhow!("CSV の文字コードが UTF-8 ではありません（Shift_JIS 版を指定していないか確認してください）"))?;
     let mut rdr = ReaderBuilder::new()
@@ -208,6 +218,11 @@ pub(crate) fn read_csv_rows(bytes: &[u8]) -> Result<Vec<csv::StringRecord>> {
         .from_reader(text.as_bytes());
     let mut out = Vec::new();
     for rec in rdr.records() {
+        if out.len() >= maximum {
+            return Err(anyhow!(
+                "公開CSV: 行数が上限を超えました。対象を分割してください"
+            ));
+        }
         out.push(rec?);
     }
     Ok(out)
@@ -793,6 +808,26 @@ mod gov_data_tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].get(2), Some("多治見検察審査会"));
         assert_eq!(rows[0].get(3), Some("岐阜県"));
+    }
+
+    #[test]
+    fn csv_zip_bomb_is_rejected_before_unbounded_expansion() {
+        let zip = build_test_zip(&[("data.csv", b"12345")]);
+        assert!(extract_csv_with_limit(&zip, 4).is_err());
+        assert_eq!(extract_csv_with_limit(&zip, 5).unwrap(), b"12345");
+    }
+
+    #[test]
+    fn public_csv_cannot_bypass_record_limit() {
+        assert!(read_csv_rows_with_limit(b"one\ntwo\nthree\n", 2).is_err());
+        assert_eq!(read_csv_rows_with_limit(b"one\ntwo\n", 2).unwrap().len(), 2);
+        // 郵便番号のような10万行超の正規データは従来どおり読み込める。
+        assert_eq!(
+            read_csv_rows("one\n".repeat(150_000).as_bytes())
+                .unwrap()
+                .len(),
+            150_000
+        );
     }
 
     // 実ネットワークへ接続する実機検証。実行: cargo test --lib -- --ignored gov_data
