@@ -41,3 +41,6 @@ id_ed25519
 *.db.backup
 .DS_Store
 Thumbs.db
+
+# セキュリティ点検: 秘密保管と生成物の公開混入を防ぐ
+/artifacts/
