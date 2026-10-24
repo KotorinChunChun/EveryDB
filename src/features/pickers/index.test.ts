@@ -94,4 +94,17 @@ describe("source pickers", () => {
     expect(list.textContent).toBe("取得失敗: <img src=x>");
     expect(list.querySelector("img")).toBeNull();
   });
+
+  it("renders a cell grid failure as text", async () => {
+    document.getElementById("f-dynamic")!.insertAdjacentHTML("beforeend", '<input id="fd-sheet" value="Sheet1">');
+    invokeMock.mockRejectedValueOnce("<img src=x>");
+    const { pickers } = mountPickers();
+
+    pickers.openCellPicker(document.createElement("input"), "top", "cell");
+    await flush();
+
+    const wrap = document.getElementById("cell-picker-grid-wrap")!;
+    expect(wrap.textContent).toBe("取得失敗: <img src=x>");
+    expect(wrap.querySelector("img")).toBeNull();
+  });
 });

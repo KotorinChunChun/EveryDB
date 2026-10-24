@@ -445,7 +445,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
         statusEl.textContent = "クリックでセルを選択してください";
       }
     } catch (e) {
-      wrapEl.innerHTML = `<div class='picker-empty'>取得失敗: ${String(e)}</div>`;
+      setPickerMessage(wrapEl, `取得失敗: ${String(e)}`);
     }
   }
 
