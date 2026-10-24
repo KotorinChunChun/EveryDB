@@ -1,4 +1,3 @@
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { $, promptUrlInput } from "../../app/dom";
 import { invoke } from "../../app/ipc";
 import { appState } from "../../app/state";
@@ -27,8 +26,9 @@ import { duplicateConfirmMessage, findDuplicateSource } from "./source-identity"
 import { clearLinkedCredentials, setLinkedCredentials } from "./linked-credentials";
 import type { RoleEditorController } from "./role-editor";
 import { configWithoutRoleKeys, roleStateFromConfig } from "./roles";
-import { makeApiKeyButton, makeLinkButton } from "./ui-buttons";
 import { createCsvPreviewController } from "./csv-preview";
+import { buildFieldActionRow, credentialManagedKeysOf } from "./field-renderer";
+import type { FieldPickerActions, WireCredentialSelector } from "./field-renderer";
 
 export interface SourceEditorDialogElements {
   dialog: HTMLDialogElement;
@@ -66,26 +66,8 @@ export interface SourceEditorDialogActions {
   openGuide: (type: string) => void;
   normalizePath: (v: string | undefined | null) => string;
   roleEditor: RoleEditorController;
-  pickers: {
-    wireCredentialSelector: (
-      input: HTMLInputElement,
-      field: FieldDef,
-      idPrefix: string,
-      row: HTMLElement,
-      label: HTMLElement,
-      sourceType: string,
-    ) => void;
-    openBrowserProfilePicker: (target: "history" | "bookmarks", input: HTMLInputElement) => void;
-    openSheetPicker: (input: HTMLInputElement) => void;
-    openExcelTablePicker: (input: HTMLInputElement) => void;
-    openCellPicker: (
-      input: HTMLInputElement,
-      gridMode: boolean | "top" | "bottom" | "bottom_left" | "bottom_right",
-      pickMode: "cell" | "column",
-    ) => void;
-    openAirtableBasePicker: (input: HTMLInputElement) => void;
-    openAirtableTablePicker: (input: HTMLInputElement) => void;
-    openAirtableViewPicker: (input: HTMLInputElement) => void;
+  pickers: FieldPickerActions & {
+    wireCredentialSelector: WireCredentialSelector;
     openNotionPicker: () => void;
     openTablePicker: (browse: "sqlite" | "accdb" | "excel_table") => void;
     openSharePointPicker: () => void;
@@ -567,13 +549,7 @@ export function mountSourceEditorDialog(
     // 秘密フィールドの束（token/client_secret/password 本体 + tenant_id 等のバンドル）を先に洗い出す。
     // 束の非秘密フィールドは選択専用ウィジェットが埋めるため、個別入力は読み取り専用にする
     // （要件: 接続単位での保存は不要、全て管理されているトークンを参照させる）。
-    const credentialManagedKeys = new Set<string>();
-    for (const f of def.fields) {
-      if (f.credentialScope) {
-        credentialManagedKeys.add(f.key);
-        for (const bf of f.credentialBundleFields ?? []) credentialManagedKeys.add(bf);
-      }
-    }
+    const credentialManagedKeys = credentialManagedKeysOf(def.fields);
     for (const f of def.fields) {
       if (hideKeys.includes(f.key)) continue;
       if (f.key === "site_display_name") {
@@ -591,8 +567,7 @@ export function mountSourceEditorDialog(
         renderAutoSetupRow(def);
         continue;
       }
-      const isCredOwner = !!f.credentialScope;
-      const isCredManagedSibling = !isCredOwner && credentialManagedKeys.has(f.key);
+      const isCredManagedSibling = !f.credentialScope && credentialManagedKeys.has(f.key);
       const label = document.createElement("label");
       if (f.kind === "checkbox") {
         label.className = "check";
@@ -681,116 +656,20 @@ export function mountSourceEditorDialog(
             if (databaseId) resolveNotionCaptionNow(databaseId);
           }
         });
-        if (isCredOwner || f.browse || f.helpUrl || f.linkUrl || f.browserProfile || f.browseSheet || f.browseTable || f.browseCell || f.browseColumn || f.browseAirtableBase || f.browseAirtableTable || f.browseAirtableView) {
-          // 参照ボタン（ファイル/フォルダ選択）、API キー取得ページを開くボタン、リンクボタン、
-          // ブラウザプロファイル候補自動検出、Excelシート名選択、Excelテーブル(ListObject)名選択、Excelセル/列選択、
-          // Airtable選択ボタン、保存済みトークンの選択ウィジェット。
-          const row = document.createElement("div");
-          row.className = "path-row";
-          row.appendChild(input);
-          if (isCredOwner) pickers.wireCredentialSelector(input, f, "fd-", row, label, def.value);
-          if (f.browse) {
-            const browseBtn = document.createElement("button");
-            browseBtn.type = "button";
-            browseBtn.className = "btn browse-btn";
-            browseBtn.textContent = "参照…";
-            browseBtn.onclick = async () => {
-              try {
-                const picked = await openDialog({
-                  directory: f.browse === "folder",
-                  multiple: false,
-                  filters: f.browse === "file" ? f.dialogFilters : undefined,
-                });
-                if (typeof picked === "string") {
-                  input.value = picked;
-                  autoFillDefaultName();
-                  maybeFetchAndRenderFields();
-                  csvPreview.schedule();
-                }
-              } catch (e) {
-                console.error("ファイル選択に失敗:", e);
-              }
-            };
-            row.appendChild(browseBtn);
-          }
-          if (f.browserProfile) {
-            const pickBtn = document.createElement("button");
-            pickBtn.type = "button";
-            pickBtn.className = "btn browse-btn";
-            pickBtn.textContent = "候補から選択…";
-            pickBtn.title = "インストール済みのブラウザからプロファイル（History/Bookmarks）を自動検出します";
-            pickBtn.onclick = () => pickers.openBrowserProfilePicker(f.browserProfile!, input);
-            row.appendChild(pickBtn);
-          }
-          if (f.browseSheet) {
-            const pickBtn = document.createElement("button");
-            pickBtn.type = "button";
-            pickBtn.className = "btn browse-btn";
-            pickBtn.textContent = "一覧から選択…";
-            pickBtn.title = "指定されたExcelファイルからシート名の一覧を取得して選べます";
-            pickBtn.onclick = () => pickers.openSheetPicker(input);
-            row.appendChild(pickBtn);
-          }
-          if (f.browseTable) {
-            const pickBtn = document.createElement("button");
-            pickBtn.type = "button";
-            pickBtn.className = "btn browse-btn";
-            pickBtn.textContent = "一覧から選択…";
-            pickBtn.title = "指定されたExcelファイルからテーブル(ListObject)名の一覧を取得して選べます";
-            pickBtn.onclick = () => pickers.openExcelTablePicker(input);
-            row.appendChild(pickBtn);
-          }
-          if (f.browseCell) {
-            const pickBtn = document.createElement("button");
-            pickBtn.type = "button";
-            pickBtn.className = "btn browse-btn";
-            pickBtn.textContent = "表から選択…";
-            pickBtn.title = "Excelシートの10x10セルを表形式で表示して選択します";
-            pickBtn.onclick = () => pickers.openCellPicker(input, f.browseCell!, "cell");
-            row.appendChild(pickBtn);
-          }
-          if (f.browseColumn) {
-            const pickBtn = document.createElement("button");
-            pickBtn.type = "button";
-            pickBtn.className = "btn browse-btn";
-            pickBtn.textContent = "表から選択…";
-            pickBtn.title = "Excelシートの10x10セルを表形式で表示して基準列を選択します";
-            pickBtn.onclick = () => pickers.openCellPicker(input, f.browseColumn!, "column");
-            row.appendChild(pickBtn);
-          }
-          if (f.browseAirtableBase) {
-            const pickBtn = document.createElement("button");
-            pickBtn.type = "button";
-            pickBtn.className = "btn browse-btn";
-            pickBtn.textContent = "一覧から選択…";
-            pickBtn.title = "Personal Access Token を使用して利用可能な Base 一覧を取得します";
-            pickBtn.onclick = () => pickers.openAirtableBasePicker(input);
-            row.appendChild(pickBtn);
-          }
-          if (f.browseAirtableTable) {
-            const pickBtn = document.createElement("button");
-            pickBtn.type = "button";
-            pickBtn.className = "btn browse-btn";
-            pickBtn.textContent = "一覧から選択…";
-            pickBtn.title = "指定された Base 内のテーブル一覧を取得します";
-            pickBtn.onclick = () => pickers.openAirtableTablePicker(input);
-            row.appendChild(pickBtn);
-          }
-          if (f.browseAirtableView) {
-            const pickBtn = document.createElement("button");
-            pickBtn.type = "button";
-            pickBtn.className = "btn browse-btn";
-            pickBtn.textContent = "一覧から選択…";
-            pickBtn.title = "指定されたテーブル内のビュー一覧を取得します";
-            pickBtn.onclick = () => pickers.openAirtableViewPicker(input);
-            row.appendChild(pickBtn);
-          }
-          if (!isCredOwner && f.helpUrl) row.appendChild(makeApiKeyButton(f.helpUrl));
-          if (!isCredOwner && f.linkUrl) row.appendChild(makeLinkButton(f.linkUrl, f.linkLabel ?? "🌐 開く…"));
-          label.appendChild(row);
-        } else {
-          label.appendChild(input);
-        }
+        // 保存済みトークンの選択ウィジェット、参照ボタン、一覧選択、取得ページ・リンクを入力欄の横に並べる。
+        const row = buildFieldActionRow(f, input, {
+          idPrefix: "fd-",
+          sourceType: def.value,
+          label,
+          wireCredentialSelector: pickers.wireCredentialSelector,
+          pickers,
+          onFilePicked: () => {
+            autoFillDefaultName();
+            maybeFetchAndRenderFields();
+            csvPreview.schedule();
+          },
+        });
+        label.appendChild(row ?? input);
       }
       if (elements.typeSel.value === "excel_range") {
         if (f.key === "start_mode" || f.key === "end_mode") {
