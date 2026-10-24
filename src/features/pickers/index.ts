@@ -35,6 +35,60 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     return normalizePath(raw);
   }
 
+  /** テーブル設定ダイアログ（fd-）か接続先ダイアログ（pf-）のうち、描画されている方の設定欄。 */
+  function dialogField(key: string): HTMLInputElement | null {
+    return (document.getElementById(`fd-${key}`) ?? document.getElementById(`pf-${key}`)) as HTMLInputElement | null;
+  }
+
+  /** 選択値を入れた後、表示名の自動入力と列一覧の再取得をテーブル設定ダイアログへ依頼する。 */
+  function refreshSourceEditor(): void {
+    const sourceEditor = getSourceEditor();
+    sourceEditor.autoFillDefaultName();
+    sourceEditor.maybeFetchAndRenderFields();
+  }
+
+  interface ListPickerOptions<T> {
+    dialogId: string;
+    listId: string;
+    /** 複数のピッカーで共有するダイアログの見出し。 */
+    title?: { id: string; text: string };
+    load: () => Promise<T[]>;
+    emptyMessage: string;
+    label: (item: T) => string;
+    tooltip?: (item: T) => string;
+    onPick: (item: T) => void;
+  }
+
+  /** 一覧を取得して 1 件選ばせるピッカー。選択するとダイアログを閉じる。 */
+  async function openListPicker<T>(options: ListPickerOptions<T>): Promise<void> {
+    if (options.title) {
+      const titleEl = $<HTMLHeadingElement>(options.title.id);
+      if (titleEl) titleEl.textContent = options.title.text;
+    }
+    const listEl = $<HTMLDivElement>(options.listId);
+    listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
+    const dlg = $<HTMLDialogElement>(options.dialogId);
+    dlg.showModal();
+    try {
+      const items = await options.load();
+      listEl.innerHTML = "";
+      if (items.length === 0) setPickerMessage(listEl, options.emptyMessage);
+      for (const entry of items) {
+        const item = document.createElement("div");
+        item.className = "picker-item";
+        item.textContent = options.label(entry);
+        if (options.tooltip) item.title = options.tooltip(entry);
+        item.onclick = () => {
+          options.onPick(entry);
+          dlg.close();
+        };
+        listEl.appendChild(item);
+      }
+    } catch (e) {
+      setPickerMessage(listEl, `取得失敗: ${String(e)}`);
+    }
+  }
+
   async function openNotionPicker() {
     const tokenEl = document.getElementById("fd-token") as HTMLInputElement | null;
     const credentialId = Number(tokenEl?.dataset.credRef);
@@ -42,244 +96,144 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
       alert("先に保存済みトークンを選択してください");
       return;
     }
-    const listEl = $<HTMLDivElement>("notion-picker-list");
-    listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
-    const dlg = $<HTMLDialogElement>("notion-picker");
-    dlg.showModal();
-    try {
-      const dbs = await invoke("browse_notion_databases", { credentialId });
-      listEl.innerHTML = "";
-      if (dbs.length === 0) {
-        listEl.innerHTML = "<div class='picker-empty'>アクセス可能なデータベースがありません（インテグレーションに共有してください）</div>";
-      }
-      for (const db of dbs) {
-        const item = document.createElement("div");
-        item.className = "picker-item";
-        item.textContent = db.title || "(無題)";
-        item.onclick = () => {
-          const sourceEditor = getSourceEditor();
-          sourceEditor.applyNotionSelection(db.id, db.title || "(無題)");
-          dlg.close();
-        };
-        listEl.appendChild(item);
-      }
-    } catch (e) {
-      setPickerMessage(listEl, `取得失敗: ${String(e)}`);
-    }
+    await openListPicker({
+      dialogId: "notion-picker",
+      listId: "notion-picker-list",
+      load: () => invoke("browse_notion_databases", { credentialId }),
+      emptyMessage: "アクセス可能なデータベースがありません（インテグレーションに共有してください）",
+      label: (db) => db.title || "(無題)",
+      onPick: (db) => getSourceEditor().applyNotionSelection(db.id, db.title || "(無題)"),
+    });
   }
 
   async function openBrowserProfilePicker(target: "history" | "bookmarks", pathInput: HTMLInputElement) {
     const browserSel = document.getElementById("fd-browser") as HTMLSelectElement | null;
     const browser = browserSel?.value ?? "chrome";
-    const listEl = $<HTMLDivElement>("browser-profile-picker-list");
-    listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
-    const dlg = $<HTMLDialogElement>("browser-profile-picker");
-    dlg.showModal();
-    try {
-      const entries = await invoke("browse_browser_profiles", { browser, target });
-      listEl.innerHTML = "";
-      if (entries.length === 0) {
-        listEl.innerHTML = "<div class='picker-empty'>候補が見つかりませんでした</div>";
-      }
-      for (const entry of entries) {
-        const item = document.createElement("div");
-        item.className = "picker-item";
-        item.textContent = entry.label;
-        item.title = entry.path;
-        item.onclick = () => {
-          pathInput.value = entry.path;
-          const sourceEditor = getSourceEditor();
-          sourceEditor.maybeAutoFillName(entry.path);
-          sourceEditor.maybeFetchAndRenderFields();
-          dlg.close();
-        };
-        listEl.appendChild(item);
-      }
-    } catch (e) {
-      setPickerMessage(listEl, `取得失敗: ${String(e)}`);
-    }
+    await openListPicker({
+      dialogId: "browser-profile-picker",
+      listId: "browser-profile-picker-list",
+      load: () => invoke("browse_browser_profiles", { browser, target }),
+      emptyMessage: "候補が見つかりませんでした",
+      label: (entry) => entry.label,
+      tooltip: (entry) => entry.path,
+      onPick: (entry) => {
+        pathInput.value = entry.path;
+        const sourceEditor = getSourceEditor();
+        sourceEditor.maybeAutoFillName(entry.path);
+        sourceEditor.maybeFetchAndRenderFields();
+      },
+    });
   }
 
-  async function openSheetPicker(sheetInput: HTMLInputElement) {
+  /** Excel ファイル内のシート名・テーブル(ListObject)名を共通のダイアログで選ばせる。 */
+  async function openExcelNamePicker(
+    input: HTMLInputElement,
+    command: "browse_excel_sheets" | "browse_excel_tables",
+    title: string,
+    emptyMessage: string,
+  ) {
     const path = getTargetExcelPath();
     if (!path) {
       alert("先にファイルパスを入力・選択してください");
       return;
     }
-    const titleEl = $<HTMLHeadingElement>("sheet-picker-title");
-    if (titleEl) titleEl.textContent = "シートを選択";
-    const listEl = $<HTMLDivElement>("sheet-picker-list");
-    listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
-    const dlg = $<HTMLDialogElement>("sheet-picker");
-    dlg.showModal();
-    try {
-      const sheets = await invoke("browse_excel_sheets", { path });
-      listEl.innerHTML = "";
-      if (sheets.length === 0) {
-        listEl.innerHTML = "<div class='picker-empty'>シートが見つかりませんでした</div>";
-      }
-      for (const sheet of sheets) {
-        const item = document.createElement("div");
-        item.className = "picker-item";
-        item.textContent = sheet;
-        item.onclick = () => {
-          sheetInput.value = sheet;
-          const sourceEditor = getSourceEditor();
-          sourceEditor.autoFillDefaultName();
-          sourceEditor.maybeFetchAndRenderFields();
-          dlg.close();
-        };
-        listEl.appendChild(item);
-      }
-    } catch (e) {
-      setPickerMessage(listEl, `取得失敗: ${String(e)}`);
-    }
+    await openListPicker({
+      dialogId: "sheet-picker",
+      listId: "sheet-picker-list",
+      title: { id: "sheet-picker-title", text: title },
+      load: () => invoke(command, { path }),
+      emptyMessage,
+      label: (name) => name,
+      onPick: (name) => {
+        input.value = name;
+        refreshSourceEditor();
+      },
+    });
   }
 
-  async function openExcelTablePicker(tableInput: HTMLInputElement) {
-    const path = getTargetExcelPath();
-    if (!path) {
-      alert("先にファイルパスを入力・選択してください");
-      return;
-    }
-    const titleEl = $<HTMLHeadingElement>("sheet-picker-title");
-    if (titleEl) titleEl.textContent = "テーブル(ListObject)を選択";
-    const listEl = $<HTMLDivElement>("sheet-picker-list");
-    listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
-    const dlg = $<HTMLDialogElement>("sheet-picker");
-    dlg.showModal();
-    try {
-      const tables = await invoke("browse_excel_tables", { path });
-      listEl.innerHTML = "";
-      if (tables.length === 0) {
-        listEl.innerHTML = "<div class='picker-empty'>テーブルが見つかりませんでした</div>";
-      }
-      for (const tbl of tables) {
-        const item = document.createElement("div");
-        item.className = "picker-item";
-        item.textContent = tbl;
-        item.onclick = () => {
-          tableInput.value = tbl;
-          const sourceEditor = getSourceEditor();
-          sourceEditor.autoFillDefaultName();
-          sourceEditor.maybeFetchAndRenderFields();
-          dlg.close();
-        };
-        listEl.appendChild(item);
-      }
-    } catch (e) {
-      setPickerMessage(listEl, `取得失敗: ${String(e)}`);
-    }
+  function openSheetPicker(sheetInput: HTMLInputElement) {
+    return openExcelNamePicker(sheetInput, "browse_excel_sheets", "シートを選択", "シートが見つかりませんでした");
   }
 
-  async function fetchAirtableBasesForPicker(): Promise<AirtableBaseItem[]> {
-    const tokenEl = (document.getElementById("fd-token") ?? document.getElementById("pf-token")) as HTMLInputElement | null;
-    if (tokenEl?.dataset.credRef) {
-      const credentialId = Number(tokenEl.dataset.credRef);
-      return await invoke("browse_airtable_bases", { credentialId });
-    }
+  function openExcelTablePicker(tableInput: HTMLInputElement) {
+    return openExcelNamePicker(tableInput, "browse_excel_tables", "テーブル(ListObject)を選択", "テーブルが見つかりませんでした");
+  }
+
+  /** Airtable の一覧取得に使う接続情報。保存済みトークンを優先し、無ければ編集中または同じ接続先のソース設定を使う。 */
+  function airtableBrowseTarget(): { credentialId: number } | { id: number; overridesJson: string } {
+    const tokenEl = dialogField("token");
+    if (tokenEl?.dataset.credRef) return { credentialId: Number(tokenEl.dataset.credRef) };
     const sourceEditor = getSourceEditor();
     const parentSettings = getParentSettings();
     const sid = sourceEditor.getEditingId() ?? parentSettings.getSiblingSourceId();
     if (sid) {
-      const overrides = sourceEditor.getEditingId() !== null
+      const overridesJson = sourceEditor.getEditingId() !== null
         ? JSON.stringify(sourceEditor.getConfigFromFields().config)
         : JSON.stringify(parentSettings.getParentSharedValues());
-      return await invoke("browse_airtable_bases_for_source", { id: sid, overridesJson: overrides });
+      return { id: sid, overridesJson };
     }
     alert("先にトークンを選択してください");
     throw new Error("トークン未選択");
   }
 
-  async function fetchAirtableTablesForPicker(baseIdInput?: string): Promise<AirtableTableItem[]> {
-    const tokenEl = (document.getElementById("fd-token") ?? document.getElementById("pf-token")) as HTMLInputElement | null;
-    const baseEl = (document.getElementById("fd-base_id") ?? document.getElementById("pf-base_id")) as HTMLInputElement | null;
-    const baseId = baseIdInput ?? baseEl?.value.trim() ?? "";
+  async function fetchAirtableBasesForPicker(): Promise<AirtableBaseItem[]> {
+    const target = airtableBrowseTarget();
+    return "credentialId" in target
+      ? await invoke("browse_airtable_bases", target)
+      : await invoke("browse_airtable_bases_for_source", target);
+  }
+
+  async function fetchAirtableTablesForPicker(): Promise<AirtableTableItem[]> {
+    const baseId = dialogField("base_id")?.value.trim() ?? "";
     if (!baseId) {
       alert("先に Base ID を入力・選択してください");
       throw new Error("Base ID 必須");
     }
-    if (tokenEl?.dataset.credRef) {
-      const credentialId = Number(tokenEl.dataset.credRef);
-      return await invoke("browse_airtable_tables", { credentialId, baseId });
-    }
-    const sourceEditor = getSourceEditor();
-    const parentSettings = getParentSettings();
-    const sid = sourceEditor.getEditingId() ?? parentSettings.getSiblingSourceId();
-    if (sid) {
-      const overrides = sourceEditor.getEditingId() !== null
-        ? JSON.stringify(sourceEditor.getConfigFromFields().config)
-        : JSON.stringify(parentSettings.getParentSharedValues());
-      return await invoke("browse_airtable_tables_for_source", { id: sid, overridesJson: overrides, baseId: baseId || null });
-    }
-    alert("先にトークンを選択してください");
-    throw new Error("トークン未選択");
+    const target = airtableBrowseTarget();
+    return "credentialId" in target
+      ? await invoke("browse_airtable_tables", { ...target, baseId })
+      : await invoke("browse_airtable_tables_for_source", { ...target, baseId });
+  }
+
+  /** Airtable の Base / テーブル / ビューを選ばせ、ID と確認用の名前を設定欄へ入れる。 */
+  function openAirtablePicker<T extends { id: string; name: string }>(
+    input: HTMLInputElement,
+    options: { title: string; nameKey: string; load: () => Promise<T[]>; emptyMessage: string; label: (item: T) => string },
+  ) {
+    return openListPicker({
+      dialogId: "airtable-picker",
+      listId: "airtable-picker-list",
+      title: { id: "airtable-picker-title", text: options.title },
+      load: options.load,
+      emptyMessage: options.emptyMessage,
+      label: (item) => item.name ? options.label(item) : item.id,
+      onPick: (item) => {
+        input.value = item.id;
+        const nameEl = dialogField(options.nameKey);
+        if (nameEl) nameEl.value = item.name;
+        refreshSourceEditor();
+      },
+    });
   }
 
   async function openAirtableBasePicker(baseInput: HTMLInputElement) {
-    const titleEl = $<HTMLHeadingElement>("airtable-picker-title");
-    if (titleEl) titleEl.textContent = "Airtable Base を選択";
-    const listEl = $<HTMLDivElement>("airtable-picker-list");
-    listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
-    const dlg = $<HTMLDialogElement>("airtable-picker");
-    dlg.showModal();
-    try {
-      const bases = await fetchAirtableBasesForPicker();
-      listEl.innerHTML = "";
-      if (bases.length === 0) {
-        listEl.innerHTML = "<div class='picker-empty'>利用可能な Base が見つかりませんでした（権限や schema.bases:read スコープを確認してください）</div>";
-      }
-      for (const b of bases) {
-        const item = document.createElement("div");
-        item.className = "picker-item";
-        item.textContent = b.name ? `${b.name} [ID: ${b.id}]` : b.id;
-        item.onclick = () => {
-          baseInput.value = b.id;
-          const nameEl = (document.getElementById("fd-base_name") ?? document.getElementById("pf-base_name")) as HTMLInputElement | null;
-          if (nameEl) nameEl.value = b.name;
-          const sourceEditor = getSourceEditor();
-          sourceEditor.autoFillDefaultName();
-          sourceEditor.maybeFetchAndRenderFields();
-          dlg.close();
-        };
-        listEl.appendChild(item);
-      }
-    } catch (e) {
-      setPickerMessage(listEl, `取得失敗: ${String(e)}`);
-    }
+    await openAirtablePicker(baseInput, {
+      title: "Airtable Base を選択",
+      nameKey: "base_name",
+      load: fetchAirtableBasesForPicker,
+      emptyMessage: "利用可能な Base が見つかりませんでした（権限や schema.bases:read スコープを確認してください）",
+      label: (b) => `${b.name} [ID: ${b.id}]`,
+    });
   }
 
   async function openAirtableTablePicker(tableInput: HTMLInputElement) {
-    const titleEl = $<HTMLHeadingElement>("airtable-picker-title");
-    if (titleEl) titleEl.textContent = "Airtable テーブルを選択";
-    const listEl = $<HTMLDivElement>("airtable-picker-list");
-    listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
-    const dlg = $<HTMLDialogElement>("airtable-picker");
-    dlg.showModal();
-    try {
-      const tables = await fetchAirtableTablesForPicker();
-      listEl.innerHTML = "";
-      if (tables.length === 0) {
-        listEl.innerHTML = "<div class='picker-empty'>テーブルが見つかりませんでした</div>";
-      }
-      for (const t of tables) {
-        const item = document.createElement("div");
-        item.className = "picker-item";
-        item.textContent = t.name ? `${t.name} [ID: ${t.id}]` : t.id;
-        item.onclick = () => {
-          tableInput.value = t.id;
-          const nameEl = (document.getElementById("fd-table_name") ?? document.getElementById("pf-table_name")) as HTMLInputElement | null;
-          if (nameEl) nameEl.value = t.name;
-          const sourceEditor = getSourceEditor();
-          sourceEditor.autoFillDefaultName();
-          sourceEditor.maybeFetchAndRenderFields();
-          dlg.close();
-        };
-        listEl.appendChild(item);
-      }
-    } catch (e) {
-      setPickerMessage(listEl, `取得失敗: ${String(e)}`);
-    }
+    await openAirtablePicker(tableInput, {
+      title: "Airtable テーブルを選択",
+      nameKey: "table_name",
+      load: fetchAirtableTablesForPicker,
+      emptyMessage: "テーブルが見つかりませんでした",
+      label: (t) => `${t.name} [ID: ${t.id}]`,
+    });
   }
 
   async function openAirtableViewPicker(viewInput: HTMLInputElement) {
@@ -289,38 +243,18 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
       alert("先にテーブルを指定・選択してください");
       return;
     }
-    const titleEl = $<HTMLHeadingElement>("airtable-picker-title");
-    if (titleEl) titleEl.textContent = "Airtable ビューを選択";
-    const listEl = $<HTMLDivElement>("airtable-picker-list");
-    listEl.innerHTML = "<div class='picker-empty'>読み込み中…</div>";
-    const dlg = $<HTMLDialogElement>("airtable-picker");
-    dlg.showModal();
-    try {
-      const tables = await fetchAirtableTablesForPicker();
-      const table = tables.find(t => t.id === tableVal || t.name === tableVal || t.id.toLowerCase() === tableVal.toLowerCase() || t.name.toLowerCase() === tableVal.toLowerCase());
-      listEl.innerHTML = "";
-      if (!table || !table.views || table.views.length === 0) {
-        listEl.innerHTML = "<div class='picker-empty'>このテーブルに選択可能なビューが見つかりませんでした</div>";
-        return;
-      }
-      for (const v of table.views) {
-        const item = document.createElement("div");
-        item.className = "picker-item";
-        item.textContent = v.name ? `${v.name} [ID: ${v.id} / 種別: ${v.type_}]` : v.id;
-        item.onclick = () => {
-          viewInput.value = v.id;
-          const nameEl = (document.getElementById("fd-view_name") ?? document.getElementById("pf-view_name")) as HTMLInputElement | null;
-          if (nameEl) nameEl.value = v.name;
-          const sourceEditor = getSourceEditor();
-          sourceEditor.autoFillDefaultName();
-          sourceEditor.maybeFetchAndRenderFields();
-          dlg.close();
-        };
-        listEl.appendChild(item);
-      }
-    } catch (e) {
-      setPickerMessage(listEl, `取得失敗: ${String(e)}`);
-    }
+    const tableKey = tableVal.toLowerCase();
+    await openAirtablePicker(viewInput, {
+      title: "Airtable ビューを選択",
+      nameKey: "view_name",
+      load: async () => {
+        const tables = await fetchAirtableTablesForPicker();
+        const table = tables.find((t) => t.id === tableVal || t.name === tableVal || t.id.toLowerCase() === tableKey || t.name.toLowerCase() === tableKey);
+        return table?.views ?? [];
+      },
+      emptyMessage: "このテーブルに選択可能なビューが見つかりませんでした",
+      label: (v) => `${v.name} [ID: ${v.id} / 種別: ${v.type_}]`,
+    });
   }
 
   async function openCellPicker(cellInput: HTMLInputElement, gridMode: boolean | "top" | "bottom" | "bottom_left" | "bottom_right" = "top", pickMode: "cell" | "column" = "cell") {
@@ -562,7 +496,7 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
     $<HTMLButtonElement>("table-picker-add").onclick = async () => {
       const checked = Array.from(tablePickerList.querySelectorAll("input:checked")) as HTMLInputElement[];
       if (checked.length === 0) { tablePickerError.textContent = "1 つ以上チェックしてください"; return; }
-      const type_ = browse === "excel_table" ? "excel_table" : browse;
+      const type_ = browse;
       const failures: string[] = [];
       let added = 0;
       for (const cb of checked) {
@@ -766,34 +700,25 @@ export function mountSourcePickers(deps: SourcePickerDeps): SourcePickers {
   }
 
   // ---- dialog close button handlers ----
-  $<HTMLButtonElement>("notion-picker-close").onclick = () => $<HTMLDialogElement>("notion-picker").close();
-  $<HTMLButtonElement>("browser-profile-picker-close").onclick = () => $<HTMLDialogElement>("browser-profile-picker").close();
-  $<HTMLButtonElement>("sheet-picker-close").onclick = () => $<HTMLDialogElement>("sheet-picker").close();
-  $<HTMLButtonElement>("airtable-picker-close").onclick = () => $<HTMLDialogElement>("airtable-picker").close();
-  $<HTMLButtonElement>("cell-picker-close").onclick = () => $<HTMLDialogElement>("cell-picker").close();
+  for (const dialogId of ["notion-picker", "browser-profile-picker", "sheet-picker", "airtable-picker", "cell-picker"]) {
+    $<HTMLButtonElement>(`${dialogId}-close`).onclick = () => $<HTMLDialogElement>(dialogId).close();
+  }
   $<HTMLButtonElement>("table-picker-cancel").onclick = () => tablePickerDlg.close();
-  $<HTMLButtonElement>("table-picker-all").onclick = () => {
-    tablePickerList.querySelectorAll("input").forEach((cb) => ((cb as HTMLInputElement).checked = true));
+  const setAllTablePickerChecks = (checked: boolean) => {
+    tablePickerList.querySelectorAll("input").forEach((cb) => ((cb as HTMLInputElement).checked = checked));
     updateTablePickerCount();
   };
-  $<HTMLButtonElement>("table-picker-none").onclick = () => {
-    tablePickerList.querySelectorAll("input").forEach((cb) => ((cb as HTMLInputElement).checked = false));
-    updateTablePickerCount();
-  };
-  $<HTMLButtonElement>("sp-tab-sites").onclick = async () => {
-    spMode = "sites";
-    $<HTMLButtonElement>("sp-tab-sites").classList.add("active");
-    $<HTMLButtonElement>("sp-tab-teams").classList.remove("active");
+  $<HTMLButtonElement>("table-picker-all").onclick = () => setAllTablePickerChecks(true);
+  $<HTMLButtonElement>("table-picker-none").onclick = () => setAllTablePickerChecks(false);
+  const switchSpMode = async (mode: "sites" | "teams") => {
+    spMode = mode;
+    $<HTMLButtonElement>("sp-tab-sites").classList.toggle("active", mode === "sites");
+    $<HTMLButtonElement>("sp-tab-teams").classList.toggle("active", mode === "teams");
     const credentialId = graphCredentialIdFromDialog();
     if (credentialId !== null) await loadSpSourceList(credentialId);
   };
-  $<HTMLButtonElement>("sp-tab-teams").onclick = async () => {
-    spMode = "teams";
-    $<HTMLButtonElement>("sp-tab-teams").classList.add("active");
-    $<HTMLButtonElement>("sp-tab-sites").classList.remove("active");
-    const credentialId = graphCredentialIdFromDialog();
-    if (credentialId !== null) await loadSpSourceList(credentialId);
-  };
+  $<HTMLButtonElement>("sp-tab-sites").onclick = () => switchSpMode("sites");
+  $<HTMLButtonElement>("sp-tab-teams").onclick = () => switchSpMode("teams");
   $<HTMLButtonElement>("sp-picker-cancel").onclick = () => $<HTMLDialogElement>("sp-picker").close();
 
   return {
