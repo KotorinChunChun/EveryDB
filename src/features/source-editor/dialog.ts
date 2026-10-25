@@ -1,4 +1,3 @@
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { $, promptUrlInput } from "../../app/dom";
 import { invoke } from "../../app/ipc";
 import { appState } from "../../app/state";
@@ -27,8 +26,9 @@ import { duplicateConfirmMessage, findDuplicateSource } from "./source-identity"
 import { clearLinkedCredentials, setLinkedCredentials } from "./linked-credentials";
 import type { RoleEditorController } from "./role-editor";
 import { configWithoutRoleKeys, roleStateFromConfig } from "./roles";
-import { makeApiKeyButton, makeLinkButton } from "./ui-buttons";
 import { createCsvPreviewController } from "./csv-preview";
+import { buildFieldActionRow, credentialManagedKeysOf } from "./field-renderer";
+import type { FieldPickerActions, WireCredentialSelector } from "./field-renderer";
 
 export interface SourceEditorDialogElements {
   dialog: HTMLDialogElement;
@@ -66,26 +66,8 @@ export interface SourceEditorDialogActions {
   openGuide: (type: string) => void;
   normalizePath: (v: string | undefined | null) => string;
   roleEditor: RoleEditorController;
-  pickers: {
-    wireCredentialSelector: (
-      input: HTMLInputElement,
-      field: FieldDef,
-      idPrefix: string,
-      row: HTMLElement,
-      label: HTMLElement,
-      sourceType: string,
-    ) => void;
-    openBrowserProfilePicker: (target: "history" | "bookmarks", input: HTMLInputElement) => void;
-    openSheetPicker: (input: HTMLInputElement) => void;
-    openExcelTablePicker: (input: HTMLInputElement) => void;
-    openCellPicker: (
-      input: HTMLInputElement,
-      gridMode: boolean | "top" | "bottom" | "bottom_left" | "bottom_right",
-      pickMode: "cell" | "column",
-    ) => void;
-    openAirtableBasePicker: (input: HTMLInputElement) => void;
-    openAirtableTablePicker: (input: HTMLInputElement) => void;
-    openAirtableViewPicker: (input: HTMLInputElement) => void;
+  pickers: FieldPickerActions & {
+    wireCredentialSelector: WireCredentialSelector;
     openNotionPicker: () => void;
     openTablePicker: (browse: "sqlite" | "accdb" | "excel_table") => void;
     openSharePointPicker: () => void;
@@ -150,6 +132,29 @@ export function mountSourceEditorDialog(
     return TYPE_DEFS.find((t) => t.value === elements.typeSel.value)!;
   }
 
+  /** 種別ごとに描画した設定フィールド（id: fd-<key>）。未描画の種別では null。 */
+  function fieldInput(key: string): HTMLInputElement | null {
+    return document.getElementById(`fd-${key}`) as HTMLInputElement | null;
+  }
+
+  function setFieldValue(key: string, value: string): void {
+    const el = fieldInput(key);
+    if (el) el.value = value;
+  }
+
+  /** 保存済みトークンにリンク中の秘密フィールドが参照している credential ID。未選択なら null。 */
+  function linkedCredentialId(key: string): number | null {
+    const credentialId = Number(fieldInput(key)?.dataset.credRef);
+    return Number.isSafeInteger(credentialId) && credentialId > 0 ? credentialId : null;
+  }
+
+  function cancelNotionNameResolution(): void {
+    if (notionNameResolveTimer !== null) {
+      window.clearTimeout(notionNameResolveTimer);
+      notionNameResolveTimer = null;
+    }
+  }
+
   /** グループボックスを折りたたみ / 展開する（デフォルトは閉じた状態） */
   function setConfigAccordionOpen(open: boolean) {
     const { addConfigFieldset, configAccordionBody, configLegendTitle } = elements;
@@ -210,7 +215,7 @@ export function mountSourceEditorDialog(
   }
 
   function getFieldValue(f: FieldDef): unknown {
-    const el = document.getElementById(`fd-${f.key}`) as HTMLInputElement | null;
+    const el = fieldInput(f.key);
     if (!el) return undefined;
     // 保存済みトークンにリンク中で、まだ手入力で上書きされていなければ cred:<id> 参照を送る
     // （実際の値ではなく参照だけを保存することで、後から一括置換できる。要件: トークン管理画面）。
@@ -235,26 +240,22 @@ export function mountSourceEditorDialog(
    * Airtable API から解決して base_name/table_name/view_name を自動入力する。
    * トークン未入力・未解錠・API失敗時は静かに諦める（ID自体は既に埋まっているため実害はない）。 */
   async function resolveAirtableCaptions(baseId?: string, tableId?: string, viewId?: string) {
-    const tokenEl = document.getElementById("fd-token") as HTMLInputElement | null;
-    const credentialId = Number(tokenEl?.dataset.credRef);
-    if (!Number.isSafeInteger(credentialId) || credentialId <= 0) return;
+    const credentialId = linkedCredentialId("token");
+    if (credentialId === null) return;
+    const fillIfEmpty = (key: string, value: string | undefined) => {
+      const el = fieldInput(key);
+      if (value !== undefined && el && !el.value.trim()) el.value = value;
+    };
     try {
       if (baseId) {
         const bases = await invoke("browse_airtable_bases", { credentialId });
-        const b = bases.find((x) => x.id === baseId);
-        const nameEl = document.getElementById("fd-base_name") as HTMLInputElement | null;
-        if (b && nameEl && !nameEl.value.trim()) nameEl.value = b.name;
+        fillIfEmpty("base_name", bases.find((x) => x.id === baseId)?.name);
       }
       if (baseId && tableId) {
         const tables = await invoke("browse_airtable_tables", { credentialId, baseId });
         const t = tables.find((x) => x.id === tableId);
-        const tNameEl = document.getElementById("fd-table_name") as HTMLInputElement | null;
-        if (t && tNameEl && !tNameEl.value.trim()) tNameEl.value = t.name;
-        if (t && viewId) {
-          const v = t.views.find((x) => x.id === viewId);
-          const vNameEl = document.getElementById("fd-view_name") as HTMLInputElement | null;
-          if (v && vNameEl && !vNameEl.value.trim()) vNameEl.value = v.name;
-        }
+        fillIfEmpty("table_name", t?.name);
+        if (t && viewId) fillIfEmpty("view_name", t.views.find((x) => x.id === viewId)?.name);
       }
     } catch {
       // ネットワーク不調・権限不足等。ID は既に反映済みなので実害は無い。
@@ -271,10 +272,8 @@ export function mountSourceEditorDialog(
   }
 
   function applyResolvedNotionName(databaseId: string, databaseName: string) {
-    const idEl = document.getElementById("fd-database_id") as HTMLInputElement | null;
-    const nameEl = document.getElementById("fd-database_name") as HTMLInputElement | null;
-    if (idEl) idEl.value = databaseId;
-    if (nameEl) nameEl.value = databaseName;
+    setFieldValue("database_id", databaseId);
+    setFieldValue("database_name", databaseName);
     resolvedNotionDatabaseId = databaseId;
     elements.nameInput.value = databaseName;
     nameManuallyEdited = false;
@@ -284,10 +283,7 @@ export function mountSourceEditorDialog(
 
   function applyNotionSelection(databaseId: string, databaseName: string) {
     notionNameRequestSequence += 1;
-    if (notionNameResolveTimer !== null) {
-      window.clearTimeout(notionNameResolveTimer);
-      notionNameResolveTimer = null;
-    }
+    cancelNotionNameResolution();
     applyResolvedNotionName(databaseId, databaseName);
     maybeFetchAndRenderFields();
   }
@@ -295,24 +291,25 @@ export function mountSourceEditorDialog(
   async function resolveNotionCaption(databaseId: string) {
     databaseId = databaseId.trim();
     if (!databaseId) return;
-    const nameEl = document.getElementById("fd-database_name") as HTMLInputElement | null;
     const requestSequence = ++notionNameRequestSequence;
-    const hasSavedName = (nameEl?.value.trim() ?? "").length > 0;
-    const credentialId = Number((document.getElementById("fd-token") as HTMLInputElement | null)?.dataset.credRef);
-    if (dialogMode === "add" && (!Number.isSafeInteger(credentialId) || credentialId <= 0)) {
+    const hasSavedName = (fieldInput("database_name")?.value.trim() ?? "").length > 0;
+    // 編集時は保存済みソースの接続情報で、追加時は選択中の保存済みトークンで問い合わせる。
+    const sourceId = dialogMode === "edit" ? editingId : null;
+    const credentialId = linkedCredentialId("token");
+    if (sourceId === null && credentialId === null) {
       setNotionNameStatus("error", "データベース名を取得するには、先に保存済みトークンを選択してください。");
       return;
     }
     setNotionNameStatus("loading", "Notionから最新のデータベース名を取得しています…");
     try {
-      const result = dialogMode === "edit" && editingId !== null
+      const result = sourceId !== null
         ? await invoke("browse_notion_database_for_source", {
-            id: editingId,
+            id: sourceId,
             overridesJson: JSON.stringify(buildConfigFromFields().config),
             databaseId,
           })
         : await invoke("browse_notion_database", {
-            credentialId,
+            credentialId: credentialId!,
             databaseId,
           });
       if (requestSequence !== notionNameRequestSequence || !result.title) return;
@@ -325,18 +322,14 @@ export function mountSourceEditorDialog(
   }
 
   function resolveNotionCaptionNow(databaseId: string) {
-    if (notionNameResolveTimer !== null) {
-      window.clearTimeout(notionNameResolveTimer);
-      notionNameResolveTimer = null;
-    }
+    cancelNotionNameResolution();
     void resolveNotionCaption(databaseId);
   }
 
   function scheduleNotionCaptionResolution(databaseId: string) {
-    if (notionNameResolveTimer !== null) window.clearTimeout(notionNameResolveTimer);
+    cancelNotionNameResolution();
     notionNameRequestSequence += 1;
     if (normalizeNotionDatabaseId(databaseId).length !== 32) {
-      notionNameResolveTimer = null;
       setNotionNameStatus("idle", "32桁のデータベースIDを入力するとNotionから名前を取得します。");
       return;
     }
@@ -350,67 +343,35 @@ export function mountSourceEditorDialog(
   /** 各種データソース URL が入力・ペーストされた際、設定 ID フィールドを自動入力・展開する。 */
   function tryApplyUrlOrFileDropHelper(inputValue: string) {
     const type = elements.typeSel.value;
+    /** URL から抽出できた値だけを該当フィールドへ入れ、表示名と列一覧を更新する。 */
+    const applyIds = (values: Record<string, string | undefined | false>) => {
+      for (const [key, value] of Object.entries(values)) {
+        if (value) setFieldValue(key, value);
+      }
+      autoFillDefaultName();
+      maybeFetchAndRenderFields();
+    };
     if (type === "airtable") {
       const info = parseAirtableUrl(inputValue);
-      if (info) {
-        if (info.baseId) {
-          const baseEl = document.getElementById("fd-base_id") as HTMLInputElement | null;
-          if (baseEl) baseEl.value = info.baseId;
-        }
-        if (info.tableId) {
-          const tblEl = document.getElementById("fd-table") as HTMLInputElement | null;
-          if (tblEl) tblEl.value = info.tableId;
-        }
-        if (info.viewId) {
-          const viwEl = document.getElementById("fd-view") as HTMLInputElement | null;
-          if (viwEl) viwEl.value = info.viewId;
-        }
-        autoFillDefaultName();
-        maybeFetchAndRenderFields();
-        void resolveAirtableCaptions(info.baseId, info.tableId, info.viewId);
-        return;
-      }
-    }
-    if (type === "google_sheets") {
-      const info = parseGoogleSheetsUrl(inputValue);
-      if (info?.spreadsheetId) {
-        const el = document.getElementById("fd-spreadsheet_id") as HTMLInputElement | null;
-        if (el) el.value = info.spreadsheetId;
-        autoFillDefaultName();
-        maybeFetchAndRenderFields();
-        return;
-      }
-    }
-    if (type === "notion") {
-      const info = parseNotionUrl(inputValue);
-      if (info?.databaseId) {
-        const el = document.getElementById("fd-database_id") as HTMLInputElement | null;
-        if (el) el.value = info.databaseId;
-        autoFillDefaultName();
-        maybeFetchAndRenderFields();
-        resolveNotionCaptionNow(info.databaseId);
-        return;
-      }
-    }
-    if (type === "graph_sharepoint_list" || type === "graph_sharepoint_library") {
+      if (!info) return;
+      applyIds({ base_id: info.baseId, table: info.tableId, view: info.viewId });
+      void resolveAirtableCaptions(info.baseId, info.tableId, info.viewId);
+    } else if (type === "google_sheets") {
+      const spreadsheetId = parseGoogleSheetsUrl(inputValue)?.spreadsheetId;
+      if (spreadsheetId) applyIds({ spreadsheet_id: spreadsheetId });
+    } else if (type === "notion") {
+      const databaseId = parseNotionUrl(inputValue)?.databaseId;
+      if (!databaseId) return;
+      applyIds({ database_id: databaseId });
+      resolveNotionCaptionNow(databaseId);
+    } else if (type === "graph_sharepoint_list" || type === "graph_sharepoint_library") {
       const info = parseSharePointUrl(inputValue);
-      if (info) {
-        if (info.siteUrl) {
-          const siteEl = document.getElementById("fd-site_url") as HTMLInputElement | null;
-          if (siteEl) siteEl.value = info.siteUrl;
-        }
-        if (info.listName && type === "graph_sharepoint_list") {
-          const listEl = document.getElementById("fd-list_name") as HTMLInputElement | null;
-          if (listEl) listEl.value = info.listName;
-        }
-        if (info.libraryName && type === "graph_sharepoint_library") {
-          const libEl = document.getElementById("fd-library_name") as HTMLInputElement | null;
-          if (libEl) libEl.value = info.libraryName;
-        }
-        autoFillDefaultName();
-        maybeFetchAndRenderFields();
-        return;
-      }
+      if (!info) return;
+      applyIds({
+        site_url: info.siteUrl,
+        list_name: type === "graph_sharepoint_list" && info.listName,
+        library_name: type === "graph_sharepoint_library" && info.libraryName,
+      });
     }
   }
 
@@ -486,7 +447,7 @@ export function mountSourceEditorDialog(
       case "airtable":
         btn.textContent = "Base 一覧から選択…";
         btn.onclick = () => {
-          const baseEl = document.getElementById("fd-base_id") as HTMLInputElement | null;
+          const baseEl = fieldInput("base_id");
           if (baseEl) pickers.openAirtableBasePicker(baseEl);
         };
         break;
@@ -528,14 +489,10 @@ export function mountSourceEditorDialog(
   }
 
   async function applySharePointSiteSelection(siteUrl: string, displayName: string) {
-    const siteEl = document.getElementById("fd-site_url") as HTMLInputElement | null;
-    if (siteEl) siteEl.value = siteUrl;
-    const siteNameEl = document.getElementById("fd-site_display_name") as HTMLInputElement | null;
-    if (siteNameEl) siteNameEl.value = displayName;
-    const listEl = document.getElementById("fd-list_name") as HTMLInputElement | null;
-    if (listEl) listEl.value = "";
-    const libEl = document.getElementById("fd-library_name") as HTMLInputElement | null;
-    if (libEl) libEl.value = "";
+    setFieldValue("site_url", siteUrl);
+    setFieldValue("site_display_name", displayName);
+    setFieldValue("list_name", "");
+    setFieldValue("library_name", "");
     if (displayName) {
       try {
         await invoke("set_parent_label", { parentKey: siteUrl, label: displayName });
@@ -551,10 +508,7 @@ export function mountSourceEditorDialog(
   function renderTypeFields(prefill?: Record<string, unknown>, hideKeys: string[] = []) {
     const def = currentTypeDef();
     notionNameRequestSequence += 1;
-    if (notionNameResolveTimer !== null) {
-      window.clearTimeout(notionNameResolveTimer);
-      notionNameResolveTimer = null;
-    }
+    cancelNotionNameResolution();
     const isNotion = isApiOwnedSourceName(def.value);
     elements.nameInput.readOnly = isNotion;
     elements.nameInput.title = isNotion ? "Notionから取得した最新のデータベース名へ自動同期します" : "";
@@ -567,13 +521,7 @@ export function mountSourceEditorDialog(
     // 秘密フィールドの束（token/client_secret/password 本体 + tenant_id 等のバンドル）を先に洗い出す。
     // 束の非秘密フィールドは選択専用ウィジェットが埋めるため、個別入力は読み取り専用にする
     // （要件: 接続単位での保存は不要、全て管理されているトークンを参照させる）。
-    const credentialManagedKeys = new Set<string>();
-    for (const f of def.fields) {
-      if (f.credentialScope) {
-        credentialManagedKeys.add(f.key);
-        for (const bf of f.credentialBundleFields ?? []) credentialManagedKeys.add(bf);
-      }
-    }
+    const credentialManagedKeys = credentialManagedKeysOf(def.fields);
     for (const f of def.fields) {
       if (hideKeys.includes(f.key)) continue;
       if (f.key === "site_display_name") {
@@ -591,8 +539,7 @@ export function mountSourceEditorDialog(
         renderAutoSetupRow(def);
         continue;
       }
-      const isCredOwner = !!f.credentialScope;
-      const isCredManagedSibling = !isCredOwner && credentialManagedKeys.has(f.key);
+      const isCredManagedSibling = !f.credentialScope && credentialManagedKeys.has(f.key);
       const label = document.createElement("label");
       if (f.kind === "checkbox") {
         label.className = "check";
@@ -671,126 +618,30 @@ export function mountSourceEditorDialog(
           // URL貼り付けが ID 欄より先にトークンより先行した場合など、トークン確定時点で
           // まだキャプション（base_name等）が空の ID があれば遅れて解決する。
           if (f.key === "token" && def.value === "airtable") {
-            const baseId = (document.getElementById("fd-base_id") as HTMLInputElement | null)?.value.trim();
-            const tableId = (document.getElementById("fd-table") as HTMLInputElement | null)?.value.trim();
-            const viewId = (document.getElementById("fd-view") as HTMLInputElement | null)?.value.trim();
+            const baseId = fieldInput("base_id")?.value.trim();
+            const tableId = fieldInput("table")?.value.trim();
+            const viewId = fieldInput("view")?.value.trim();
             if (baseId || tableId) void resolveAirtableCaptions(baseId || undefined, tableId || undefined, viewId || undefined);
           }
           if (def.value === "notion" && (f.key === "database_id" || f.key === "token")) {
-            const databaseId = (document.getElementById("fd-database_id") as HTMLInputElement | null)?.value.trim();
+            const databaseId = fieldInput("database_id")?.value.trim();
             if (databaseId) resolveNotionCaptionNow(databaseId);
           }
         });
-        if (isCredOwner || f.browse || f.helpUrl || f.linkUrl || f.browserProfile || f.browseSheet || f.browseTable || f.browseCell || f.browseColumn || f.browseAirtableBase || f.browseAirtableTable || f.browseAirtableView) {
-          // 参照ボタン（ファイル/フォルダ選択）、API キー取得ページを開くボタン、リンクボタン、
-          // ブラウザプロファイル候補自動検出、Excelシート名選択、Excelテーブル(ListObject)名選択、Excelセル/列選択、
-          // Airtable選択ボタン、保存済みトークンの選択ウィジェット。
-          const row = document.createElement("div");
-          row.className = "path-row";
-          row.appendChild(input);
-          if (isCredOwner) pickers.wireCredentialSelector(input, f, "fd-", row, label, def.value);
-          if (f.browse) {
-            const browseBtn = document.createElement("button");
-            browseBtn.type = "button";
-            browseBtn.className = "btn browse-btn";
-            browseBtn.textContent = "参照…";
-            browseBtn.onclick = async () => {
-              try {
-                const picked = await openDialog({
-                  directory: f.browse === "folder",
-                  multiple: false,
-                  filters: f.browse === "file" ? f.dialogFilters : undefined,
-                });
-                if (typeof picked === "string") {
-                  input.value = picked;
-                  autoFillDefaultName();
-                  maybeFetchAndRenderFields();
-                  csvPreview.schedule();
-                }
-              } catch (e) {
-                console.error("ファイル選択に失敗:", e);
-              }
-            };
-            row.appendChild(browseBtn);
-          }
-          if (f.browserProfile) {
-            const pickBtn = document.createElement("button");
-            pickBtn.type = "button";
-            pickBtn.className = "btn browse-btn";
-            pickBtn.textContent = "候補から選択…";
-            pickBtn.title = "インストール済みのブラウザからプロファイル（History/Bookmarks）を自動検出します";
-            pickBtn.onclick = () => pickers.openBrowserProfilePicker(f.browserProfile!, input);
-            row.appendChild(pickBtn);
-          }
-          if (f.browseSheet) {
-            const pickBtn = document.createElement("button");
-            pickBtn.type = "button";
-            pickBtn.className = "btn browse-btn";
-            pickBtn.textContent = "一覧から選択…";
-            pickBtn.title = "指定されたExcelファイルからシート名の一覧を取得して選べます";
-            pickBtn.onclick = () => pickers.openSheetPicker(input);
-            row.appendChild(pickBtn);
-          }
-          if (f.browseTable) {
-            const pickBtn = document.createElement("button");
-            pickBtn.type = "button";
-            pickBtn.className = "btn browse-btn";
-            pickBtn.textContent = "一覧から選択…";
-            pickBtn.title = "指定されたExcelファイルからテーブル(ListObject)名の一覧を取得して選べます";
-            pickBtn.onclick = () => pickers.openExcelTablePicker(input);
-            row.appendChild(pickBtn);
-          }
-          if (f.browseCell) {
-            const pickBtn = document.createElement("button");
-            pickBtn.type = "button";
-            pickBtn.className = "btn browse-btn";
-            pickBtn.textContent = "表から選択…";
-            pickBtn.title = "Excelシートの10x10セルを表形式で表示して選択します";
-            pickBtn.onclick = () => pickers.openCellPicker(input, f.browseCell!, "cell");
-            row.appendChild(pickBtn);
-          }
-          if (f.browseColumn) {
-            const pickBtn = document.createElement("button");
-            pickBtn.type = "button";
-            pickBtn.className = "btn browse-btn";
-            pickBtn.textContent = "表から選択…";
-            pickBtn.title = "Excelシートの10x10セルを表形式で表示して基準列を選択します";
-            pickBtn.onclick = () => pickers.openCellPicker(input, f.browseColumn!, "column");
-            row.appendChild(pickBtn);
-          }
-          if (f.browseAirtableBase) {
-            const pickBtn = document.createElement("button");
-            pickBtn.type = "button";
-            pickBtn.className = "btn browse-btn";
-            pickBtn.textContent = "一覧から選択…";
-            pickBtn.title = "Personal Access Token を使用して利用可能な Base 一覧を取得します";
-            pickBtn.onclick = () => pickers.openAirtableBasePicker(input);
-            row.appendChild(pickBtn);
-          }
-          if (f.browseAirtableTable) {
-            const pickBtn = document.createElement("button");
-            pickBtn.type = "button";
-            pickBtn.className = "btn browse-btn";
-            pickBtn.textContent = "一覧から選択…";
-            pickBtn.title = "指定された Base 内のテーブル一覧を取得します";
-            pickBtn.onclick = () => pickers.openAirtableTablePicker(input);
-            row.appendChild(pickBtn);
-          }
-          if (f.browseAirtableView) {
-            const pickBtn = document.createElement("button");
-            pickBtn.type = "button";
-            pickBtn.className = "btn browse-btn";
-            pickBtn.textContent = "一覧から選択…";
-            pickBtn.title = "指定されたテーブル内のビュー一覧を取得します";
-            pickBtn.onclick = () => pickers.openAirtableViewPicker(input);
-            row.appendChild(pickBtn);
-          }
-          if (!isCredOwner && f.helpUrl) row.appendChild(makeApiKeyButton(f.helpUrl));
-          if (!isCredOwner && f.linkUrl) row.appendChild(makeLinkButton(f.linkUrl, f.linkLabel ?? "🌐 開く…"));
-          label.appendChild(row);
-        } else {
-          label.appendChild(input);
-        }
+        // 保存済みトークンの選択ウィジェット、参照ボタン、一覧選択、取得ページ・リンクを入力欄の横に並べる。
+        const row = buildFieldActionRow(f, input, {
+          idPrefix: "fd-",
+          sourceType: def.value,
+          label,
+          wireCredentialSelector: pickers.wireCredentialSelector,
+          pickers,
+          onFilePicked: () => {
+            autoFillDefaultName();
+            maybeFetchAndRenderFields();
+            csvPreview.schedule();
+          },
+        });
+        label.appendChild(row ?? input);
       }
       if (elements.typeSel.value === "excel_range") {
         if (f.key === "start_mode" || f.key === "end_mode") {
@@ -1070,8 +921,8 @@ export function mountSourceEditorDialog(
       const file = files[0];
       const rawPath = (file as File & { path?: string }).path || file.name;
       const path = actions.normalizePath(rawPath);
-      const pathEl = document.getElementById("fd-path") as HTMLInputElement | null;
-      const keyPathEl = document.getElementById("fd-key_path") as HTMLInputElement | null;
+      const pathEl = fieldInput("path");
+      const keyPathEl = fieldInput("key_path");
       if (pathEl) {
         pathEl.value = path;
         autoFillDefaultName();
