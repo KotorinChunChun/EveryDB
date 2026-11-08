@@ -38,6 +38,7 @@
 | `scripts/import-EveryDB-development-environment.ps1` | C:\AI\env\EveryDB\development.env を値の評価・表示なしで読み込む |
 | `scripts/test-development-environment.ps1` | 環境ファイルの形式・原子性・値を実行しない境界を検証 |
 | `scripts/test-script-naming.ps1` | 運用スクリプトの命名を自動検査 |
+| `scripts/test-debug-EveryDB-csvcli.ps1` | [隔離CSVのCLI受入](../docs/development/testing.md#csvの取込からtsv出力までのcli検証)を実行 |
 
 配布物の生成・公開は [配布手順](RELEASE_RULE.md) に従います。
 

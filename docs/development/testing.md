@@ -24,6 +24,44 @@ Rustテストの前に、追跡された生成コードと同梱CSVから架空�
 pwsh -File .\dev\scripts\test-script-naming.ps1
 ```
 
+## CSVの取込からTSV出力までのCLI検証
+
+Node.js 22.18以降と、PATHに登録済みのRust/Cargoが必要です。EveryDBのリポジトリ直下で、次の一括検証を実行できます。
+
+```powershell
+pwsh -File .\dev\scripts\test-debug-EveryDB-csvcli.ps1
+```
+
+架空のCSVを2つ生成し、プレビュー、取込確定、両ソースを対象にした検索、TSV出力を別々のCLI呼び出しで確認します。成功時は終了コード0です。生成されたCSV、DB、検索JSON、TSVと拒否試験のログは、表示された `dev/history/v<版>/logs/csv-cli-<識別子>/` 内にあります。
+
+個別に再現するには、次のように実行します。CSVは既定のヘッダーあり、カンマ区切り、文字コード自動判定を使用します。
+
+```powershell
+$version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+$run = Join-Path (Get-Location) "dev/history/v$version/logs/csv-cli-$([Guid]::NewGuid().ToString('N'))"
+$db = Join-Path $run 'isolated'
+New-Item -ItemType Directory -Path $db -Force | Out-Null
+$first = Join-Path $run 'first.csv'
+$second = Join-Path $run 'second.csv'
+Set-Content -LiteralPath $first -Encoding utf8 -Value '品名,分類','青ペン,文具'
+Set-Content -LiteralPath $second -Encoding utf8 -Value '品名,分類','ノート,文具'
+
+$PSNativeCommandUseErrorActionPreference = $true
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$cli = './scripts/everydb-csv-cli.mjs'
+node $cli preview $first
+$a = node $cli import $db $first '文房具店' | ConvertFrom-Json
+$b = node $cli import $db $second '雑貨店' | ConvertFrom-Json
+$result = Join-Path $run 'search.json'
+node $cli search $db '文具' $a.id $b.id | Set-Content -LiteralPath $result -Encoding utf8
+node $cli export $result (Join-Path $run 'result.tsv')
+```
+
+- プレビューはDBを開きません。取込・検索は明示した既存の絶対パスにある `csv-cli.sqlite3` だけを使い、通常の `cache.db` がある配置は拒否します。試験ごとに空の専用フォルダーを使ってください。アプリ起動や検索履歴の保存は行いません。
+- 取込はGUIと同じ登録・初回読込み経路です。初回読込みが失敗した場合は終了コードが非0になり、GUIと同様に失敗したソースが隔離DBに残る場合があります。
+- 検索は取込で返ったソースIDを明示し、結果をJSONで返します。TSVはそのJSONを読み、GUIと同じ既定列・セル変換・TSV変換を使ってUTF-8 BOM付きで新規保存します。空・件数上限に達した結果と既存ファイルへの上書きは拒否します。GUIで変更した列順やソートは読み込みません。
+
 ## ライブテスト
 
 Rustの一部テストは外部サービス、ローカルブラウザプロファイル、ODBCドライバ、認証情報を必要とするため `ignored` です。秘密情報はリポジトリや設定ファイルへ保存せず、実行時の環境変数だけで渡してください。
