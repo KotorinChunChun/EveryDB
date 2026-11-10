@@ -15,3 +15,8 @@ calamine0.37.0がRUSTSEC-2026-0436の対象で、ExcelSheets/Range等の自動�
 ユーザーの明示承認に基づきcalamine0.37.0→0.38.0のCargo.toml/Cargo.lockを承認済み候補と完全一致する形で採用。採用後の同一ソースから隔離した正規check:allが成功し、Vitest158件・Rust214件成功16ignore、型/Clippy/フロント・Rust build等に合格。npm監査0、calamineのOSV一致0。Rust全体の他OS/保守終了等の既存候補12群13IDは継続し、全依存が安全になったとはしない。
 
 通常node_modules/利用者DB/稼働アプリは未変更。配布・導入・再起動なし。承認済みの読取り値変化とGUI/実Excel/外部DB/Helloの未確認は維持する。[版別報告と証跡](../../history/v0.1.2/v0.1.2-imp.md) / [承認後の横断報告](C:/develop/default/dev/research/security-maintenance/2026-11-05-update.md)。
+
+
+## 2026-11-10 SQLite同梱版のセキュリティ更新候補
+
+同梱SQLiteのCVE-2026-119375への対応を、通常の作業ツリーと利用者DBから分離して検討した。利用経路、対象版の隔離検証結果、候補差分、復旧範囲は[版別報告](../../history/v0.1.2/v0.1.2-imp.md)に記録した。
