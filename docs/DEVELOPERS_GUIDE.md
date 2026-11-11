@@ -1,6 +1,6 @@
 # EveryDB 開発者ガイド
 
-EveryDB を自分でビルド・検証・改造する開発者向けの入口です。利用者向けの操作方法は [使い方](user-guide.md) を参照してください。
+EveryDB を自分でビルド・検証・改造する開発者向けのガイドです。利用者向けの操作方法は [使い方](user-guide.md) を参照してください。
 
 ## 開発環境と品質確認
 
@@ -17,7 +17,7 @@ npm ci
 npm run check:all
 ```
 
-アプリを起動する場合は、用途に応じて `dev/scripts/` の入口を使います。
+アプリを起動する場合は、用途に応じて `dev/scripts/` のスクリプトを使います。
 
 ```powershell
 pwsh -File .\dev\scripts\run-debug-EveryDB-all.ps1
@@ -27,7 +27,7 @@ pwsh -File .\dev\scripts\run-exe-EveryDB-all.ps1
 pwsh -File .\dev\scripts\build-debug-EveryDB-kotorintoys.ps1
 ```
 
-配布物生成と外部公開は別工程です。リリース担当者は [配布手順](../dev/RELEASE_RULE.md) を確認してください。
+配布物の生成と外部公開は別の工程です。リリース担当者は [配布手順](../dev/RELEASE_RULE.md) を確認してください。
 
 ## 資料とデータの扱い
 

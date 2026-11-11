@@ -4,13 +4,13 @@ EveryDBは独立したGitリポジトリとして管理します。EveryDB 0.1.1
 
 EveryDB単体のインストーラーは [EveryDB Releases](https://github.com/KotorinChunChun/EveryDB/releases) で配布します。これはKotorinToys本体が管理するインストーラーや本体の再リリースとは別です。
 
-提供元は [EveryDB](https://github.com/KotorinChunChun/EveryDB) です。2026-10-17に公開前の履歴整理を行いました。それ以前のコピーをマージして戻さず、新規cloneまたは本体からのsubmodule取得を行ってください。
+提供元は [EveryDB](https://github.com/KotorinChunChun/EveryDB) です。2026-10-17に公開前の履歴整理を行いました。それ以前のコピーをマージして戻さず、新たにcloneするか、本体からsubmoduleとして取得してください。
 
 開発用秘密情報の保存先は `C:\AI\env\EveryDB\` です。[外部保管と読込み](development/secrets.md)に従って準備してください。
 
 ## 開発版のビルド
 
-このビルドはフロントエンドを作成し、KotorinToys専用のRust出力先へ管理連携版を生成します。通常の `src-tauri/target/debug` とはビルド出力を分けます。データ保存先は通常版と共通なので、試験起動では後述の隔離設定を指定してください。
+このビルドはフロントエンドを作成し、管理連携版をKotorinToys専用のRust出力先に生成します。通常の `src-tauri/target/debug` には出力しません。データ保存先は通常版と共通なので、試験起動では後述の隔離設定を指定してください。
 
 ```powershell
 cd C:\develop\KotorinToys\tools\EveryDB

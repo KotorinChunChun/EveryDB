@@ -32,11 +32,11 @@ KotorinToys本体から起動する管理連携版は、専用の出力先にビ
 pwsh -File .\dev\scripts\build-debug-EveryDB-kotorintoys.ps1
 ```
 
-ローカルサンプルを生成・登録して起動する場合は `run-debug-EveryDB-all-sample.ps1` を使用します。この入口は実際のユーザープロファイルの EveryDB キャッシュへ試験ソースを登録するため、通常起動と区別してください。
+ローカルサンプルを生成・登録して起動する場合は `run-debug-EveryDB-all-sample.ps1` を使用します。このスクリプトは実際のユーザープロファイルの EveryDB キャッシュへ試験ソースを登録するため、通常起動と区別してください。
 
 ## Release構成の起動
 
-Release 構成をビルドして起動する場合は、インストーラーを生成しない次の入口を使用します。
+Release 構成をビルドして起動する場合は、インストーラーを生成しない次のスクリプトを使用します。
 
 ```powershell
 pwsh -File .\dev\scripts\run-release-EveryDB-all.ps1
@@ -54,7 +54,7 @@ pwsh -File .\dev\scripts\run-exe-EveryDB-all.ps1
 pwsh -File .\dev\scripts\build-release-EveryDB-kotorintoys.ps1
 ```
 
-この入口はネイティブReleaseのみを生成します。共通Innoの生成はKotorinToys側の配布工程で行います。配布前は [EveryDB 配布手順](../../dev/RELEASE_RULE.md) を参照してください。
+このスクリプトはネイティブReleaseのみを生成します。共通Innoの生成はKotorinToys側の配布工程で行います。配布前は [EveryDB 配布手順](../../dev/RELEASE_RULE.md) を参照してください。
 
 Rustだけを確認する場合は、リポジトリ直下から次を実行します。
 
