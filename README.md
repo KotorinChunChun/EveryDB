@@ -88,11 +88,15 @@ CSVの例では、表示名、ファイルパス、文字コード、区切り�
 
 保存場所、認証情報の扱い、注意事項は [セキュリティ](docs/security.md) を参照してください。
 
+## 使用言語とライブラリ
+
+- 使用言語はRust、TypeScriptです。
+- Tauri（デスクトップ画面）、rusqlite（SQLite）、csv・calamine（CSV・Excelの読み込み）、odbc-api・postgres・mysql（データベース接続）、ureq（HTTP通信）。
+- 依存定義と資料 [Rustの依存定義](src-tauri/Cargo.toml)・[画面側の依存定義](package.json)・[第三者ライセンス](licenses/THIRD_PARTY_NOTICES.txt)
+
 ## 利用条件
 
-本ツールはフリーウェアです。無制限にご利用いただけます。
-
-ソースコードの公開範囲と利用条件は [利用条件](LICENSE.md) を確認してください。
+EveryDBの独自コードと文書には[MITライセンス](LICENSE.md)が適用されます。第三者のコンポーネントや素材には、それぞれのライセンスが適用されます。
 
 クラウドサービスを使用したことによる情報流出や、その後の利用に関する制限は、利用者の責任において管理されるものとします。
 
