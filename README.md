@@ -12,13 +12,13 @@ EveryDB は複数のデータソースをローカルの SQLite キャッシュ�
 
 ## インストール
 
-1. [GitHub Releases](https://github.com/KotorinChunChun/EveryDB/releases) から `EveryDB-0.1.1-setup.exe` を取得し、実行します。
+1. [GitHub Releases](https://github.com/KotorinChunChun/EveryDB/releases) から `EveryDB-0.1.2-setup.exe` を取得し、実行します。
 2. 画面の案内に従ってインストールを完了します。KotorinToys 0.1.5以降の一覧からも導入・更新・削除できます。旧0.1.0のMSI／NSISは、共通版とは別の製品として登録されます。旧版を終了し、Windowsのアプリ設定から削除してから共通版を導入してください。保存済みDBは両方の版で利用できます。
 3. EveryDB を起動し、サイドバーの「追加」からデータソースを登録します。
 
 初回登録時に外部サービスへ送信される情報は、選んだデータソースとその接続設定だけです。認証方法や注意点は [プライバシーとセキュリティ](docs/security.md) を確認してください。
 
-v0.1.1 の配布物にはコード署名がありません。Windows Defender SmartScreen の警告が表示される場合は、配布元と [GitHub Releases](https://github.com/KotorinChunChun/EveryDB/releases) に配布物と一緒に掲載するSHA-256を確認したうえで実行してください。コード署名は今後のリリースで対応予定です。
+v0.1.2 の配布物にはコード署名がありません。Windows Defender SmartScreen の警告が表示される場合は、配布元と [GitHub Releases](https://github.com/KotorinChunChun/EveryDB/releases) に配布物と一緒に掲載するSHA-256を確認したうえで実行してください。コード署名は今後のリリースで対応予定です。
 
 ## アンインストール
 

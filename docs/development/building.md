@@ -3,7 +3,7 @@
 ## 前提条件
 
 - Node.js（npmを含む）
-- Rust stable（`rust-version = 1.88` 以上。ZIP関連の安全な修正版に必要）
+- Rust stable（`rust-version = 1.89` 以上。同梱SQLiteの安全な修正版に必要）
 - Windows向けのC++ビルドツールとWebView2 Runtime
 
 ## セットアップ

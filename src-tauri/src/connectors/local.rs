@@ -369,7 +369,7 @@ impl Connector for SqliteConnector {
         )?;
         let sql = format!("SELECT * FROM \"{}\"", self.table);
         let mut stmt = conn.prepare(&sql)?;
-        let col_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+        let col_names: Vec<String> = stmt.column_names().map(str::to_owned).collect();
         let ncol = col_names.len();
 
         let mut out = Vec::new();
@@ -400,7 +400,7 @@ impl Connector for SqliteConnector {
         )?;
         let sql = format!("SELECT * FROM \"{}\" LIMIT 0", self.table);
         let stmt = conn.prepare(&sql)?;
-        Ok(stmt.column_names().iter().map(|s| s.to_string()).collect())
+        Ok(stmt.column_names().map(str::to_owned).collect())
     }
 }
 
