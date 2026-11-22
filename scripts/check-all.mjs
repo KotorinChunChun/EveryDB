@@ -10,6 +10,7 @@ const sampleDir = path.join(mkdtempSync(path.join(logs, "offline-quality-")), "s
 const testEnvironment = { ...process.env, EVERYDB_TEST_SAMPLES_DIR: sampleDir };
 
 const checks = [
+  ["node", ["--test", "scripts/readme-headings.test.mjs"]],
   ["pwsh", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "dev/scripts/test-development-environment.ps1"]],
   ["pwsh", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "dev/scripts/test-script-naming.ps1"]],
   process.platform === "win32"

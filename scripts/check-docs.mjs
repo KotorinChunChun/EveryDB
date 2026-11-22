@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve, dirname, extname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { hasUsageSection } from "./readme-headings.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const docsRoot = join(root, "docs");
@@ -61,8 +62,11 @@ for (const file of files) {
 }
 
 const readme = readFileSync(join(root, "README.md"), "utf8");
-for (const heading of ["対応環境", "インストール", "アンインストール", "主な機能と最低限の使い方", "対応データソース", "プライバシーとセキュリティ", "利用条件", "作者"]) {
+for (const heading of ["対応環境", "インストール", "アンインストール", "対応データソース", "プライバシーとセキュリティ", "利用条件", "作者"]) {
   if (!readme.includes(`## ${heading}`)) errors.push(`README.md: missing required heading ${heading}`);
+}
+if (!hasUsageSection(readme)) {
+  errors.push("README.md: missing usage heading（主な機能と最低限の使い方 / 画像で見る使い方）");
 }
 if (!readme.includes("docs/DEVELOPERS_GUIDE.md")) {
   errors.push("README.md: missing link to docs/DEVELOPERS_GUIDE.md");
