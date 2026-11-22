@@ -13,6 +13,9 @@ $PreviousTarget = $env:CARGO_TARGET_DIR
 $PreviousFlags = $env:CARGO_ENCODED_RUSTFLAGS
 Push-Location -LiteralPath $RepoRoot
 try {
+  $LockedInputs = @('src-tauri/Cargo.lock', 'package-lock.json')
+  $InputHashes = @{}
+  foreach ($InputFile in $LockedInputs) { $InputHashes[$InputFile] = (Get-FileHash -LiteralPath $InputFile -Algorithm SHA256).Hash }
   if (-not (Test-Path -LiteralPath 'node_modules/.bin/tauri.cmd')) {
     npm ci
     if ($LASTEXITCODE) { throw 'npm ci に失敗しました。' }
@@ -26,6 +29,9 @@ try {
   $env:CARGO_ENCODED_RUSTFLAGS = $flags -join $separator
   npm run tauri -- build --no-bundle -- --locked
   if ($LASTEXITCODE) { throw 'EveryDBのReleaseビルドに失敗しました。' }
+  foreach ($InputFile in $LockedInputs) {
+    if ((Get-FileHash -LiteralPath $InputFile -Algorithm SHA256).Hash -ne $InputHashes[$InputFile]) { throw "ビルド中に依存ロックが変更されました: $InputFile" }
+  }
   $Executable = Join-Path $TargetDirectory 'release/everydb.exe'
   if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) { throw 'Release実行ファイルがありません。' }
   Write-Output "共通配布用ビルド完了: $Executable"
