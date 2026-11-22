@@ -42,7 +42,7 @@
 | 公開データ | PokéAPI (ポケモン)（`pokeapi`） | [pokeapi](guides/pokeapi.md) |
 <!-- source-catalog:end -->
 
-Microsoft Graphには組織用と個人用のトークン種別があり、組織用には2つの認証方式があります。違いと選び方は
+Microsoft Graphのトークンには組織用と個人用があり、組織用には2つの認証方式があります。違いと選び方は
 [Microsoft Graph 接続方法の選択](guides/microsoft365.md)を参照してください。
 個別手順: [アプリケーション認証](guides/microsoft365-entra-app.md) / [組織向け委任 OAuth](guides/microsoft365-entra-user.md) /
 [個人向け OneDrive](guides/microsoft365-personal.md)。

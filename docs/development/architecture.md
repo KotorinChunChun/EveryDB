@@ -11,4 +11,4 @@
 - `src-tauri/src/connectors/`: 各データソースのコネクタ実装とfactory。
 - `src-tauri/src/db/`: SQLiteスキーマ、migration、repository処理。
 
-依存方向は、UI → IPC → service/repository/connector を目標とします。connectorの外部I/O中はSQLiteロックを保持しません。
+依存の向きは UI → IPC → service/repository/connector を目標とします。connectorの外部I/O中はSQLiteロックを保持しません。

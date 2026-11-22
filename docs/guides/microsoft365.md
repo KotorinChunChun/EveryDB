@@ -8,7 +8,7 @@ Outlook 予定表、OneDrive（組織）、Teams タスク & Planner、OneDrive�
 
 Microsoftのデータを読み取るには、Microsoft Graph API を使用します。
 
-会社・学校の Microsoft 365 テナントのデータの読み書きは **Microsoft Entra ID（組織）**、Outlook.com / Hotmail / Live  / OneDrive などの個人向けデータへのアクセス は **Microsoft アカウント（個人）**を使用します。
+会社・学校の Microsoft 365 テナントでデータを読み書きするには **Microsoft Entra ID（組織）** を使用します。Outlook.com / Hotmail / Live  / OneDrive などの個人向けデータにアクセスするには **Microsoft アカウント（個人）** を使用します。
 
 ## アカウントとトークン種別
 

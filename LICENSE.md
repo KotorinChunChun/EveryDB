@@ -1,11 +1,21 @@
-# EveryDB 利用条件
+MIT License
 
-本ツールはフリーウェアです。無制限にご利用頂けます。
+Copyright (c) 2026 KotorinChunChun
 
-クラウドサービスを使用したことによる情報流出や、その後の利用に関する制限は、利用者の責任において管理されるものとします。
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-本ツールを使用したことにより発生したいかなる損害も作者は責任を負いません。
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-本書は既存のREADMEに記載された利用条件を整理したものです。標準オープンソースライセンスは採用していません。ソースコードの改変・再配布・他製品への組込みの許諾条件は、作者へ確認してください。
-
-依存する第三者ソフトウェアには、それぞれの利用条件が適用されます。
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
